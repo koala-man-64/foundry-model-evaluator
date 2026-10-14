@@ -1,0 +1,122 @@
+"""Wiring of repositories and services shared by the API, engine and CLI."""
+
+from __future__ import annotations
+
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx2
+
+from .config import AppConfig
+from .credentials.store import CredentialStore, CredentialStoreError
+from .db.database import Database
+from .execution.engine import Engine
+from .execution.runs import RunService
+from .pricing.retail import RetailPricesClient
+from .pricing.service import PricingService
+from .providers.base import ProviderAdapter
+from .providers.registry import default_adapters
+from .repos.endpoints import EndpointRepository
+from .repos.profiles import ProfileRepository
+from .repos.rates import RateRepository
+from .repos.runs import RunRepository
+from .repos.settings import SettingsRepository
+from .types import ApiStyle
+
+
+class UnavailableCredentialStore(CredentialStore):
+    """Placeholder when no secure credential store exists: every key operation fails clearly."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(backend=None)
+        self.reason = reason
+
+    @property
+    def backend_name(self) -> str:
+        return "unavailable"
+
+    def set(self, credential_ref: str, api_key: str) -> None:
+        raise CredentialStoreError(self.reason)
+
+    def get(self, credential_ref: str) -> str | None:
+        raise CredentialStoreError(self.reason)
+
+    def has(self, credential_ref: str) -> bool:
+        return False
+
+    def delete(self, credential_ref: str) -> None:
+        return None
+
+
+class IdempotencyCache:
+    """Remembers results of recent paid actions so a double click does not pay twice."""
+
+    def __init__(self, size: int = 512) -> None:
+        self._items: OrderedDict[str, Any] = OrderedDict()
+        self._size = size
+
+    def get(self, key: str) -> Any | None:
+        value = self._items.get(key)
+        if value is not None:
+            self._items.move_to_end(key)
+        return value
+
+    def put(self, key: str, value: Any) -> None:
+        self._items[key] = value
+        self._items.move_to_end(key)
+        while len(self._items) > self._size:
+            self._items.popitem(last=False)
+
+
+@dataclass
+class Services:
+    config: AppConfig
+    db: Database
+    credentials: CredentialStore
+    settings: SettingsRepository
+    endpoints: EndpointRepository
+    profiles: ProfileRepository
+    rates: RateRepository
+    runs: RunRepository
+    pricing: PricingService
+    run_service: RunService
+    engine: Engine
+    idempotency: IdempotencyCache = field(default_factory=IdempotencyCache)
+    credential_error: str | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+
+def build_services(
+    config: AppConfig,
+    *,
+    adapters: dict[ApiStyle, ProviderAdapter] | None = None,
+    retail_transport: httpx2.AsyncBaseTransport | None = None,
+    credentials: CredentialStore | None = None,
+) -> Services:
+    db = Database(config.db_path)
+    db.migrate()
+    credential_error: str | None = None
+    if credentials is None:
+        try:
+            credentials = CredentialStore.from_environment(config.keyring_mode)
+        except CredentialStoreError as exc:
+            credential_error = str(exc)
+            credentials = UnavailableCredentialStore(str(exc))
+    settings = SettingsRepository(db)
+    pricing = PricingService(db, RetailPricesClient(config.retail_prices_url, transport=retail_transport))
+    engine = Engine(db, credentials, adapters or default_adapters(), settings)
+    return Services(
+        config=config,
+        db=db,
+        credentials=credentials,
+        settings=settings,
+        endpoints=EndpointRepository(db),
+        profiles=ProfileRepository(db),
+        rates=RateRepository(db),
+        runs=RunRepository(db),
+        pricing=pricing,
+        run_service=RunService(db, credentials, pricing),
+        engine=engine,
+        credential_error=credential_error,
+    )

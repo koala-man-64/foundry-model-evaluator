@@ -1,0 +1,14 @@
+{
+  "prompt_tokens": 300,
+  "completion_tokens": 20,
+  "total_tokens": 320,
+  "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "text_tokens": 300
+  },
+  "completion_tokens_details": {
+    "reasoning_tokens": 0,
+    "text_tokens": 20,
+    "rejected_prediction_tokens": 4
+  }
+}
