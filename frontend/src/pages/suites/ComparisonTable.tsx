@@ -78,18 +78,19 @@ export function ComparisonTable({ runIds }: { runIds: string[] }) {
                 </td>
                 <td className="num">
                   {number(item.avg_manual_score, 2)}
-                  <div className="small muted">{item.manual_scored} scored</div>
+                  <div className="small muted">{item.manual_scored} cells scored</div>
                 </td>
                 <td className="num">
                   {number(item.avg_judge_score, 2)}
-                  <div className="small muted">{item.judge_scored} judged</div>
+                  <div className="small muted">{item.judge_scored} cells judged</div>
                 </td>
                 <td className="num">
                   {item.win_rate === null || item.win_rate === undefined ? '—' : `${Math.round(item.win_rate * 100)}%`}
-                  <div className="small muted">{item.judge_comparisons} comparisons</div>
+                  <div className="small muted">{item.judge_comparisons} evaluations</div>
                 </td>
                 <td className="num">
                   {item.failures} of {item.attempts}
+                  <div className="small muted">attempts</div>
                 </td>
               </tr>
             ))}

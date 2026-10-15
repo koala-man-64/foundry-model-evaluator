@@ -32,11 +32,13 @@ export function JudgePanel({ detail, promptId, trial }: Props) {
 
   useEffect(() => {
     if (!profileId && profiles.length) {
-      const first = profiles[0]
+      // Prefer a judge that did not produce any of the answers.
+      const participants = new Set(detail.candidates.map((c) => c.profile_id))
+      const first = profiles.find((p) => !participants.has(p.id)) ?? profiles[0]
       setProfileId(first.id)
       setSettings(judgeDefaults(first))
     }
-  }, [profiles, profileId])
+  }, [profiles, profileId, detail.candidates])
 
   const blocking = unsupportedSettings(profile?.capabilities, settings)
   const request: JudgeRequest | null = profileId

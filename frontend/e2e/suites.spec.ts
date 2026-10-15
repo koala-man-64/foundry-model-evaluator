@@ -71,8 +71,8 @@ test('a suite with repeated trials, automatic judging and a comparison with cove
   await expect(rows).toHaveCount(2)
   for (const label of [`${terra} (effort=low)`, `${terra} (effort=high)`]) {
     const row = comparison.getByRole('row').filter({ hasText: label })
-    await expect(row).toContainText('4 judged')
-    await expect(row).toContainText('4 comparisons')
+    await expect(row).toContainText('4 cells judged')
+    await expect(row).toContainText('4 evaluations')
     await expect(row).toContainText('0 of 4')
   }
 
