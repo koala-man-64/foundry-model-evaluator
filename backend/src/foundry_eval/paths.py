@@ -98,6 +98,11 @@ def validate_data_dir(
 
 
 def ensure_data_dir(data_dir: Path) -> Path:
+    """Create the data folder. On Windows it inherits the user-only ACL of %LOCALAPPDATA%; elsewhere
+    it is made private to the user (mode 0700)."""
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "logs").mkdir(exist_ok=True)
+    if os.name == "posix":
+        for folder in (data_dir, data_dir / "logs"):
+            folder.chmod(0o700)
     return data_dir

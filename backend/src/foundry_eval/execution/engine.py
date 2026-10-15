@@ -37,6 +37,17 @@ log = logging.getLogger(__name__)
 RunHook = Callable[[str], Awaitable[None]]
 
 
+def sent_cost(request_sent_at: str | None, cost: CostEstimate | None, reserved: Decimal | None) -> Decimal:
+    """What a call counts against a budget: nothing if never sent, else its upper bound or reservation."""
+    if request_sent_at is None:
+        return Decimal(0)
+    if cost is not None and cost.upper is not None:
+        return cost.upper
+    if reserved is not None:
+        return reserved
+    return cost.lower if cost is not None else Decimal(0)
+
+
 @dataclass(frozen=True)
 class NotSent:
     """A paid call that was not sent (cancelled, over budget, or the endpoint/key is unusable)."""
@@ -77,6 +88,8 @@ class Engine:
         self._running = 0
         # Temporary limit that is not saved to the settings (the CLI smoke test runs one call at a time).
         self.concurrency_override: int | None = None
+        # Work ids whose request has been sent (their budget reservation is spent unless settled).
+        self._sent: set[str] = set()
 
     # ------------------------------------------------------------------ public API
     def is_active(self, run_id: str) -> bool:
@@ -200,9 +213,16 @@ class Engine:
         if budget is not None:
             budget.settle(work_id, cost)
 
-    def release(self, run_id: str, work_id: str) -> None:
+    def finish_budget(self, run_id: str, work_id: str) -> None:
+        """Release an unused reservation; a sent call that was never settled keeps its worst case."""
+        sent = work_id in self._sent
+        self._sent.discard(work_id)
         budget = self._budgets.get(run_id)
-        if budget is not None:
+        if budget is None:
+            return
+        if sent:
+            budget.commit_reserved(work_id)
+        else:
             budget.release(work_id)
 
     async def send(
@@ -216,14 +236,14 @@ class Engine:
         card: RateCard,
         input_upper: int,
         max_output_tokens: int | None,
-        mark_sent: Callable[[], None],
+        mark_sent: Callable[[Decimal | None], None],
         semaphore: asyncio.Semaphore | None = None,
     ) -> ProviderResult | NotSent:
         """Send one paid call within the concurrency limit, the run budget and the endpoint checks.
 
-        ``mark_sent`` is called right before the HTTP request, so an interruption afterwards is
-        recorded as "sent" (possibly billed). The API key is read here, just in time, and only sent
-        to the host the run was created for.
+        ``mark_sent`` is called right before the HTTP request with the budget reservation (if any),
+        so an interruption afterwards is recorded as "sent" (possibly billed) and counted at its worst
+        case. The API key is read here, just in time, and only sent to the host the run was created for.
         """
         async with semaphore or self.semaphore():
             self._running += 1
@@ -232,6 +252,7 @@ class Engine:
                 if run_id in self._cancelled:
                     return NotSent(AttemptStatus.CANCELLED, "Cancelled before sending.")
                 budget = self.ensure_budget(run_id)
+                reserved: Decimal | None = None
                 if budget is not None:
                     worst, reason = worst_case_cost(card, input_upper, max_output_tokens)
                     if worst is None or not budget.reserve(work_id, worst):
@@ -239,6 +260,7 @@ class Engine:
                             AttemptStatus.SKIPPED_BUDGET,
                             reason or "Skipped: sending this call could exceed the run budget.",
                         )
+                    reserved = worst
                 try:
                     endpoint = self.endpoints.get(endpoint_info["id"])
                 except NotFoundError:
@@ -263,17 +285,18 @@ class Engine:
                     timeouts=profile_timeouts(profile),
                 )
                 adapter = self.adapters[profile.api_style]
-                mark_sent()
+                mark_sent(reserved)
+                self._sent.add(work_id)
                 return await adapter.execute(call)
             finally:
                 self._running -= 1
 
     # ------------------------------------------------------------------ internals
     def _spent(self, run_id: str) -> Decimal:
+        """Recorded spending for a run: every sent call at its upper bound, or its reserved worst case."""
         total = Decimal(0)
         for attempt in self.runs.attempts(run_id):
-            if attempt.cost is not None and attempt.cost.status != "not_sent":
-                total += attempt.cost.upper if attempt.cost.upper is not None else attempt.cost.lower
+            total += sent_cost(attempt.request_sent_at, attempt.cost, attempt.budget_reserved)
         for hook in self.spent_hooks:
             total += hook(run_id)
         return total
@@ -332,7 +355,7 @@ class Engine:
                 attempt_id, AttemptStatus.FAILED, sanitize_error_text(f"Internal error: {exc}") or "", currency
             )
         finally:
-            self.release(run_id, attempt_id)
+            self.finish_budget(run_id, attempt_id)
 
     def _finish_if_active(self, attempt_id: str, status: AttemptStatus, message: str, currency: str) -> None:
         try:

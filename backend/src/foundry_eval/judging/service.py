@@ -25,7 +25,7 @@ from ..domain.generation import GenerationSettings
 from ..domain.profiles import Endpoint, ModelProfile, host_identity
 from ..domain.suites import SuiteJudge
 from ..execution.budget import estimate_input_tokens, input_token_upper_bound, worst_case_cost
-from ..execution.engine import Engine, NotSent
+from ..execution.engine import Engine, NotSent, sent_cost
 from ..execution.runs import profile_snapshot
 from ..execution.totals import CostTotal, total_costs
 from ..money import Money, add
@@ -386,6 +386,12 @@ class JudgeService:
         batch_id = new_id()
         ids: list[str] = []
         with self.db.transaction() as conn:
+            # Checked again under the write lock: concurrent requests with one key create one batch.
+            rows = conn.execute(
+                "SELECT id FROM evaluations WHERE idempotency_key = ? ORDER BY created_at", (idempotency_key,)
+            ).fetchall()
+            if rows:
+                return [row["id"] for row in rows], False
             price_snapshot_id = create_snapshot(conn, setup.profile, setup.endpoint, setup.card)
             for group in groups:
                 entries, prompt, _nonce = self._judge_prompt(group, setup, shuffle=True)
@@ -454,7 +460,7 @@ class JudgeService:
             message = sanitize_error_text(f"Internal error: {exc}") or "Internal error"
             self._finish_if_active(evaluation_id, "failed", message, currency)
         finally:
-            self.engine.release(run_id, evaluation_id)
+            self.engine.finish_budget(run_id, evaluation_id)
 
     def _finish_if_active(self, evaluation_id: str, status: str, message: str, currency: str) -> None:
         try:
@@ -591,9 +597,8 @@ class JudgeService:
 
     def spent(self, run_id: str) -> Decimal:
         total = Decimal(0)
-        for cost in self.evaluations.costs_for_run(run_id):
-            if cost is not None and cost.status != "not_sent":
-                total = add(total, cost.upper if cost.upper is not None else cost.lower)
+        for sent_at, cost, reserved in self.evaluations.spending_for_run(run_id):
+            total = add(total, sent_cost(sent_at, cost, reserved))
         return total
 
     def scores_for_run(self, run_id: str) -> dict[str, JudgeScore]:

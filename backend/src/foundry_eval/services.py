@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 import httpx2
 
@@ -20,6 +18,7 @@ from .pricing.retail import RetailPricesClient
 from .pricing.service import PricingService
 from .providers.base import ProviderAdapter
 from .providers.registry import default_adapters
+from .repos.action_keys import ActionKeyRepository
 from .repos.endpoints import EndpointRepository
 from .repos.evaluations import EvaluationRepository
 from .repos.profiles import ProfileRepository
@@ -55,26 +54,6 @@ class UnavailableCredentialStore(CredentialStore):
         return None
 
 
-class IdempotencyCache:
-    """Remembers results of recent paid actions so a double click does not pay twice."""
-
-    def __init__(self, size: int = 512) -> None:
-        self._items: OrderedDict[str, Any] = OrderedDict()
-        self._size = size
-
-    def get(self, key: str) -> Any | None:
-        value = self._items.get(key)
-        if value is not None:
-            self._items.move_to_end(key)
-        return value
-
-    def put(self, key: str, value: Any) -> None:
-        self._items[key] = value
-        self._items.move_to_end(key)
-        while len(self._items) > self._size:
-            self._items.popitem(last=False)
-
-
 @dataclass
 class Services:
     config: AppConfig
@@ -94,7 +73,7 @@ class Services:
     judge: JudgeService
     comparisons: ComparisonService
     projections: ProjectionService
-    idempotency: IdempotencyCache = field(default_factory=IdempotencyCache)
+    action_keys: ActionKeyRepository
     credential_error: str | None = None
 
     def recover_interrupted(self) -> int:
@@ -145,5 +124,6 @@ def build_services(
         judge=judge,
         comparisons=ComparisonService(db, judge),
         projections=ProjectionService(db, pricing),
+        action_keys=ActionKeyRepository(db),
         credential_error=credential_error,
     )

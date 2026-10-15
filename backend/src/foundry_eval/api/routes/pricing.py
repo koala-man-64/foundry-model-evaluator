@@ -93,6 +93,14 @@ class MatchOut(BaseModel):
     rates: RatesOut
 
 
+def _source_url(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    if not value.startswith(("https://", "http://")):
+        raise ValueError("The source URL must start with https:// or http://")
+    return value
+
+
 class RateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -109,11 +117,7 @@ class RateIn(BaseModel):
     @field_validator("source_url")
     @classmethod
     def _url(cls, value: str | None) -> str | None:
-        if value is None or value == "":
-            return None
-        if not value.startswith(("https://", "http://")):
-            raise ValueError("The source URL must start with https:// or http://")
-        return value
+        return _source_url(value)
 
 
 class OverrideIn(BaseModel):
@@ -124,6 +128,11 @@ class OverrideIn(BaseModel):
     unit: str
     note: str = Field(min_length=1, max_length=500)
     source_url: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("source_url")
+    @classmethod
+    def _url(cls, value: str | None) -> str | None:
+        return _source_url(value)
 
 
 class RefreshIn(BaseModel):

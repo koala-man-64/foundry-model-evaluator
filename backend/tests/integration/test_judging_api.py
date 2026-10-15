@@ -4,6 +4,7 @@ import json
 import re
 import sqlite3
 import time
+from contextlib import closing
 from decimal import Decimal
 
 import pytest
@@ -281,7 +282,7 @@ def test_restart_marks_unfinished_evaluations_interrupted_without_replay(tmp_pat
         while slow.active < 1 and time.time() < deadline:
             time.sleep(0.02)
     # Simulate a crash that left an evaluation queued, too.
-    with sqlite3.connect(data / "foundry-eval.sqlite3") as conn:
+    with closing(sqlite3.connect(data / "foundry-eval.sqlite3")) as conn, conn:
         conn.execute("UPDATE evaluations SET status = 'queued', finished_at = NULL, request_sent_at = NULL")
     replay = SlowAdapter(ApiStyle.OPENAI_RESPONSES, delay=0)
     with make_client(data, adapters={ApiStyle.OPENAI_RESPONSES: replay}) as client:

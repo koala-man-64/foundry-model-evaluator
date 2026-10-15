@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from ..credentials.redaction import sanitize_error_text
 from ..db.database import Database
 from ..domain.generation import GenerationSettings
 from ..judging.parse import ParseResult
@@ -17,6 +19,7 @@ from ..providers.base import ProviderResult
 from ..timeutil import iso_now, new_id
 from ..usage.facts import UsageFacts
 from .endpoints import NotFoundError
+from .runs import scrub, scrub_json
 
 EvaluationStatus = Literal[
     "queued",
@@ -93,6 +96,7 @@ class Evaluation(BaseModel):
     error_message: str | None
     created_at: str
     candidates: list[EvaluationCandidate]
+    budget_reserved: Money | None = None
 
 
 def _cost_columns(cost: CostEstimate) -> tuple[str, str, str | None, str, str | None]:
@@ -159,6 +163,7 @@ class EvaluationRepository:
             error_type=row["error_type"],
             error_message=row["error_message"],
             created_at=row["created_at"],
+            budget_reserved=to_decimal(row["budget_reserved"]) if row["budget_reserved"] is not None else None,
             candidates=[
                 EvaluationCandidate(
                     label=c["label"],
@@ -204,6 +209,21 @@ class EvaluationRepository:
                 "SELECT 1 FROM evaluations WHERE run_id = ? AND trigger = ? LIMIT 1", (run_id, trigger)
             ).fetchone()
         return row is not None
+
+    def spending_for_run(self, run_id: str) -> list[tuple[str | None, CostEstimate | None, Decimal | None]]:
+        """(request_sent_at, cost, budget_reserved) of every evaluation, for budget accounting."""
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT request_sent_at, cost_json, budget_reserved FROM evaluations WHERE run_id = ?", (run_id,)
+            ).fetchall()
+        return [
+            (
+                r["request_sent_at"],
+                CostEstimate.model_validate_json(r["cost_json"]) if r["cost_json"] else None,
+                to_decimal(r["budget_reserved"]) if r["budget_reserved"] is not None else None,
+            )
+            for r in rows
+        ]
 
     def costs_for_run(self, run_id: str) -> list[CostEstimate | None]:
         with self.db.connect() as conn:
@@ -277,7 +297,7 @@ class EvaluationRepository:
                 json.dumps([o.model_dump() for o in order]),
                 input_estimate_tokens,
                 input_limit_tokens,
-                json.dumps(request_body),
+                scrub_json(request_body),
                 now,
             ),
         )
@@ -290,12 +310,13 @@ class EvaluationRepository:
             )
         return evaluation_id
 
-    def mark_sent(self, evaluation_id: str) -> None:
+    def mark_sent(self, evaluation_id: str, reserved: Decimal | None = None) -> None:
         now = iso_now()
         with self.db.transaction() as conn:
             conn.execute(
-                "UPDATE evaluations SET status = 'running', started_at = ?, request_sent_at = ? WHERE id = ?",
-                (now, now, evaluation_id),
+                "UPDATE evaluations SET status = 'running', started_at = ?, request_sent_at = ?, budget_reserved = ?"
+                " WHERE id = ?",
+                (now, now, to_text(reserved) if reserved is not None else None, evaluation_id),
             )
 
     def finish_not_sent(self, evaluation_id: str, status: str, message: str, currency: str) -> None:
@@ -360,9 +381,9 @@ class EvaluationRepository:
                     result.raw_finish_reason,
                     result.response_model,
                     result.service_tier,
-                    result.output_text,
-                    json.dumps(result.response_json) if result.response_json is not None else None,
-                    json.dumps(result.raw_usage) if result.raw_usage is not None else None,
+                    scrub(result.output_text),
+                    scrub_json(result.response_json),
+                    scrub_json(result.raw_usage),
                     usage.model_dump_json() if usage else None,
                     json.dumps(parsed.errors if parsed else []),
                     parsed.preferred if parsed and parsed.ok else None,
@@ -370,8 +391,8 @@ class EvaluationRepository:
                     parsed.preference_explanation if parsed and parsed.ok else None,
                     *_cost_columns(cost),
                     result.error_type if status != "malformed" else "malformed",
-                    error_message,
-                    json.dumps(result.request_body),
+                    sanitize_error_text(error_message),
+                    scrub_json(result.request_body),
                     evaluation_id,
                 ),
             )

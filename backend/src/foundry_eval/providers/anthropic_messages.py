@@ -22,7 +22,7 @@ from anthropic import AsyncAnthropicFoundry, DefaultAsyncHttpxClient
 from ..credentials.redaction import sanitize_error_text
 from ..types import ApiStyle, FinishReason
 from .base import ProviderCall, ProviderResult
-from .http import make_timeout, ssl_context
+from .http import is_loopback_url, make_timeout, redirect_message, ssl_context
 from .openai_compat import classify_error
 
 _TYPED_PARAMS = {
@@ -81,10 +81,15 @@ class AnthropicMessagesAdapter:
         self._transport = transport
 
     def _client(self, call: ProviderCall) -> AsyncAnthropicFoundry:
+        # Never follow redirects: the SDK default would resend the key headers to the new host.
         if self._transport is not None:
-            http_client = DefaultAsyncHttpxClient(transport=self._transport)
+            http_client = DefaultAsyncHttpxClient(transport=self._transport, follow_redirects=False)
+        elif is_loopback_url(call.url):
+            # An explicit transport stops the SDK from mounting environment proxies for this host.
+            transport = httpx2.AsyncHTTPTransport(verify=ssl_context(), trust_env=False)
+            http_client = DefaultAsyncHttpxClient(transport=transport, follow_redirects=False, trust_env=False)
         else:
-            http_client = DefaultAsyncHttpxClient(verify=ssl_context())
+            http_client = DefaultAsyncHttpxClient(verify=ssl_context(), follow_redirects=False)
         return AsyncAnthropicFoundry(
             api_key=call.api_key,
             base_url=call.url,
@@ -120,6 +125,16 @@ class AnthropicMessagesAdapter:
                     request_id = raw.headers.get("request-id") or raw.headers.get("apim-request-id")
                     message = await raw.parse()
         except anthropic.APIStatusError as exc:
+            if 300 <= exc.status_code < 400:
+                return self._error(
+                    call,
+                    start,
+                    stream,
+                    error_type="redirect",
+                    message=redirect_message(exc.status_code, exc.response.headers.get("location")),
+                    status=exc.status_code,
+                    ttft=ttft,
+                )
             error_type, finish, text = classify_error(exc.status_code, exc.body)
             return self._error(
                 call,
@@ -137,6 +152,12 @@ class AnthropicMessagesAdapter:
             return self._error(call, start, stream, error_type="timeout", message="Request timed out.", ttft=ttft)
         except anthropic.APIConnectionError as exc:
             return self._error(call, start, stream, error_type="network", message=f"Network error: {exc}", ttft=ttft)
+        except httpx2.HTTPError as exc:  # e.g. the connection dropped mid-stream
+            return self._error(call, start, stream, error_type="network", message=f"Network error: {exc}", ttft=ttft)
+        except anthropic.APIError as exc:
+            return self._error(
+                call, start, stream, error_type="bad_response", message=f"Unexpected response: {exc}", ttft=ttft
+            )
         finally:
             await client.close()
 

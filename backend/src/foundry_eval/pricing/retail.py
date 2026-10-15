@@ -157,7 +157,9 @@ class RetailPricesClient:
         warnings: list[str] = []
         succeeded = 0
         skipped = 0
-        async with make_async_client(timeout=make_timeout(15, 60), transport=self._transport) as client:
+        async with make_async_client(
+            timeout=make_timeout(15, 60), url=self.base_url, transport=self._transport
+        ) as client:
             for clause in product_filters:
                 url: str | None = self._first_url(region, currency, clause)
                 pages = 0

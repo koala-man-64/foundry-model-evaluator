@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { del, get, newIdempotencyKey, post, put } from '../api/client'
 import { keys } from '../api/hooks'
@@ -89,9 +89,14 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScor
   const [markdown, setMarkdown] = useState(false)
   const [showRequest, setShowRequest] = useState(false)
   const [raw, setRaw] = useState<RawOut | null>(null)
+  // One key per retry action: a repeated click before the first answer cannot pay twice.
+  const retryKey = useRef(newIdempotencyKey())
   const retry = useMutation({
-    mutationFn: () => post(`/api/attempts/${attempt.id}/retry`, {}, newIdempotencyKey()),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
+    mutationFn: () => post(`/api/attempts/${attempt.id}/retry`, {}, retryKey.current),
+    onSuccess: () => {
+      retryKey.current = newIdempotencyKey()
+      queryClient.invalidateQueries({ queryKey: keys.run(runId) })
+    },
   })
   const loadRaw = useMutation({
     mutationFn: () => get<RawOut>(`/api/attempts/${attempt.id}/raw`),

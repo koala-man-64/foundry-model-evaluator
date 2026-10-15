@@ -780,6 +780,8 @@ export interface components {
         };
         /** Attempt */
         Attempt: {
+            /** Budget Reserved */
+            budget_reserved?: string | null;
             /** Candidate Id */
             candidate_id: string;
             cost: components["schemas"]["CostEstimate"] | null;
@@ -1232,6 +1234,8 @@ export interface components {
         EvaluationOut: {
             /** Batch Id */
             batch_id: string;
+            /** Budget Reserved */
+            budget_reserved?: string | null;
             /** Candidate Labels */
             candidate_labels: {
                 [key: string]: string;

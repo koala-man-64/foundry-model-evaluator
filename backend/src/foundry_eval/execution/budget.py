@@ -90,3 +90,10 @@ class BudgetState:
     def release(self, attempt_id: str) -> None:
         with self._lock:
             self.reserved.pop(attempt_id, None)
+
+    def commit_reserved(self, attempt_id: str) -> None:
+        """The call was sent but its cost is unknown: count the whole reservation as spent."""
+        with self._lock:
+            worst = self.reserved.pop(attempt_id, None)
+            if worst is not None:
+                self.committed = add(self.committed, worst)

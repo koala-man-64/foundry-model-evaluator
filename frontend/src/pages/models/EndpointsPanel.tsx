@@ -76,6 +76,7 @@ function KeyControls({ endpoint }: { endpoint: EndpointOut }) {
     mutationFn: (apiKey: string) => put(`/api/endpoints/${endpoint.id}/key`, { api_key: apiKey }),
     onSuccess: () => {
       setKey('') // the key never stays in the page
+      save.reset() // ...nor in the mutation's remembered variables
       notify('API key saved to Windows Credential Manager.', 'ok')
       refresh()
     },
@@ -95,7 +96,10 @@ function KeyControls({ endpoint }: { endpoint: EndpointOut }) {
         <input
           type="password"
           aria-label={`API key for ${endpoint.name}`}
-          autoComplete="off"
+          autoComplete="new-password"
+          data-1p-ignore=""
+          data-lpignore="true"
+          data-bwignore=""
           spellCheck={false}
           placeholder={endpoint.key_configured ? 'Replace the stored key' : 'Paste API key'}
           value={key}

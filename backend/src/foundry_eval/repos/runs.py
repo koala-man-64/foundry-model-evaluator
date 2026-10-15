@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from ..credentials.redaction import REGISTRY, sanitize_error_text
 from ..db.database import Database
 from ..domain.generation import GenerationSettings
 from ..money import Money, to_decimal, to_text
@@ -81,6 +83,7 @@ class Attempt(BaseModel):
     error_type: str | None
     error_message: str | None
     created_at: str
+    budget_reserved: Money | None = None
 
 
 class Run(BaseModel):
@@ -189,7 +192,17 @@ def _attempt(row: sqlite3.Row) -> Attempt:
         error_type=row["error_type"],
         error_message=row["error_message"],
         created_at=row["created_at"],
+        budget_reserved=money("budget_reserved"),
     )
+
+
+def scrub(text: str | None) -> str | None:
+    """Redact registered secrets from provider-supplied text before it is stored (defence in depth)."""
+    return REGISTRY.redact(text) if text else text
+
+
+def scrub_json(value: Any) -> str | None:
+    return None if value is None else scrub(json.dumps(value))
 
 
 def _cost_columns(cost: CostEstimate) -> tuple[str, str, str | None, str, str | None]:
@@ -411,13 +424,14 @@ class RunRepository:
         with self.db.transaction() as conn:
             conn.execute("UPDATE runs SET status = ?, finished_at = ? WHERE id = ?", (status.value, iso_now(), run_id))
 
-    def mark_sent(self, attempt_id: str) -> None:
+    def mark_sent(self, attempt_id: str, reserved: Decimal | None = None) -> None:
         """Record that the request is about to be sent (written before the HTTP call)."""
         now = iso_now()
         with self.db.transaction() as conn:
             conn.execute(
-                "UPDATE attempts SET status = 'running', started_at = ?, request_sent_at = ? WHERE id = ?",
-                (now, now, attempt_id),
+                "UPDATE attempts SET status = 'running', started_at = ?, request_sent_at = ?, budget_reserved = ?"
+                " WHERE id = ?",
+                (now, now, to_text(reserved) if reserved is not None else None, attempt_id),
             )
 
     def finish_not_sent(self, attempt_id: str, status: AttemptStatus, message: str, currency: str) -> None:
@@ -457,15 +471,15 @@ class RunRepository:
                     result.raw_finish_reason,
                     result.response_model,
                     result.service_tier,
-                    result.output_text,
-                    result.reasoning_summary,
-                    json.dumps(result.response_json) if result.response_json is not None else None,
-                    json.dumps(result.raw_usage) if result.raw_usage is not None else None,
+                    scrub(result.output_text),
+                    scrub(result.reasoning_summary),
+                    scrub_json(result.response_json),
+                    scrub_json(result.raw_usage),
                     usage.model_dump_json() if usage else None,
                     *_cost_columns(cost),
                     result.error_type,
-                    result.error_message,
-                    json.dumps(result.request_body),
+                    sanitize_error_text(result.error_message),
+                    scrub_json(result.request_body),
                     attempt_id,
                 ),
             )

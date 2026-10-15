@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Literal
@@ -19,7 +20,7 @@ from ..pricing.service import PricingService
 from ..pricing.snapshots import create_snapshot
 from ..providers.base import Prompt
 from ..providers.request_builder import SettingsValidationError, build_body
-from ..repos.endpoints import EndpointRepository, NotFoundError
+from ..repos.endpoints import ConflictError, EndpointRepository, NotFoundError
 from ..repos.profiles import ProfileRepository
 from ..repos.runs import RunRepository
 from .budget import input_token_upper_bound, worst_case_cost
@@ -251,6 +252,24 @@ class RunService:
             cards[profile.id] = (endpoint, self.pricing.resolve(profile, endpoint))
         first_line = (request.prompts[0].user.strip().splitlines() or [""])[0][:80]
         title = request.title.strip() or request.prompts[0].title or first_line
+        try:
+            return self._insert(request, idempotency_key, title, profiles, labels, cards), True
+        except sqlite3.IntegrityError:
+            # A concurrent request with the same key won the race: return its run.
+            existing = self.runs.by_idempotency_key(idempotency_key)
+            if existing is None:
+                raise
+            return existing.id, False
+
+    def _insert(
+        self,
+        request: RunRequest,
+        idempotency_key: str,
+        title: str,
+        profiles: dict[str, ModelProfile],
+        labels: list[str],
+        cards: dict[str, Any],
+    ) -> str:
         with self.db.transaction() as conn:
             run_id = self.runs.insert_run(
                 conn,
@@ -307,20 +326,25 @@ class RunService:
                             trial_index=trial,
                             request_body=body,
                         )
-        return run_id, True
+        return run_id
 
-    def create_retry(self, attempt_id: str) -> str:
-        """Explicit retry: a new attempt record with the same candidate, prompt and request body."""
+    def create_retry(self, attempt_id: str, conn: sqlite3.Connection) -> str:
+        """Explicit retry: a new attempt record with the same candidate, prompt and request body.
+
+        Runs inside the caller's write transaction; an attempt can be retried only once (retry the
+        newest attempt instead), so concurrent clicks cannot create duplicate paid calls.
+        """
         original = self.runs.attempt(attempt_id)
         if original.status.value in ("queued", "running"):
             raise ValueError("This attempt is still in progress.")
-        with self.db.transaction() as conn:
-            return self.runs.insert_attempt(
-                conn,
-                run_id=original.run_id,
-                candidate_id=original.candidate_id,
-                prompt_id=original.prompt_id,
-                trial_index=original.trial_index,
-                request_body=original.request_body,
-                retry_of=original.id,
-            )
+        if conn.execute("SELECT 1 FROM attempts WHERE retry_of = ? LIMIT 1", (attempt_id,)).fetchone():
+            raise ConflictError("This attempt was already retried; retry its newest attempt instead.")
+        return self.runs.insert_attempt(
+            conn,
+            run_id=original.run_id,
+            candidate_id=original.candidate_id,
+            prompt_id=original.prompt_id,
+            trial_index=original.trial_index,
+            request_body=original.request_body,
+            retry_of=original.id,
+        )

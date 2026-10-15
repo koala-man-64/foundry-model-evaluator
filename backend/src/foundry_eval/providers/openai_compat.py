@@ -15,7 +15,7 @@ import httpx2
 from ..credentials.redaction import sanitize_error_text
 from ..types import ApiStyle, FinishReason
 from .base import ProviderCall, ProviderResult
-from .http import make_async_client, make_timeout
+from .http import make_async_client, make_timeout, redirect_message
 from .sse import iter_sse
 
 _REQUEST_ID_HEADERS = ("x-request-id", "apim-request-id", "request-id", "x-ms-request-id")
@@ -181,7 +181,7 @@ class _OpenAICompatibleAdapter:
         start = time.perf_counter()
         try:
             async with asyncio.timeout(call.timeouts.total):
-                async with make_async_client(timeout=timeout, transport=self._transport) as client:
+                async with make_async_client(timeout=timeout, url=call.url, transport=self._transport) as client:
                     request = client.build_request(
                         "POST", call.url, params=call.query or None, headers=headers, content=json.dumps(call.body)
                     )
@@ -201,6 +201,15 @@ class _OpenAICompatibleAdapter:
 
     async def _handle(self, call: ProviderCall, response: httpx2.Response, start: float) -> ProviderResult:
         request_id = _request_id(response.headers)
+        if 300 <= response.status_code < 400:
+            return _error_result(
+                call,
+                start,
+                error_type="redirect",
+                message=redirect_message(response.status_code, response.headers.get("location")),
+                status=response.status_code,
+                request_id=request_id,
+            )
         if response.status_code >= 400:
             raw = await response.aread()
             try:
@@ -226,7 +235,11 @@ class _OpenAICompatibleAdapter:
             obj = json.loads(raw)
         except ValueError:
             return _error_result(
-                call, start, error_type="bad_response", message="Provider returned invalid JSON.", status=200
+                call,
+                start,
+                error_type="bad_response",
+                message="Provider returned invalid JSON.",
+                status=response.status_code,
             )
         return self._success(call, obj, start, request_id, response.status_code, ttft_ms=None, streamed=False)
 

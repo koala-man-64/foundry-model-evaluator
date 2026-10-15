@@ -85,9 +85,13 @@ export function RunPage() {
     mutationFn: () => post(`/api/runs/${runId}/cancel`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
   })
+  const retryKey = useRef(newIdempotencyKey())
   const retryFailed = useMutation({
-    mutationFn: () => post(`/api/runs/${runId}/retry-failed`, {}, newIdempotencyKey()),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
+    mutationFn: () => post(`/api/runs/${runId}/retry-failed`, {}, retryKey.current),
+    onSuccess: () => {
+      retryKey.current = newIdempotencyKey()
+      queryClient.invalidateQueries({ queryKey: keys.run(runId) })
+    },
   })
   const detail = query.data
   const wasActive = useRef(false)

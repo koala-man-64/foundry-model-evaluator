@@ -11,9 +11,12 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+log = logging.getLogger(__name__)
 
 SAFE_METHODS = {"GET", "HEAD"}
 CONTENT_SECURITY_POLICY = (
@@ -52,9 +55,12 @@ class HttpGuard:
             return
 
         path: str = scope.get("path", "")
+        started = False
 
         async def send_with_headers(message: Message) -> None:
+            nonlocal started
             if message["type"] == "http.response.start":
+                started = True
                 response_headers = MutableHeaders(scope=message)
                 for name, value in SECURITY_HEADERS.items():
                     response_headers[name] = value
@@ -62,7 +68,14 @@ class HttpGuard:
                     response_headers["cache-control"] = "no-store"
             await send(message)
 
-        await self.app(scope, receive, send_with_headers)
+        try:
+            await self.app(scope, receive, send_with_headers)
+        except Exception:
+            # Answer unexpected errors here, so even a 500 carries the security headers (the
+            # framework's outermost error handler would answer without them).
+            log.exception("Unhandled error while serving %s %s", scope.get("method"), path)
+            if not started:
+                await self._reject(send, 500, "Internal error. Details are in the app's log file.")
 
     def check(self, method: str, headers: Headers) -> tuple[int, str] | None:
         host = headers.get("host", "").lower()

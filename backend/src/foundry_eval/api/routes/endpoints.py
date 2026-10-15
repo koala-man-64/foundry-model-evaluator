@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...credentials.redaction import sanitize_error_text
 from ...domain.profiles import AuthStyle, Endpoint
-from ...providers.http import make_async_client, make_timeout
+from ...providers.http import make_async_client, make_timeout, redirect_message
 from ..deps import ServicesDep
 
 router = APIRouter(prefix="/api/endpoints", tags=["endpoints"])
@@ -130,11 +130,14 @@ async def verify_key(endpoint_id: str, services: ServicesDep) -> VerifyResult:
     header: dict[str, str] = {"Authorization": f"Bearer {key}"} if endpoint.auth_style == "bearer" else {"api-key": key}
     url = endpoint.base_url.rstrip("/") + "/openai/v1/models"
     try:
-        async with make_async_client(timeout=make_timeout(10, 20)) as client:
+        async with make_async_client(timeout=make_timeout(10, 20), url=url) as client:
             response = await client.get(url, headers=header)
     except httpx2.HTTPError as exc:
         return VerifyResult(ok=False, status=None, message=sanitize_error_text(f"Network error: {exc}") or "")
     status: Literal["ok", "bad"] = "ok" if response.status_code == 200 else "bad"
+    if 300 <= response.status_code < 400:
+        message = redirect_message(response.status_code, response.headers.get("location"))
+        return VerifyResult(ok=False, status=response.status_code, message=message)
     messages = {
         200: "The key was accepted (models listed).",
         401: "The key was rejected (HTTP 401).",

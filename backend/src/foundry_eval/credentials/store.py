@@ -7,6 +7,7 @@ never written to SQLite or logs, and never sent to the browser.
 from __future__ import annotations
 
 import contextlib
+import re
 import sys
 from typing import Any
 
@@ -18,6 +19,9 @@ from .redaction import REGISTRY
 
 SERVICE_NAME = "FoundryModelEvaluator"
 _MAX_KEY_LENGTH = 2048
+# Printable ASCII without spaces: anything else cannot be a valid header value and could slip
+# past redaction in transport error messages (which escape control characters).
+_KEY_PATTERN = re.compile(rf"[\x21-\x7e]{{8,{_MAX_KEY_LENGTH}}}")
 _REJECTED_BACKEND_MODULES = ("keyring.backends.fail", "keyring.backends.null", "keyrings.alt")
 
 
@@ -64,7 +68,10 @@ class CredentialStore:
         if platform == "win32":
             from keyring.backends.Windows import WinVaultKeyring
 
-            return cls(WinVaultKeyring())  # type: ignore[no-untyped-call]
+            vault = WinVaultKeyring()  # type: ignore[no-untyped-call]
+            # Keep keys on this computer: the default (enterprise) persistence roams with the profile.
+            vault.persist = "local machine"
+            return cls(vault)
         backend = keyring.get_keyring()
         module = type(backend).__module__
         if any(module.startswith(rejected) for rejected in _REJECTED_BACKEND_MODULES):
@@ -85,8 +92,11 @@ class CredentialStore:
             raise ValueError("API key must not be empty.")
         if len(key) > _MAX_KEY_LENGTH:
             raise ValueError("API key is too long.")
-        if any(ch.isspace() for ch in key):
-            raise ValueError("API key must not contain whitespace.")
+        if not _KEY_PATTERN.fullmatch(key):
+            raise ValueError(
+                "API keys must be 8 or more printable ASCII characters without spaces; check that the whole key "
+                "was pasted."
+            )
         REGISTRY.register(key)
         self._backend.set_password(SERVICE_NAME, _username(credential_ref), key)
 

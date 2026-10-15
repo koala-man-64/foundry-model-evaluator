@@ -58,6 +58,17 @@
       },
       "Attempt": {
         "properties": {
+          "budget_reserved": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Reserved"
+          },
           "candidate_id": {
             "title": "Candidate Id",
             "type": "string"
@@ -1566,6 +1577,17 @@
           "batch_id": {
             "title": "Batch Id",
             "type": "string"
+          },
+          "budget_reserved": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Reserved"
           },
           "candidate_labels": {
             "additionalProperties": {

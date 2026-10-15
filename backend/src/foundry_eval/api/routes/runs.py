@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Response
@@ -224,31 +225,33 @@ async def cancel_run(run_id: str, services: ServicesDep) -> Progress:
 
 @router.post("/runs/{run_id}/retry-failed", response_model=RetryOut)
 def retry_failed(run_id: str, key: IdempotencyKey, services: ServicesDep) -> RetryOut:
-    cached = services.idempotency.get(f"retry-failed:{key}")
-    if cached is not None:
-        return RetryOut(attempt_ids=cached)
+    services.runs.get(run_id)
     retryable = {AttemptStatus.FAILED, AttemptStatus.CANCELLED, AttemptStatus.INTERRUPTED, AttemptStatus.SKIPPED_BUDGET}
-    attempts = services.runs.attempts(run_id)
-    retried = {a.retry_of for a in attempts if a.retry_of}
-    new_ids = [
-        services.run_service.create_retry(a.id) for a in attempts if a.status in retryable and a.id not in retried
-    ]
-    services.idempotency.put(f"retry-failed:{key}", new_ids)
-    if new_ids:
+
+    def work(conn: sqlite3.Connection) -> list[str]:
+        attempts = services.runs.attempts(run_id)
+        retried = {a.retry_of for a in attempts if a.retry_of}
+        return [
+            services.run_service.create_retry(a.id, conn)
+            for a in attempts
+            if a.status in retryable and a.id not in retried
+        ]
+
+    new_ids, created = services.action_keys.run_once(key, f"retry-failed:{run_id}", work)
+    if created and new_ids:
         services.engine.start(run_id, new_ids)
     return RetryOut(attempt_ids=new_ids)
 
 
 @router.post("/attempts/{attempt_id}/retry", response_model=RetryOut)
 def retry_attempt(attempt_id: str, key: IdempotencyKey, services: ServicesDep) -> RetryOut:
-    cached = services.idempotency.get(f"retry:{key}")
-    if cached is not None:
-        return RetryOut(attempt_ids=cached)
-    new_id = services.run_service.create_retry(attempt_id)
-    attempt = services.runs.attempt(new_id)
-    services.idempotency.put(f"retry:{key}", [new_id])
-    services.engine.start(attempt.run_id, [new_id])
-    return RetryOut(attempt_ids=[new_id])
+    attempt = services.runs.attempt(attempt_id)
+    new_ids, created = services.action_keys.run_once(
+        key, f"retry:{attempt_id}", lambda conn: [services.run_service.create_retry(attempt_id, conn)]
+    )
+    if created:
+        services.engine.start(attempt.run_id, new_ids)
+    return RetryOut(attempt_ids=new_ids)
 
 
 @router.get("/attempts/{attempt_id}/raw", response_model=RawOut)
