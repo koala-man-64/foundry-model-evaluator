@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { newIdempotencyKey, post } from '../api/client'
@@ -8,7 +8,7 @@ import type { Attempt, RunDetail } from '../api/types'
 import { TotalBox } from '../components/cost'
 import { ResponseCard } from '../components/ResponseCard'
 import { Badge, Empty, ErrorMessage, Spinner, StatusBadge } from '../components/ui'
-import { formatDate } from '../lib/format'
+import { formatDate, STATUS_LABELS } from '../lib/format'
 import { formatMoney } from '../lib/money'
 
 const RETRYABLE = new Set(['failed', 'cancelled', 'interrupted', 'skipped_budget'])
@@ -56,6 +56,15 @@ export function RunHeader({ detail, actions }: { detail: RunDetail; actions?: Re
         <TotalBox title="Judging" total={detail.judging_cost} />
         <TotalBox title="Combined" total={detail.combined_cost} />
       </div>
+      {detail.run.judge_error && <div className="callout warn small">{detail.run.judge_error}</div>}
+      {Object.keys(detail.evaluation_counts ?? {}).length > 0 && (
+        <p className="small muted" data-testid="evaluation-counts">
+          Judge evaluations:{' '}
+          {Object.entries(detail.evaluation_counts ?? {})
+            .map(([status, count]) => `${count} ${STATUS_LABELS[status]?.toLowerCase() ?? status}`)
+            .join(', ')}
+        </p>
+      )}
       {detail.budget && (
         <p className="small muted">
           Budget {formatMoney(detail.budget.limit)} (worst-case reservations are made before each call)
@@ -81,6 +90,16 @@ export function RunPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
   })
   const detail = query.data
+  const wasActive = useRef(false)
+  useEffect(() => {
+    // When the run (and any judging) finishes, lists and comparisons that include it are out of date.
+    if (!detail) return
+    if (detail.active) wasActive.current = true
+    else if (wasActive.current) {
+      wasActive.current = false
+      for (const key of ['runs', 'comparison', 'evaluations']) queryClient.invalidateQueries({ queryKey: [key] })
+    }
+  }, [detail, queryClient])
   const latest = useMemo(() => latestAttempts(detail?.attempts ?? []), [detail])
   const retriedIds = useMemo(
     () => new Set((detail?.attempts ?? []).map((a) => a.retry_of).filter(Boolean) as string[]),
@@ -172,6 +191,7 @@ export function RunPage() {
                 attempt={attempt}
                 candidate={candidate}
                 manualScore={detail.manual_scores[attempt.id]}
+                judgeScore={detail.judge_scores?.[attempt.id]}
                 retried={retriedIds.has(attempt.id)}
               />
             )

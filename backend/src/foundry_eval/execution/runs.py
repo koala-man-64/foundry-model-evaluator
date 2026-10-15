@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -141,6 +142,8 @@ class RunService:
         self.runs = RunRepository(db)
         self.profiles = ProfileRepository(db)
         self.endpoints = EndpointRepository(db)
+        # Checks an automatic-judging configuration (set by the judge service).
+        self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
     def preview(self, request: RunRequest) -> RunPreview:
         errors: list[str] = []
@@ -219,6 +222,8 @@ class RunService:
                     errors.append(f"{item.label}: a budget needs a bounded cost per call ({item.worst_case_reason}).")
         if request.judge_config and request.kind != "suite":
             errors.append("Automatic judging can only be configured on suite runs.")
+        elif request.judge_config and self.judge_config_validator is not None:
+            errors.extend(self.judge_config_validator(request.judge_config))
         calls = len(request.prompts) * len(request.candidates) * request.trials
         return RunPreview(
             ok=not errors,

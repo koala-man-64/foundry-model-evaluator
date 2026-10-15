@@ -139,6 +139,7 @@ def cmd_pricing_check(args: argparse.Namespace) -> int:
 def cmd_smoke(args: argparse.Namespace) -> int:
     from .domain.generation import GenerationSettings
     from .execution.runs import CandidateSpec, PromptSpec, RunRequest, RunValidationError
+    from .judging.service import JudgeRequest, JudgeValidationError
     from .timeutil import new_id
 
     try:
@@ -154,7 +155,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     lock, services = _offline_services(config)
     try:
         by_name = {p.name: p for p in services.profiles.list()}
-        missing = [name for name in args.profile if name not in by_name]
+        missing = [name for name in [*args.profile, *([args.judge] if args.judge else [])] if name not in by_name]
         if missing:
             print(f"Unknown profiles: {', '.join(missing)}", file=sys.stderr)
             return 2
@@ -183,12 +184,27 @@ def cmd_smoke(args: argparse.Namespace) -> int:
                 print(f"error: {error}", file=sys.stderr)
             return 2
 
+        evaluation_ids: list[str] = []
+
         async def execute() -> None:
+            services.engine.concurrency_override = 1  # one call at a time; the saved setting is unchanged
             services.engine.semaphore()  # bind to this loop
             services.engine.start(run_id)
             await services.engine.wait(run_id)
+            if args.judge:
+                judge_request = JudgeRequest(
+                    judge_profile_id=by_name[args.judge].id,
+                    settings=GenerationSettings(max_output_tokens=args.judge_max_output_tokens),
+                )
+                try:
+                    ids, _ = services.judge.create(run_id, judge_request, f"smoke-judge-{new_id()}")
+                except JudgeValidationError as exc:
+                    for error in exc.preview.errors:
+                        print(f"judge error: {error}", file=sys.stderr)
+                    return
+                evaluation_ids.extend(ids)
+                await asyncio.gather(*(services.judge.run_evaluation(run_id, i) for i in ids))
 
-        services.settings.save(services.settings.get().model_copy(update={"concurrency": 1}))
         asyncio.run(execute())
         attempts = services.runs.attempts(run_id)
         spent = Decimal(0)
@@ -213,6 +229,28 @@ def cmd_smoke(args: argparse.Namespace) -> int:
                 print(f"  estimated token cost: {total}")
                 for reason in cost.reasons:
                     print(f"    - {reason}")
+        labels = {c.id: c.label for c in services.runs.candidates(run_id)}
+        for evaluation_id in evaluation_ids:
+            evaluation = services.evaluations.get(evaluation_id)
+            cost = evaluation.cost
+            if cost and cost.status != "not_sent":
+                spent += cost.upper if cost.upper is not None else cost.lower
+            print(f"\nJudge ({args.judge}): {evaluation.status}")
+            if evaluation.error_message:
+                print(f"  {evaluation.error_message}")
+            for error in evaluation.parse_errors:
+                print(f"  - {error}")
+            for item in evaluation.candidates:
+                scores = ", ".join(f"{c.key} {c.score}" for c in item.criteria)
+                label = labels.get(item.candidate_id, item.candidate_id)
+                print(f"  {item.label} = {label}: weighted {item.weighted_overall} ({scores})")
+            if evaluation.preferred:
+                print(f"  preferred: {evaluation.preferred}")
+            if cost:
+                total = cost.total if cost.total is not None else f">= {cost.lower} (incomplete)"
+                print(f"  estimated judging cost: {total}")
+            if evaluation.status != "succeeded":
+                failures += 1
         print(f"\nSpent (upper bound): {spent} of budget {budget}. Results are in the app's History (run {run_id}).")
         return 1 if failures else 0
     finally:
@@ -243,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
     smoke.add_argument("--budget", required=True, help="maximum estimated spend, e.g. 0.05")
     smoke.add_argument("--prompt", default="Reply with the single word: ready.")
     smoke.add_argument("--max-output-tokens", type=int, default=64)
+    smoke.add_argument("--judge", help="also judge the answers with this profile (within the same budget)")
+    smoke.add_argument("--judge-max-output-tokens", type=int, default=1024)
     smoke.set_defaults(func=cmd_smoke)
 
     args = parser.parse_args(argv)

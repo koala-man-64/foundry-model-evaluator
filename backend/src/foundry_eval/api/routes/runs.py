@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...domain.generation import GenerationSettings
 from ...execution.runs import RunPreview, RunRequest
 from ...execution.totals import CostTotal, combine_totals, total_costs
+from ...judging.service import JudgeScore
 from ...money import Money
 from ...pricing.ratecard import RateCard
 from ...pricing.snapshots import load_snapshot
@@ -51,7 +52,8 @@ class RunDetail(BaseModel):
     combined_cost: CostTotal
     active: bool
     budget: BudgetOut | None
-    extras: dict[str, Any] = Field(default_factory=dict)
+    judge_scores: dict[str, JudgeScore] = Field(default_factory=dict)
+    evaluation_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):
@@ -117,11 +119,7 @@ def _candidate_out(c: Any) -> RunCandidateOut:
 
 
 def judging_total(services: ServicesDep, run_id: str, currency: str) -> CostTotal:
-    hook = services.extras.get("judging_costs")
-    if hook is None:
-        return total_costs([], currency)
-    result: CostTotal = hook(run_id, currency)
-    return result
+    return services.judge.judging_total(run_id, currency)
 
 
 def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
@@ -136,10 +134,9 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
         if run.budget is not None
         else None
     )
-    extras: dict[str, Any] = {}
-    extra_hook = services.extras.get("run_detail_extras")
-    if extra_hook is not None:
-        extras = extra_hook(run_id)
+    evaluation_counts: dict[str, int] = {}
+    for evaluation in services.evaluations.list_for_run(run_id):
+        evaluation_counts[evaluation.status] = evaluation_counts.get(evaluation.status, 0) + 1
     return RunDetail(
         run=run,
         prompts=services.runs.prompts(run_id),
@@ -151,7 +148,8 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
         combined_cost=combine_totals(generation, judging),
         active=services.engine.is_active(run_id),
         budget=budget,
-        extras=extras,
+        judge_scores=services.judge.scores_for_run(run_id),
+        evaluation_counts=evaluation_counts,
     )
 
 

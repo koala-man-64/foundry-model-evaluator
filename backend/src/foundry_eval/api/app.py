@@ -23,7 +23,7 @@ from ..services import Services, build_services
 from ..types import ApiStyle
 from .errors import install_error_handlers
 from .guard import HttpGuard
-from .routes import endpoints, pricing, profiles, runs, system
+from .routes import analysis, endpoints, judging, pricing, profiles, runs, suites, system
 
 log = logging.getLogger(__name__)
 
@@ -51,9 +51,9 @@ def create_app(
             services = build_services(
                 config, adapters=adapters, retail_transport=retail_transport, credentials=credentials
             )
-            recovered = services.runs.recover_interrupted(services.settings.get().currency)
+            recovered = services.recover_interrupted()
             if recovered:
-                log.warning("Marked %d unfinished attempts from a previous session as interrupted.", recovered)
+                log.warning("Marked %d unfinished calls from a previous session as interrupted.", recovered)
             services.engine.bind_loop(asyncio.get_running_loop())
             for setup in extra_setup or []:
                 setup(services)  # type: ignore[operator]
@@ -75,22 +75,11 @@ def create_app(
     )
     app.state.config = config
     install_error_handlers(app)
-    for module in (system, endpoints, profiles, pricing, runs):
+    for module in (system, endpoints, profiles, pricing, runs, suites, judging, analysis):
         app.include_router(module.router)
-    _install_increment_two(app)
     _mount_frontend(app, config.static_dir)
     app.add_middleware(HttpGuard, allowed_hosts=config.allowed_hosts, allowed_origins=config.allowed_origins)
     return app
-
-
-def _install_increment_two(app: FastAPI) -> None:
-    import importlib
-
-    try:
-        module = importlib.import_module("foundry_eval.api.routes.increment2")
-    except ImportError:  # pragma: no cover - increment 2 not installed
-        return
-    module.install(app)
 
 
 def _mount_frontend(app: FastAPI, static_dir: Path | None) -> None:

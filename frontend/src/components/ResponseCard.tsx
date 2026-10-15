@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { del, get, newIdempotencyKey, post, put } from '../api/client'
 import { keys } from '../api/hooks'
-import type { Attempt, CandidateOut, ManualScore, RawOut } from '../api/types'
+import type { Attempt, CandidateOut, JudgeScore, ManualScore, RawOut } from '../api/types'
 import { FINISH_LABELS } from '../lib/format'
 import { CostDetails, CostValue } from './cost'
 import { MarkdownView } from './MarkdownView'
@@ -17,7 +17,22 @@ interface Props {
   attempt: Attempt
   candidate: CandidateOut | undefined
   manualScore?: ManualScore
+  judgeScore?: JudgeScore
   retried: boolean
+}
+
+/** The latest judge result for a response (separate from the manual score). */
+export function JudgeScoreLine({ score }: { score: JudgeScore }) {
+  return (
+    <div className="row small" data-testid="judge-score">
+      <span className="muted">Judge score</span>
+      <strong>{score.weighted_overall.toFixed(2)}</strong>
+      <span className="muted">(weighted; judge overall {score.judge_overall.toFixed(2)}, label {score.label})</span>
+      {score.preferred && <Badge tone="ok">preferred</Badge>}
+      {score.tie && <Badge>tie</Badge>}
+      {score.judge_is_participant && <Badge tone="warn">judge also took part</Badge>}
+    </div>
+  )
 }
 
 export function ManualScoreControl({ runId, attemptId, score }: { runId: string; attemptId: string; score?: ManualScore }) {
@@ -69,7 +84,7 @@ export function ManualScoreControl({ runId, attemptId, score }: { runId: string;
   )
 }
 
-export function ResponseCard({ runId, attempt, candidate, manualScore, retried }: Props) {
+export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScore, retried }: Props) {
   const queryClient = useQueryClient()
   const [markdown, setMarkdown] = useState(false)
   const [showRequest, setShowRequest] = useState(false)
@@ -156,8 +171,9 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, retried }
         <CostDetails cost={attempt.cost} />
       </div>
       {done && (
-        <div className="section">
+        <div className="section stack-sm">
           <ManualScoreControl runId={runId} attemptId={attempt.id} score={manualScore} />
+          {judgeScore && <JudgeScoreLine score={judgeScore} />}
         </div>
       )}
       <div className="row section">

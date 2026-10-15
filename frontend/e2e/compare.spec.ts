@@ -127,7 +127,7 @@ test.describe('Compare', () => {
     const failed = page.getByRole('article', { name: `Response from ${broken}`, exact: true })
 
     await expect(low.getByText('Succeeded', { exact: true })).toBeVisible()
-    await expect(low.getByTestId('response-text')).toContainText('Mock answer from gpt-5.6-terra (effort: low)')
+    await expect(low.getByTestId('response-text')).toContainText('answer (effort: low)')
     await expect(high.getByTestId('response-text')).toContainText('(effort: high)')
     await expect(metric(low, 'Reasoning (in output)')).toHaveText('64')
     await expect(metric(high, 'Reasoning (in output)')).toHaveText('1,024')

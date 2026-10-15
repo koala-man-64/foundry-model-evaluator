@@ -252,7 +252,7 @@ function RateDialog({
             <>
               <h4>Candidates from the last match</h4>
               <div className="table-wrap">
-                <table className="compact">
+                <table className="compact" aria-label="Candidates from the last match">
                   <tbody>{matchCandidates.map((c) => meterRow(c.meter, c.reasons))}</tbody>
                 </table>
               </div>
@@ -264,7 +264,7 @@ function RateDialog({
           {catalog.isFetching && <Spinner />}
           {catalog.data && (
             <div className="table-wrap">
-              <table className="compact">
+              <table className="compact" aria-label="Catalog search results">
                 <tbody>{catalog.data.map((meter) => meterRow(meter, meter.problems))}</tbody>
               </table>
             </div>

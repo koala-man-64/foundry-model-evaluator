@@ -73,6 +73,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/comparisons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Runs */
+        get: operations["compare_runs_api_comparisons_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/endpoints": {
         parameters: {
             query?: never;
@@ -142,6 +159,40 @@ export interface paths {
          * @description Free metadata call (list models on the OpenAI v1 route); never a paid inference call.
          */
         post: operations["verify_key_api_endpoints__endpoint_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/evaluations/{evaluation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Evaluation */
+        get: operations["get_evaluation_api_evaluations__evaluation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/evaluations/{evaluation_id}/raw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evaluation Raw */
+        get: operations["evaluation_raw_api_evaluations__evaluation_id__raw_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -355,6 +406,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Project Costs */
+        post: operations["project_costs_api_projections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rubric-versions/{version_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Rubric Version */
+        get: operations["get_rubric_version_api_rubric_versions__version_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rubrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Rubrics */
+        get: operations["list_rubrics_api_rubrics_get"];
+        put?: never;
+        /** Create Rubric */
+        post: operations["create_rubric_api_rubrics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rubrics/{rubric_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Rubric */
+        get: operations["get_rubric_api_rubrics__rubric_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Rubric */
+        patch: operations["patch_rubric_api_rubrics__rubric_id__patch"];
+        trace?: never;
+    };
+    "/api/rubrics/{rubric_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rubric Versions */
+        get: operations["rubric_versions_api_rubrics__rubric_id__versions_get"];
+        put?: never;
+        /**
+         * Add Rubric Version
+         * @description Editing a rubric always creates a new version; earlier versions never change.
+         */
+        post: operations["add_rubric_version_api_rubrics__rubric_id__versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs": {
         parameters: {
             query?: never;
@@ -424,6 +566,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Evaluations */
+        get: operations["list_evaluations_api_runs__run_id__evaluations_get"];
+        put?: never;
+        /**
+         * Create Evaluations
+         * @description Run the judge (a paid action) on the run's succeeded responses in the requested scope.
+         */
+        post: operations["create_evaluations_api_runs__run_id__evaluations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/evaluations/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Evaluations */
+        post: operations["preview_evaluations_api_runs__run_id__evaluations_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/progress": {
         parameters: {
             query?: never;
@@ -470,6 +650,94 @@ export interface paths {
         /** Put Settings */
         put: operations["put_settings_api_settings_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Suites */
+        get: operations["list_suites_api_suites_get"];
+        put?: never;
+        /** Create Suite */
+        post: operations["create_suite_api_suites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suites/{suite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Suite */
+        get: operations["get_suite_api_suites__suite_id__get"];
+        /** Update Suite */
+        put: operations["update_suite_api_suites__suite_id__put"];
+        post?: never;
+        /** Delete Suite */
+        delete: operations["delete_suite_api_suites__suite_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suites/{suite_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Suite */
+        post: operations["archive_suite_api_suites__suite_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suites/{suite_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Suite Run */
+        post: operations["preview_suite_run_api_suites__suite_id__preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/suites/{suite_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Suite */
+        post: operations["run_suite_api_suites__suite_id__runs_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -611,6 +879,42 @@ export interface components {
             /** Worst Case Reason */
             worst_case_reason: string | null;
         };
+        /** CandidateProjection */
+        CandidateProjection: {
+            /** Assumptions */
+            assumptions: string[];
+            /** Attempts Excluded */
+            attempts_excluded: number;
+            /** Attempts Used */
+            attempts_used: number;
+            /** Cache Read Applicable */
+            cache_read_applicable: boolean;
+            /** Cache Write Applicable */
+            cache_write_applicable: boolean;
+            /** Candidate Key */
+            candidate_key: string;
+            /** Cost Per 1K Requests */
+            cost_per_1k_requests: string | null;
+            /** Cost Per Month */
+            cost_per_month: string | null;
+            /** Cost Per Request */
+            cost_per_request: string | null;
+            /** Custom Rates */
+            custom_rates: boolean;
+            /** Exclusion Reasons */
+            exclusion_reasons: string[];
+            /** Label */
+            label: string;
+            /** Profile Name */
+            profile_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "complete" | "unavailable";
+            /** Warnings */
+            warnings: string[];
+        };
         /** CandidateSpec */
         CandidateSpec: {
             /** Label */
@@ -669,6 +973,85 @@ export interface components {
             /** Reason */
             reason?: string | null;
             status: components["schemas"]["RateStatus"];
+        };
+        /** Comparison */
+        Comparison: {
+            /** Candidates */
+            candidates: components["schemas"]["ComparisonCandidate"][];
+            /** Cells */
+            cells: components["schemas"]["ComparisonCell"][];
+            /** Cells Matched */
+            cells_matched: number;
+            /** Cells Total */
+            cells_total: number;
+            /** Currency */
+            currency: string;
+            /** Notes */
+            notes: string[];
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** ComparisonCandidate */
+        ComparisonCandidate: {
+            /** Attempts */
+            attempts: number;
+            /** Avg Cost */
+            avg_cost: string | null;
+            /** Avg Input Tokens */
+            avg_input_tokens: number | null;
+            /** Avg Judge Score */
+            avg_judge_score: number | null;
+            /** Avg Latency Ms */
+            avg_latency_ms: number | null;
+            /** Avg Manual Score */
+            avg_manual_score: number | null;
+            /** Avg Output Tokens */
+            avg_output_tokens: number | null;
+            /** Avg Reasoning Tokens */
+            avg_reasoning_tokens: number | null;
+            /** Candidate Key */
+            candidate_key: string;
+            /** Cost Cells */
+            cost_cells: number;
+            /** Cost Excluded */
+            cost_excluded: number;
+            /** Covered Cells */
+            covered_cells: number;
+            /** Custom Rates */
+            custom_rates: boolean;
+            /** Failures */
+            failures: number;
+            /** Judge Comparisons */
+            judge_comparisons: number;
+            /** Judge Scored */
+            judge_scored: number;
+            /** Judge Wins */
+            judge_wins: number;
+            /** Label */
+            label: string;
+            /** Manual Scored */
+            manual_scored: number;
+            /** Profile Name */
+            profile_name: string;
+            /** Runs */
+            runs: number;
+            /** Succeeded */
+            succeeded: number;
+            /** Win Rate */
+            win_rate: number | null;
+        };
+        /** ComparisonCell */
+        ComparisonCell: {
+            /** Content Hash */
+            content_hash: string;
+            /** Matched */
+            matched: boolean;
+            /** Missing */
+            missing: string[];
+            /** Prompt Title */
+            prompt_title: string;
+            /** Trial Index */
+            trial_index: number;
         };
         /** CostEstimate */
         CostEstimate: {
@@ -744,12 +1127,45 @@ export interface components {
             /** Upper */
             upper: string | null;
         };
+        /** CreatedEvaluations */
+        CreatedEvaluations: {
+            /** Created */
+            created: boolean;
+            /** Evaluation Ids */
+            evaluation_ids: string[];
+        };
         /** CreatedRun */
         CreatedRun: {
             /** Created */
             created: boolean;
             /** Run Id */
             run_id: string;
+        };
+        /** Criterion */
+        Criterion: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /**
+             * Weight
+             * @default 1
+             */
+            weight: number;
+        };
+        /** CriterionScore */
+        CriterionScore: {
+            /** Explanation */
+            explanation: string;
+            /** Key */
+            key: string;
+            /** Score */
+            score: number;
         };
         /** EndpointIn */
         EndpointIn: {
@@ -792,6 +1208,127 @@ export interface components {
             region: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** EvaluationCandidate */
+        EvaluationCandidate: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Criteria */
+            criteria: components["schemas"]["CriterionScore"][];
+            /** Explanation */
+            explanation: string;
+            /** Judge Overall */
+            judge_overall: number;
+            /** Label */
+            label: string;
+            /** Position */
+            position: number;
+            /** Weighted Overall */
+            weighted_overall: number;
+        };
+        /** EvaluationOut */
+        EvaluationOut: {
+            /** Batch Id */
+            batch_id: string;
+            /** Candidate Labels */
+            candidate_labels: {
+                [key: string]: string;
+            };
+            /** Candidates */
+            candidates: components["schemas"]["EvaluationCandidate"][];
+            cost: components["schemas"]["CostEstimate"] | null;
+            /** Cost Total */
+            cost_total: string | null;
+            /** Created At */
+            created_at: string;
+            /** Error Message */
+            error_message: string | null;
+            /** Error Type */
+            error_type: string | null;
+            /** Finish Reason */
+            finish_reason: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Id */
+            id: string;
+            /** Input Estimate Tokens */
+            input_estimate_tokens: number;
+            /** Input Limit Tokens */
+            input_limit_tokens: number;
+            /** Judge Is Participant */
+            judge_is_participant: boolean;
+            /** Judge Profile Id */
+            judge_profile_id: string;
+            /** Judge Profile Name */
+            judge_profile_name: string;
+            /** Judge Profile Snapshot */
+            judge_profile_snapshot: {
+                [key: string]: unknown;
+            };
+            judge_settings: components["schemas"]["GenerationSettings"];
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Order */
+            order: components["schemas"]["OrderEntry"][];
+            /** Output Text */
+            output_text: string | null;
+            /** Parse Errors */
+            parse_errors: string[];
+            /** Participant Reasons */
+            participant_reasons: string[];
+            /** Preference Explanation */
+            preference_explanation: string | null;
+            /** Preferred */
+            preferred: string | null;
+            /** Preferred Candidate Id */
+            preferred_candidate_id: string | null;
+            /** Price Snapshot Id */
+            price_snapshot_id: string;
+            /** Prompt Id */
+            prompt_id: string;
+            /** Raw Finish Reason */
+            raw_finish_reason: string | null;
+            /** Request Sent At */
+            request_sent_at: string | null;
+            /** Response Model */
+            response_model: string | null;
+            rubric: components["schemas"]["RubricVersion"];
+            /** Rubric Name */
+            rubric_name: string;
+            /** Rubric Version Id */
+            rubric_version_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "succeeded" | "malformed" | "failed" | "rejected_oversized" | "cancelled" | "interrupted" | "skipped_budget";
+            /** Structured Output */
+            structured_output: boolean;
+            /** Trial Index */
+            trial_index: number;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "manual" | "auto";
+            usage: components["schemas"]["UsageFacts"] | null;
+        };
+        /** EvaluationRaw */
+        EvaluationRaw: {
+            /** Raw Response */
+            raw_response: unknown;
+            /** Raw Usage */
+            raw_usage: unknown;
+            /** Request Body */
+            request_body: {
+                [key: string]: unknown;
+            };
         };
         /** FetchOut */
         FetchOut: {
@@ -839,6 +1376,25 @@ export interface components {
             /** Verbosity */
             verbosity?: string | null;
         };
+        /** GroupPreview */
+        GroupPreview: {
+            /** Input Estimate Tokens */
+            input_estimate_tokens: number;
+            /** Input Limit Tokens */
+            input_limit_tokens: number;
+            /** Oversized */
+            oversized: boolean;
+            /** Prompt Id */
+            prompt_id: string;
+            /** Prompt Position */
+            prompt_position: number;
+            /** Prompt Title */
+            prompt_title: string;
+            /** Responses */
+            responses: number;
+            /** Trial Index */
+            trial_index: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -850,6 +1406,73 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** JudgePreview */
+        JudgePreview: {
+            /** Calls */
+            calls: number;
+            /** Errors */
+            errors: string[];
+            /** Groups */
+            groups: components["schemas"]["GroupPreview"][];
+            /** Judge Profile Name */
+            judge_profile_name: string | null;
+            /** Key Configured */
+            key_configured: boolean;
+            /** Ok */
+            ok: boolean;
+            /** Participant Reasons */
+            participant_reasons: string[];
+            /** Rubric Name */
+            rubric_name: string | null;
+            /** Rubric Version */
+            rubric_version: number | null;
+            /** Rubric Version Id */
+            rubric_version_id: string | null;
+            /** Skipped Groups */
+            skipped_groups: number;
+            /** Structured Output */
+            structured_output: boolean;
+            /** Unknown Rates */
+            unknown_rates: string[];
+            /** Warnings */
+            warnings: string[];
+            /** Worst Case Total */
+            worst_case_total: string | null;
+        };
+        /** JudgeRequest */
+        JudgeRequest: {
+            /** Judge Profile Id */
+            judge_profile_id: string;
+            /** Prompt Id */
+            prompt_id?: string | null;
+            /** Rubric Id */
+            rubric_id?: string | null;
+            /** Rubric Version Id */
+            rubric_version_id?: string | null;
+            settings?: components["schemas"]["GenerationSettings"];
+            /** Trial Index */
+            trial_index?: number | null;
+        };
+        /**
+         * JudgeScore
+         * @description The latest successful judge result for one attempt (kept apart from manual scores).
+         */
+        JudgeScore: {
+            /** Evaluation Id */
+            evaluation_id: string;
+            /** Judge Is Participant */
+            judge_is_participant: boolean;
+            /** Judge Overall */
+            judge_overall: number;
+            /** Label */
+            label: string;
+            /** Preferred */
+            preferred: boolean;
+            /** Tie */
+            tie: boolean;
+            /** Weighted Overall */
+            weighted_overall: number;
         };
         /** KeyIn */
         KeyIn: {
@@ -1038,6 +1661,15 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** OrderEntry */
+        OrderEntry: {
+            /** Attempt Id */
+            attempt_id: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Label */
+            label: string;
+        };
         /** OverrideIn */
         OverrideIn: {
             /** Note */
@@ -1197,6 +1829,44 @@ export interface components {
             status: string;
             /** Total */
             total: number;
+        };
+        /** ProjectionRequest */
+        ProjectionRequest: {
+            /** Candidate Keys */
+            candidate_keys?: string[] | null;
+            /**
+             * Monthly Requests
+             * @default 10000
+             */
+            monthly_requests: number;
+            /**
+             * Price Basis
+             * @default original
+             * @enum {string}
+             */
+            price_basis: "original" | "current";
+            /** Run Ids */
+            run_ids: string[];
+            what_if?: components["schemas"]["WhatIf-Input"];
+        };
+        /** ProjectionResult */
+        ProjectionResult: {
+            /** Assumptions */
+            assumptions: string[];
+            /** Candidates */
+            candidates: components["schemas"]["CandidateProjection"][];
+            /** Currency */
+            currency: string;
+            /** Monthly Requests */
+            monthly_requests: number;
+            /** Notes */
+            notes: string[];
+            /**
+             * Price Basis
+             * @enum {string}
+             */
+            price_basis: "original" | "current";
+            what_if: components["schemas"]["WhatIf-Output"];
         };
         /** PromptSpec */
         PromptSpec: {
@@ -1411,6 +2081,72 @@ export interface components {
             /** Attempt Ids */
             attempt_ids: string[];
         };
+        /** Rubric */
+        Rubric: {
+            /** Archived */
+            archived: boolean;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Is Default */
+            is_default: boolean;
+            latest: components["schemas"]["RubricVersion"];
+            /** Name */
+            name: string;
+            /** Updated At */
+            updated_at: string;
+            /** Version Count */
+            version_count: number;
+        };
+        /**
+         * RubricDefinition
+         * @description The content of one rubric version (validated before it is stored).
+         */
+        RubricDefinition: {
+            /** Criteria */
+            criteria: components["schemas"]["Criterion"][];
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+            /**
+             * Scale Max
+             * @default 5
+             */
+            scale_max: number;
+            /**
+             * Scale Min
+             * @default 1
+             */
+            scale_min: number;
+        };
+        /** RubricIn */
+        RubricIn: {
+            definition: components["schemas"]["RubricDefinition"];
+            /** Name */
+            name: string;
+        };
+        /** RubricPatch */
+        RubricPatch: {
+            /** Archived */
+            archived?: boolean | null;
+            /** Name */
+            name?: string | null;
+        };
+        /** RubricVersion */
+        RubricVersion: {
+            /** Created At */
+            created_at: string;
+            definition: components["schemas"]["RubricDefinition"];
+            /** Id */
+            id: string;
+            /** Rubric Id */
+            rubric_id: string;
+            /** Version */
+            version: number;
+        };
         /** Run */
         Run: {
             /** Budget */
@@ -1427,6 +2163,8 @@ export interface components {
             judge_config: {
                 [key: string]: unknown;
             } | null;
+            /** Judge Error */
+            judge_error?: string | null;
             /** Kind */
             kind: string;
             /** Started At */
@@ -1475,11 +2213,15 @@ export interface components {
             /** Candidates */
             candidates: components["schemas"]["RunCandidateOut"][];
             combined_cost: components["schemas"]["CostTotal"];
-            /** Extras */
-            extras?: {
-                [key: string]: unknown;
+            /** Evaluation Counts */
+            evaluation_counts?: {
+                [key: string]: number;
             };
             generation_cost: components["schemas"]["CostTotal"];
+            /** Judge Scores */
+            judge_scores?: {
+                [key: string]: components["schemas"]["JudgeScore"];
+            };
             judging_cost: components["schemas"]["CostTotal"];
             /** Manual Scores */
             manual_scores: {
@@ -1637,6 +2379,134 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** Suite */
+        Suite: {
+            /** Archived */
+            archived: boolean;
+            /** Candidates */
+            candidates: components["schemas"]["SuiteCandidate"][];
+            /** Created At */
+            created_at: string;
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            judge: components["schemas"]["SuiteJudge"] | null;
+            /** Name */
+            name: string;
+            /** Prompts */
+            prompts: components["schemas"]["SuitePrompt"][];
+            /** Trials */
+            trials: number;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** SuiteArchiveIn */
+        SuiteArchiveIn: {
+            /** Archived */
+            archived: boolean;
+        };
+        /** SuiteCandidate */
+        SuiteCandidate: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string | null;
+            /** Position */
+            position: number;
+            /** Profile Id */
+            profile_id: string;
+            settings: components["schemas"]["GenerationSettings"];
+        };
+        /** SuiteCandidateIn */
+        SuiteCandidateIn: {
+            /** Id */
+            id?: string | null;
+            /** Label */
+            label?: string | null;
+            /** Profile Id */
+            profile_id: string;
+            settings?: components["schemas"]["GenerationSettings"];
+        };
+        /** SuiteIn */
+        SuiteIn: {
+            /** Candidates */
+            candidates: components["schemas"]["SuiteCandidateIn"][];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            judge?: components["schemas"]["SuiteJudge"] | null;
+            /** Name */
+            name: string;
+            /** Prompts */
+            prompts: components["schemas"]["SuitePromptIn"][];
+            /**
+             * Trials
+             * @default 1
+             */
+            trials: number;
+        };
+        /**
+         * SuiteJudge
+         * @description Automatic judging after each suite run; frozen into the run when the run is created.
+         */
+        SuiteJudge: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Judge Profile Id */
+            judge_profile_id?: string | null;
+            /**
+             * Rubric Id
+             * @default default
+             */
+            rubric_id: string;
+            settings?: components["schemas"]["GenerationSettings"];
+        };
+        /** SuitePrompt */
+        SuitePrompt: {
+            /** Id */
+            id: string;
+            /** Position */
+            position: number;
+            /** System */
+            system: string;
+            /** Title */
+            title: string;
+            /** User */
+            user: string;
+        };
+        /** SuitePromptIn */
+        SuitePromptIn: {
+            /** Id */
+            id?: string | null;
+            /**
+             * System
+             * @default
+             */
+            system: string;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** User */
+            user: string;
+        };
+        /** SuiteRunIn */
+        SuiteRunIn: {
+            /** Budget */
+            budget?: number | string | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
         /** TokenPool */
         TokenPool: {
             /** Categories */
@@ -1721,6 +2591,46 @@ export interface components {
             ok: boolean;
             /** Status */
             status: number | null;
+        };
+        /**
+         * WhatIf
+         * @description Scenario assumptions. They are labelled as assumptions wherever results are shown.
+         */
+        "WhatIf-Input": {
+            /** Cache Read Share */
+            cache_read_share?: number | string | null;
+            /** Cache Write Share */
+            cache_write_share?: number | string | null;
+            /**
+             * Input Multiplier
+             * @default 1
+             */
+            input_multiplier: number | string;
+            /**
+             * Output Multiplier
+             * @default 1
+             */
+            output_multiplier: number | string;
+        };
+        /**
+         * WhatIf
+         * @description Scenario assumptions. They are labelled as assumptions wherever results are shown.
+         */
+        "WhatIf-Output": {
+            /** Cache Read Share */
+            cache_read_share?: string | null;
+            /** Cache Write Share */
+            cache_write_share?: string | null;
+            /**
+             * Input Multiplier
+             * @default 1
+             */
+            input_multiplier: string;
+            /**
+             * Output Multiplier
+             * @default 1
+             */
+            output_multiplier: string;
         };
     };
     responses: never;
@@ -1875,6 +2785,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PresetCatalog"];
+                };
+            };
+        };
+    };
+    compare_runs_api_comparisons_get: {
+        parameters: {
+            query: {
+                run_id: string[];
+                candidate_key?: string[] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Comparison"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2111,6 +3053,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VerifyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_evaluation_api_evaluations__evaluation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluation_raw_api_evaluations__evaluation_id__raw_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationRaw"];
                 };
             };
             /** @description Validation Error */
@@ -2593,6 +3597,266 @@ export interface operations {
             };
         };
     };
+    project_costs_api_projections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectionResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_rubric_version_api_rubric_versions__version_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RubricVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_rubrics_api_rubrics_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rubric"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_rubric_api_rubrics_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RubricIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rubric"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_rubric_api_rubrics__rubric_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rubric_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rubric"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_rubric_api_rubrics__rubric_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rubric_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RubricPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Rubric"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rubric_versions_api_rubrics__rubric_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rubric_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RubricVersion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_rubric_version_api_rubrics__rubric_id__versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rubric_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RubricDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RubricVersion"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_api_runs_get: {
         parameters: {
             query?: {
@@ -2756,6 +4020,109 @@ export interface operations {
             };
         };
     };
+    list_evaluations_api_runs__run_id__evaluations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_evaluations_api_runs__run_id__evaluations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JudgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedEvaluations"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_evaluations_api_runs__run_id__evaluations_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JudgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JudgePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_progress_api_runs__run_id__progress_get: {
         parameters: {
             query?: never;
@@ -2860,6 +4227,272 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_suites_api_suites_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suite"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_suite_api_suites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuiteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_suite_api_suites__suite_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_suite_api_suites__suite_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuiteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_suite_api_suites__suite_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_suite_api_suites__suite_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuiteArchiveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Suite"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_suite_run_api_suites__suite_id__preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuiteRunIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_suite_api_suites__suite_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuiteRunIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedRun"];
                 };
             };
             /** @description Validation Error */

@@ -8,20 +8,26 @@ from typing import Any
 
 import httpx2
 
+from .analysis.comparisons import ComparisonService
+from .analysis.projections import ProjectionService
 from .config import AppConfig
 from .credentials.store import CredentialStore, CredentialStoreError
 from .db.database import Database
 from .execution.engine import Engine
 from .execution.runs import RunService
+from .judging.service import JudgeService
 from .pricing.retail import RetailPricesClient
 from .pricing.service import PricingService
 from .providers.base import ProviderAdapter
 from .providers.registry import default_adapters
 from .repos.endpoints import EndpointRepository
+from .repos.evaluations import EvaluationRepository
 from .repos.profiles import ProfileRepository
 from .repos.rates import RateRepository
+from .repos.rubrics import RubricRepository
 from .repos.runs import RunRepository
 from .repos.settings import SettingsRepository
+from .repos.suites import SuiteRepository
 from .types import ApiStyle
 
 
@@ -82,9 +88,19 @@ class Services:
     pricing: PricingService
     run_service: RunService
     engine: Engine
+    suites: SuiteRepository
+    rubrics: RubricRepository
+    evaluations: EvaluationRepository
+    judge: JudgeService
+    comparisons: ComparisonService
+    projections: ProjectionService
     idempotency: IdempotencyCache = field(default_factory=IdempotencyCache)
     credential_error: str | None = None
-    extras: dict[str, Any] = field(default_factory=dict)
+
+    def recover_interrupted(self) -> int:
+        """After a restart: mark unfinished attempts, runs and evaluations interrupted (never replayed)."""
+        currency = self.settings.get().currency
+        return self.runs.recover_interrupted(currency) + self.evaluations.recover_interrupted(currency)
 
 
 def build_services(
@@ -106,6 +122,11 @@ def build_services(
     settings = SettingsRepository(db)
     pricing = PricingService(db, RetailPricesClient(config.retail_prices_url, transport=retail_transport))
     engine = Engine(db, credentials, adapters or default_adapters(), settings)
+    judge = JudgeService(db, credentials, pricing, engine, settings)
+    engine.on_generation_finished = judge.auto_judge
+    engine.spent_hooks.append(judge.spent)
+    run_service = RunService(db, credentials, pricing)
+    run_service.judge_config_validator = judge.validate_frozen_config
     return Services(
         config=config,
         db=db,
@@ -116,7 +137,13 @@ def build_services(
         rates=RateRepository(db),
         runs=RunRepository(db),
         pricing=pricing,
-        run_service=RunService(db, credentials, pricing),
+        run_service=run_service,
         engine=engine,
+        suites=SuiteRepository(db),
+        rubrics=RubricRepository(db),
+        evaluations=EvaluationRepository(db),
+        judge=judge,
+        comparisons=ComparisonService(db, judge),
+        projections=ProjectionService(db, pricing),
         credential_error=credential_error,
     )

@@ -2,10 +2,10 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import { useRun, useRuns } from '../api/hooks'
-import { ManualScoreControl } from '../components/ResponseCard'
+import { JudgeScoreLine, ManualScoreControl } from '../components/ResponseCard'
 import { StatusBadge, Empty, ErrorMessage, Spinner } from '../components/ui'
-import { JudgeSlot } from '../slots'
 import { latestAttempts } from './RunPage'
+import { JudgePanel } from './scoring/JudgePanel'
 
 export function ScoringPage() {
   const { runId } = useParams()
@@ -82,6 +82,7 @@ export function ScoringPage() {
                       <StatusBadge status={attempt.status} />
                     </div>
                     <div className="response-text">{attempt.output_text || attempt.error_message || '—'}</div>
+                    {detail.judge_scores?.[attempt.id] && <JudgeScoreLine score={detail.judge_scores[attempt.id]} />}
                     {attempt.status === 'succeeded' && (
                       <ManualScoreControl runId={detail.run.id} attemptId={attempt.id} score={detail.manual_scores[attempt.id]} />
                     )}
@@ -90,7 +91,7 @@ export function ScoringPage() {
               })}
             </div>
           </section>
-          <JudgeSlot detail={detail} promptId={prompt.id} trial={trial} />
+          <JudgePanel detail={detail} promptId={prompt.id} trial={trial} />
         </>
       )}
     </div>

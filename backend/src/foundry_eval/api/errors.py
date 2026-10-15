@@ -9,6 +9,7 @@ from ..credentials.redaction import sanitize_error_text
 from ..credentials.store import CredentialStoreError
 from ..execution.runs import RunValidationError
 from ..instance_lock import InstanceLockError
+from ..judging.service import JudgeValidationError
 from ..pricing.retail import RetailPricesError
 from ..providers.request_builder import SettingsValidationError
 from ..repos.endpoints import ConflictError, NotFoundError
@@ -29,6 +30,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RunValidationError)
     async def run_invalid(_: Request, exc: RunValidationError) -> JSONResponse:
+        return JSONResponse({"detail": str(exc), "preview": exc.preview.model_dump(mode="json")}, status_code=422)
+
+    @app.exception_handler(JudgeValidationError)
+    async def judge_invalid(_: Request, exc: JudgeValidationError) -> JSONResponse:
         return JSONResponse({"detail": str(exc), "preview": exc.preview.model_dump(mode="json")}, status_code=422)
 
     @app.exception_handler(CredentialStoreError)

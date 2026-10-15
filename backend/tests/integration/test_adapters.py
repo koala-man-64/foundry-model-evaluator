@@ -37,7 +37,7 @@ async def test_responses_adapter(mock, streaming):
     result = await ResponsesAdapter(transport).execute(call_for(prof, settings, PROMPT))
     assert result.ok and result.finish_reason is FinishReason.COMPLETED
     assert result.streamed is streaming
-    assert "Mock answer from gpt-5-mini (effort: high)" in result.output_text
+    assert "answer (effort: high)" in result.output_text
     assert result.reasoning_summary == "Mock reasoning summary."
     assert result.request_id and result.request_id.startswith("mock-")
     assert (result.ttft_ms is not None) is streaming

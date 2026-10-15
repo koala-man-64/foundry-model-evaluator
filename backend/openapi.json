@@ -509,6 +509,123 @@
         "title": "CandidatePreview",
         "type": "object"
       },
+      "CandidateProjection": {
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "attempts_excluded": {
+            "title": "Attempts Excluded",
+            "type": "integer"
+          },
+          "attempts_used": {
+            "title": "Attempts Used",
+            "type": "integer"
+          },
+          "cache_read_applicable": {
+            "title": "Cache Read Applicable",
+            "type": "boolean"
+          },
+          "cache_write_applicable": {
+            "title": "Cache Write Applicable",
+            "type": "boolean"
+          },
+          "candidate_key": {
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "cost_per_1k_requests": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Per 1K Requests"
+          },
+          "cost_per_month": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Per Month"
+          },
+          "cost_per_request": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Per Request"
+          },
+          "custom_rates": {
+            "title": "Custom Rates",
+            "type": "boolean"
+          },
+          "exclusion_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exclusion Reasons",
+            "type": "array"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "profile_name": {
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_key",
+          "label",
+          "profile_name",
+          "attempts_used",
+          "attempts_excluded",
+          "exclusion_reasons",
+          "cost_per_request",
+          "cost_per_1k_requests",
+          "cost_per_month",
+          "status",
+          "assumptions",
+          "warnings",
+          "custom_rates",
+          "cache_read_applicable",
+          "cache_write_applicable"
+        ],
+        "title": "CandidateProjection",
+        "type": "object"
+      },
       "CandidateSpec": {
         "additionalProperties": false,
         "properties": {
@@ -680,6 +797,276 @@
           "status"
         ],
         "title": "CategoryRate",
+        "type": "object"
+      },
+      "Comparison": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonCell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "cells_matched": {
+            "title": "Cells Matched",
+            "type": "integer"
+          },
+          "cells_total": {
+            "title": "Cells Total",
+            "type": "integer"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Run Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_ids",
+          "currency",
+          "cells_total",
+          "cells_matched",
+          "candidates",
+          "cells",
+          "notes"
+        ],
+        "title": "Comparison",
+        "type": "object"
+      },
+      "ComparisonCandidate": {
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "avg_cost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Cost"
+          },
+          "avg_input_tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Input Tokens"
+          },
+          "avg_judge_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Judge Score"
+          },
+          "avg_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Latency Ms"
+          },
+          "avg_manual_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Manual Score"
+          },
+          "avg_output_tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Output Tokens"
+          },
+          "avg_reasoning_tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Reasoning Tokens"
+          },
+          "candidate_key": {
+            "title": "Candidate Key",
+            "type": "string"
+          },
+          "cost_cells": {
+            "title": "Cost Cells",
+            "type": "integer"
+          },
+          "cost_excluded": {
+            "title": "Cost Excluded",
+            "type": "integer"
+          },
+          "covered_cells": {
+            "title": "Covered Cells",
+            "type": "integer"
+          },
+          "custom_rates": {
+            "title": "Custom Rates",
+            "type": "boolean"
+          },
+          "failures": {
+            "title": "Failures",
+            "type": "integer"
+          },
+          "judge_comparisons": {
+            "title": "Judge Comparisons",
+            "type": "integer"
+          },
+          "judge_scored": {
+            "title": "Judge Scored",
+            "type": "integer"
+          },
+          "judge_wins": {
+            "title": "Judge Wins",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "manual_scored": {
+            "title": "Manual Scored",
+            "type": "integer"
+          },
+          "profile_name": {
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "succeeded": {
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          }
+        },
+        "required": [
+          "candidate_key",
+          "label",
+          "profile_name",
+          "runs",
+          "attempts",
+          "succeeded",
+          "failures",
+          "covered_cells",
+          "avg_cost",
+          "cost_cells",
+          "cost_excluded",
+          "avg_latency_ms",
+          "avg_input_tokens",
+          "avg_output_tokens",
+          "avg_reasoning_tokens",
+          "avg_manual_score",
+          "manual_scored",
+          "avg_judge_score",
+          "judge_scored",
+          "judge_wins",
+          "judge_comparisons",
+          "win_rate",
+          "custom_rates"
+        ],
+        "title": "ComparisonCandidate",
+        "type": "object"
+      },
+      "ComparisonCell": {
+        "properties": {
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "boolean"
+          },
+          "missing": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "prompt_title": {
+            "title": "Prompt Title",
+            "type": "string"
+          },
+          "trial_index": {
+            "title": "Trial Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_hash",
+          "prompt_title",
+          "trial_index",
+          "matched",
+          "missing"
+        ],
+        "title": "ComparisonCell",
         "type": "object"
       },
       "CostEstimate": {
@@ -927,6 +1314,27 @@
         "title": "CostTotal",
         "type": "object"
       },
+      "CreatedEvaluations": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "evaluation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evaluation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "evaluation_ids",
+          "created"
+        ],
+        "title": "CreatedEvaluations",
+        "type": "object"
+      },
       "CreatedRun": {
         "properties": {
           "created": {
@@ -943,6 +1351,61 @@
           "created"
         ],
         "title": "CreatedRun",
+        "type": "object"
+      },
+      "Criterion": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "weight": {
+            "default": 1.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "name"
+        ],
+        "title": "Criterion",
+        "type": "object"
+      },
+      "CriterionScore": {
+        "properties": {
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "score",
+          "explanation"
+        ],
+        "title": "CriterionScore",
         "type": "object"
       },
       "EndpointIn": {
@@ -1045,6 +1508,431 @@
           "updated_at"
         ],
         "title": "EndpointOut",
+        "type": "object"
+      },
+      "EvaluationCandidate": {
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "criteria": {
+            "items": {
+              "$ref": "#/components/schemas/CriterionScore"
+            },
+            "title": "Criteria",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "judge_overall": {
+            "title": "Judge Overall",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "weighted_overall": {
+            "title": "Weighted Overall",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "position",
+          "attempt_id",
+          "candidate_id",
+          "judge_overall",
+          "weighted_overall",
+          "explanation",
+          "criteria"
+        ],
+        "title": "EvaluationCandidate",
+        "type": "object"
+      },
+      "EvaluationOut": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "candidate_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Candidate Labels",
+            "type": "object"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_total": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Total"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "error_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Type"
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_estimate_tokens": {
+            "title": "Input Estimate Tokens",
+            "type": "integer"
+          },
+          "input_limit_tokens": {
+            "title": "Input Limit Tokens",
+            "type": "integer"
+          },
+          "judge_is_participant": {
+            "title": "Judge Is Participant",
+            "type": "boolean"
+          },
+          "judge_profile_id": {
+            "title": "Judge Profile Id",
+            "type": "string"
+          },
+          "judge_profile_name": {
+            "title": "Judge Profile Name",
+            "type": "string"
+          },
+          "judge_profile_snapshot": {
+            "additionalProperties": true,
+            "title": "Judge Profile Snapshot",
+            "type": "object"
+          },
+          "judge_settings": {
+            "$ref": "#/components/schemas/GenerationSettings"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "order": {
+            "items": {
+              "$ref": "#/components/schemas/OrderEntry"
+            },
+            "title": "Order",
+            "type": "array"
+          },
+          "output_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Text"
+          },
+          "parse_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parse Errors",
+            "type": "array"
+          },
+          "participant_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Participant Reasons",
+            "type": "array"
+          },
+          "preference_explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preference Explanation"
+          },
+          "preferred": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred"
+          },
+          "preferred_candidate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Candidate Id"
+          },
+          "price_snapshot_id": {
+            "title": "Price Snapshot Id",
+            "type": "string"
+          },
+          "prompt_id": {
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "raw_finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Finish Reason"
+          },
+          "request_sent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Sent At"
+          },
+          "response_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Model"
+          },
+          "rubric": {
+            "$ref": "#/components/schemas/RubricVersion"
+          },
+          "rubric_name": {
+            "title": "Rubric Name",
+            "type": "string"
+          },
+          "rubric_version_id": {
+            "title": "Rubric Version Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "malformed",
+              "failed",
+              "rejected_oversized",
+              "cancelled",
+              "interrupted",
+              "skipped_budget"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "structured_output": {
+            "title": "Structured Output",
+            "type": "boolean"
+          },
+          "trial_index": {
+            "title": "Trial Index",
+            "type": "integer"
+          },
+          "trigger": {
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UsageFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "prompt_id",
+          "trial_index",
+          "batch_id",
+          "trigger",
+          "status",
+          "judge_profile_id",
+          "judge_profile_snapshot",
+          "judge_settings",
+          "rubric_version_id",
+          "price_snapshot_id",
+          "structured_output",
+          "judge_is_participant",
+          "participant_reasons",
+          "order",
+          "input_estimate_tokens",
+          "input_limit_tokens",
+          "request_sent_at",
+          "started_at",
+          "finished_at",
+          "latency_ms",
+          "finish_reason",
+          "raw_finish_reason",
+          "response_model",
+          "output_text",
+          "usage",
+          "parse_errors",
+          "preferred",
+          "preferred_candidate_id",
+          "preference_explanation",
+          "cost",
+          "cost_total",
+          "error_type",
+          "error_message",
+          "created_at",
+          "candidates",
+          "judge_profile_name",
+          "rubric_name",
+          "rubric",
+          "candidate_labels"
+        ],
+        "title": "EvaluationOut",
+        "type": "object"
+      },
+      "EvaluationRaw": {
+        "properties": {
+          "raw_response": {
+            "title": "Raw Response"
+          },
+          "raw_usage": {
+            "title": "Raw Usage"
+          },
+          "request_body": {
+            "additionalProperties": true,
+            "title": "Request Body",
+            "type": "object"
+          }
+        },
+        "required": [
+          "request_body",
+          "raw_response",
+          "raw_usage"
+        ],
+        "title": "EvaluationRaw",
         "type": "object"
       },
       "FetchOut": {
@@ -1267,6 +2155,54 @@
         "title": "GenerationSettings",
         "type": "object"
       },
+      "GroupPreview": {
+        "properties": {
+          "input_estimate_tokens": {
+            "title": "Input Estimate Tokens",
+            "type": "integer"
+          },
+          "input_limit_tokens": {
+            "title": "Input Limit Tokens",
+            "type": "integer"
+          },
+          "oversized": {
+            "title": "Oversized",
+            "type": "boolean"
+          },
+          "prompt_id": {
+            "title": "Prompt Id",
+            "type": "string"
+          },
+          "prompt_position": {
+            "title": "Prompt Position",
+            "type": "integer"
+          },
+          "prompt_title": {
+            "title": "Prompt Title",
+            "type": "string"
+          },
+          "responses": {
+            "title": "Responses",
+            "type": "integer"
+          },
+          "trial_index": {
+            "title": "Trial Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt_id",
+          "prompt_position",
+          "prompt_title",
+          "trial_index",
+          "responses",
+          "input_estimate_tokens",
+          "input_limit_tokens",
+          "oversized"
+        ],
+        "title": "GroupPreview",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1296,6 +2232,245 @@
           "version"
         ],
         "title": "Health",
+        "type": "object"
+      },
+      "JudgePreview": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/GroupPreview"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "judge_profile_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Profile Name"
+          },
+          "key_configured": {
+            "title": "Key Configured",
+            "type": "boolean"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "participant_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Participant Reasons",
+            "type": "array"
+          },
+          "rubric_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Name"
+          },
+          "rubric_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Version"
+          },
+          "rubric_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Version Id"
+          },
+          "skipped_groups": {
+            "title": "Skipped Groups",
+            "type": "integer"
+          },
+          "structured_output": {
+            "title": "Structured Output",
+            "type": "boolean"
+          },
+          "unknown_rates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown Rates",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          },
+          "worst_case_total": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worst Case Total"
+          }
+        },
+        "required": [
+          "ok",
+          "errors",
+          "warnings",
+          "judge_profile_name",
+          "rubric_version_id",
+          "rubric_name",
+          "rubric_version",
+          "structured_output",
+          "key_configured",
+          "participant_reasons",
+          "groups",
+          "skipped_groups",
+          "calls",
+          "worst_case_total",
+          "unknown_rates"
+        ],
+        "title": "JudgePreview",
+        "type": "object"
+      },
+      "JudgeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "judge_profile_id": {
+            "title": "Judge Profile Id",
+            "type": "string"
+          },
+          "prompt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Id"
+          },
+          "rubric_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Id"
+          },
+          "rubric_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rubric Version Id"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/GenerationSettings"
+          },
+          "trial_index": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trial Index"
+          }
+        },
+        "required": [
+          "judge_profile_id"
+        ],
+        "title": "JudgeRequest",
+        "type": "object"
+      },
+      "JudgeScore": {
+        "description": "The latest successful judge result for one attempt (kept apart from manual scores).",
+        "properties": {
+          "evaluation_id": {
+            "title": "Evaluation Id",
+            "type": "string"
+          },
+          "judge_is_participant": {
+            "title": "Judge Is Participant",
+            "type": "boolean"
+          },
+          "judge_overall": {
+            "title": "Judge Overall",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "preferred": {
+            "title": "Preferred",
+            "type": "boolean"
+          },
+          "tie": {
+            "title": "Tie",
+            "type": "boolean"
+          },
+          "weighted_overall": {
+            "title": "Weighted Overall",
+            "type": "number"
+          }
+        },
+        "required": [
+          "evaluation_id",
+          "label",
+          "weighted_overall",
+          "judge_overall",
+          "preferred",
+          "tie",
+          "judge_is_participant"
+        ],
+        "title": "JudgeScore",
         "type": "object"
       },
       "KeyIn": {
@@ -1771,6 +2946,29 @@
         "title": "ModelProfile",
         "type": "object"
       },
+      "OrderEntry": {
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "attempt_id",
+          "candidate_id"
+        ],
+        "title": "OrderEntry",
+        "type": "object"
+      },
       "OverrideIn": {
         "additionalProperties": false,
         "properties": {
@@ -2152,6 +3350,113 @@
           "generation_cost"
         ],
         "title": "Progress",
+        "type": "object"
+      },
+      "ProjectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Keys"
+          },
+          "monthly_requests": {
+            "default": 10000,
+            "maximum": 1000000000000.0,
+            "minimum": 0.0,
+            "title": "Monthly Requests",
+            "type": "integer"
+          },
+          "price_basis": {
+            "default": "original",
+            "enum": [
+              "original",
+              "current"
+            ],
+            "title": "Price Basis",
+            "type": "string"
+          },
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Run Ids",
+            "type": "array"
+          },
+          "what_if": {
+            "$ref": "#/components/schemas/WhatIf-Input"
+          }
+        },
+        "required": [
+          "run_ids"
+        ],
+        "title": "ProjectionRequest",
+        "type": "object"
+      },
+      "ProjectionResult": {
+        "properties": {
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateProjection"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "monthly_requests": {
+            "title": "Monthly Requests",
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "price_basis": {
+            "enum": [
+              "original",
+              "current"
+            ],
+            "title": "Price Basis",
+            "type": "string"
+          },
+          "what_if": {
+            "$ref": "#/components/schemas/WhatIf-Output"
+          }
+        },
+        "required": [
+          "currency",
+          "price_basis",
+          "monthly_requests",
+          "what_if",
+          "assumptions",
+          "candidates",
+          "notes"
+        ],
+        "title": "ProjectionResult",
         "type": "object"
       },
       "PromptSpec": {
@@ -2854,6 +4159,171 @@
         "title": "RetryOut",
         "type": "object"
       },
+      "Rubric": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "latest": {
+            "$ref": "#/components/schemas/RubricVersion"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_count": {
+            "title": "Version Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_default",
+          "archived",
+          "latest",
+          "version_count",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Rubric",
+        "type": "object"
+      },
+      "RubricDefinition": {
+        "additionalProperties": false,
+        "description": "The content of one rubric version (validated before it is stored).",
+        "properties": {
+          "criteria": {
+            "items": {
+              "$ref": "#/components/schemas/Criterion"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "title": "Criteria",
+            "type": "array"
+          },
+          "instructions": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Instructions",
+            "type": "string"
+          },
+          "scale_max": {
+            "default": 5,
+            "title": "Scale Max",
+            "type": "integer"
+          },
+          "scale_min": {
+            "default": 1,
+            "title": "Scale Min",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "criteria"
+        ],
+        "title": "RubricDefinition",
+        "type": "object"
+      },
+      "RubricIn": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/RubricDefinition"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "definition"
+        ],
+        "title": "RubricIn",
+        "type": "object"
+      },
+      "RubricPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "RubricPatch",
+        "type": "object"
+      },
+      "RubricVersion": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/RubricDefinition"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "rubric_id": {
+            "title": "Rubric Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "rubric_id",
+          "version",
+          "definition",
+          "created_at"
+        ],
+        "title": "RubricVersion",
+        "type": "object"
+      },
       "Run": {
         "properties": {
           "budget": {
@@ -2901,6 +4371,17 @@
               }
             ],
             "title": "Judge Config"
+          },
+          "judge_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Error"
           },
           "kind": {
             "title": "Kind",
@@ -3057,13 +4538,22 @@
           "combined_cost": {
             "$ref": "#/components/schemas/CostTotal"
           },
-          "extras": {
-            "additionalProperties": true,
-            "title": "Extras",
+          "evaluation_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Evaluation Counts",
             "type": "object"
           },
           "generation_cost": {
             "$ref": "#/components/schemas/CostTotal"
+          },
+          "judge_scores": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JudgeScore"
+            },
+            "title": "Judge Scores",
+            "type": "object"
           },
           "judging_cost": {
             "$ref": "#/components/schemas/CostTotal"
@@ -3552,6 +5042,359 @@
         "title": "SnapshotOut",
         "type": "object"
       },
+      "Suite": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SuiteCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuiteJudge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/SuitePrompt"
+            },
+            "title": "Prompts",
+            "type": "array"
+          },
+          "trials": {
+            "title": "Trials",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "trials",
+          "judge",
+          "archived",
+          "prompts",
+          "candidates",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Suite",
+        "type": "object"
+      },
+      "SuiteArchiveIn": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "archived"
+        ],
+        "title": "SuiteArchiveIn",
+        "type": "object"
+      },
+      "SuiteCandidate": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/GenerationSettings"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "profile_id",
+          "label",
+          "settings"
+        ],
+        "title": "SuiteCandidate",
+        "type": "object"
+      },
+      "SuiteCandidateIn": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/GenerationSettings"
+          }
+        },
+        "required": [
+          "profile_id"
+        ],
+        "title": "SuiteCandidateIn",
+        "type": "object"
+      },
+      "SuiteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SuiteCandidateIn"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Candidates",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuiteJudge"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/SuitePromptIn"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Prompts",
+            "type": "array"
+          },
+          "trials": {
+            "default": 1,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Trials",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "prompts",
+          "candidates"
+        ],
+        "title": "SuiteIn",
+        "type": "object"
+      },
+      "SuiteJudge": {
+        "additionalProperties": false,
+        "description": "Automatic judging after each suite run; frozen into the run when the run is created.",
+        "properties": {
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "judge_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Profile Id"
+          },
+          "rubric_id": {
+            "default": "default",
+            "title": "Rubric Id",
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/GenerationSettings"
+          }
+        },
+        "title": "SuiteJudge",
+        "type": "object"
+      },
+      "SuitePrompt": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "position",
+          "title",
+          "system",
+          "user"
+        ],
+        "title": "SuitePrompt",
+        "type": "object"
+      },
+      "SuitePromptIn": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "system": {
+            "default": "",
+            "maxLength": 200000,
+            "title": "System",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          },
+          "user": {
+            "maxLength": 400000,
+            "minLength": 1,
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "title": "SuitePromptIn",
+        "type": "object"
+      },
+      "SuiteRunIn": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "SuiteRunIn",
+        "type": "object"
+      },
       "TokenPool": {
         "properties": {
           "categories": {
@@ -3831,6 +5674,106 @@
         ],
         "title": "VerifyResult",
         "type": "object"
+      },
+      "WhatIf-Input": {
+        "additionalProperties": false,
+        "description": "Scenario assumptions. They are labelled as assumptions wherever results are shown.",
+        "properties": {
+          "cache_read_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Share"
+          },
+          "cache_write_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write Share"
+          },
+          "input_multiplier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "default": "1",
+            "title": "Input Multiplier"
+          },
+          "output_multiplier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "default": "1",
+            "title": "Output Multiplier"
+          }
+        },
+        "title": "WhatIf",
+        "type": "object"
+      },
+      "WhatIf-Output": {
+        "additionalProperties": false,
+        "description": "Scenario assumptions. They are labelled as assumptions wherever results are shown.",
+        "properties": {
+          "cache_read_share": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Read Share"
+          },
+          "cache_write_share": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Write Share"
+          },
+          "input_multiplier": {
+            "default": "1",
+            "title": "Input Multiplier",
+            "type": "string"
+          },
+          "output_multiplier": {
+            "default": "1",
+            "title": "Output Multiplier",
+            "type": "string"
+          }
+        },
+        "title": "WhatIf",
+        "type": "object"
       }
     }
   },
@@ -4043,6 +5986,73 @@
         "summary": "List Presets",
         "tags": [
           "profiles"
+        ]
+      }
+    },
+    "/api/comparisons": {
+      "get": {
+        "operationId": "compare_runs_api_comparisons_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "title": "Run Id",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "candidate_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 32,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Candidate Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Comparison"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compare Runs",
+        "tags": [
+          "analysis"
         ]
       }
     },
@@ -4367,6 +6377,90 @@
         "summary": "Verify Key",
         "tags": [
           "endpoints"
+        ]
+      }
+    },
+    "/api/evaluations/{evaluation_id}": {
+      "get": {
+        "operationId": "get_evaluation_api_evaluations__evaluation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "evaluation_id",
+            "required": true,
+            "schema": {
+              "title": "Evaluation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Evaluation",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/evaluations/{evaluation_id}/raw": {
+      "get": {
+        "operationId": "evaluation_raw_api_evaluations__evaluation_id__raw_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "evaluation_id",
+            "required": true,
+            "schema": {
+              "title": "Evaluation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationRaw"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Evaluation Raw",
+        "tags": [
+          "judging"
         ]
       }
     },
@@ -5048,6 +7142,364 @@
         ]
       }
     },
+    "/api/projections": {
+      "post": {
+        "operationId": "project_costs_api_projections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Costs",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/rubric-versions/{version_id}": {
+      "get": {
+        "operationId": "get_rubric_version_api_rubric_versions__version_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RubricVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Rubric Version",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/rubrics": {
+      "get": {
+        "operationId": "list_rubrics_api_rubrics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Rubric"
+                  },
+                  "title": "Response List Rubrics Api Rubrics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Rubrics",
+        "tags": [
+          "judging"
+        ]
+      },
+      "post": {
+        "operationId": "create_rubric_api_rubrics_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RubricIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rubric"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Rubric",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/rubrics/{rubric_id}": {
+      "get": {
+        "operationId": "get_rubric_api_rubrics__rubric_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rubric_id",
+            "required": true,
+            "schema": {
+              "title": "Rubric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rubric"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Rubric",
+        "tags": [
+          "judging"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_rubric_api_rubrics__rubric_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rubric_id",
+            "required": true,
+            "schema": {
+              "title": "Rubric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RubricPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Rubric"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Rubric",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/rubrics/{rubric_id}/versions": {
+      "get": {
+        "operationId": "rubric_versions_api_rubrics__rubric_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rubric_id",
+            "required": true,
+            "schema": {
+              "title": "Rubric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RubricVersion"
+                  },
+                  "title": "Response Rubric Versions Api Rubrics  Rubric Id  Versions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rubric Versions",
+        "tags": [
+          "judging"
+        ]
+      },
+      "post": {
+        "description": "Editing a rubric always creates a new version; earlier versions never change.",
+        "operationId": "add_rubric_version_api_rubrics__rubric_id__versions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rubric_id",
+            "required": true,
+            "schema": {
+              "title": "Rubric Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RubricDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RubricVersion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Rubric Version",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
     "/api/runs": {
       "get": {
         "operationId": "list_runs_api_runs_get",
@@ -5309,6 +7761,171 @@
         ]
       }
     },
+    "/api/runs/{run_id}/evaluations": {
+      "get": {
+        "operationId": "list_evaluations_api_runs__run_id__evaluations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluationOut"
+                  },
+                  "title": "Response List Evaluations Api Runs  Run Id  Evaluations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Evaluations",
+        "tags": [
+          "judging"
+        ]
+      },
+      "post": {
+        "description": "Run the judge (a paid action) on the run's succeeded responses in the requested scope.",
+        "operationId": "create_evaluations_api_runs__run_id__evaluations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JudgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedEvaluations"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Evaluations",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/evaluations/preview": {
+      "post": {
+        "operationId": "preview_evaluations_api_runs__run_id__evaluations_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JudgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JudgePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Evaluations",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
     "/api/runs/{run_id}/progress": {
       "get": {
         "operationId": "get_progress_api_runs__run_id__progress_get",
@@ -5466,6 +8083,389 @@
         "summary": "Put Settings",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/suites": {
+      "get": {
+        "operationId": "list_suites_api_suites_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Suite"
+                  },
+                  "title": "Response List Suites Api Suites Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Suites",
+        "tags": [
+          "suites"
+        ]
+      },
+      "post": {
+        "operationId": "create_suite_api_suites_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Suite",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/api/suites/{suite_id}": {
+      "delete": {
+        "operationId": "delete_suite_api_suites__suite_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Suite",
+        "tags": [
+          "suites"
+        ]
+      },
+      "get": {
+        "operationId": "get_suite_api_suites__suite_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Suite",
+        "tags": [
+          "suites"
+        ]
+      },
+      "put": {
+        "operationId": "update_suite_api_suites__suite_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Suite",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/api/suites/{suite_id}/archive": {
+      "post": {
+        "operationId": "archive_suite_api_suites__suite_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteArchiveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Suite"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Suite",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/api/suites/{suite_id}/preview": {
+      "post": {
+        "operationId": "preview_suite_run_api_suites__suite_id__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Suite Run",
+        "tags": [
+          "suites"
+        ]
+      }
+    },
+    "/api/suites/{suite_id}/runs": {
+      "post": {
+        "operationId": "run_suite_api_suites__suite_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suite_id",
+            "required": true,
+            "schema": {
+              "title": "Suite Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuiteRunIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Suite",
+        "tags": [
+          "suites"
         ]
       }
     }

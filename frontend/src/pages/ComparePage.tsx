@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 
@@ -83,6 +83,7 @@ export function ComparePage() {
   const [preview, setPreview] = useState<RunPreview | null>(null)
   const [previewError, setPreviewError] = useState<unknown>(null)
   const runKey = useRef<string>(newIdempotencyKey())
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (profiles.length && draft.candidates.length === 0) {
@@ -130,6 +131,7 @@ export function ComparePage() {
     mutationFn: (body: RunRequest) => post<{ run_id: string }>('/api/runs', body, runKey.current),
     onSuccess: (result) => {
       runKey.current = newIdempotencyKey()
+      queryClient.invalidateQueries({ queryKey: ['runs'] })
       navigate(`/runs/${result.run_id}`)
     },
   })

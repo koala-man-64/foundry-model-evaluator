@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 
 export const APP_URL = 'http://127.0.0.1:8777'
 export const MOCK_URL = 'http://127.0.0.1:8778'
@@ -136,6 +136,7 @@ export class AppApi {
     deployment: string
     meterTerms?: string
     longContextThreshold?: number
+    extra?: Record<string, unknown>
   }): Promise<string> {
     const presets = await this.call<{ presets: { id: string; capabilities: Record<string, unknown> }[] }>(
       'GET',
@@ -154,8 +155,18 @@ export class AppApi {
       capabilities: preset.capabilities[fields.apiStyle],
       meter_terms: fields.meterTerms ?? '',
       long_context_threshold: fields.longContextThreshold ?? null,
+      ...fields.extra,
     })
     return profile.id
+  }
+
+  /** Start a run through the API and wait until it (and any judging) has finished. */
+  async run(request: Record<string, unknown>): Promise<string> {
+    const created = await this.call<{ run_id: string }>('POST', '/api/runs', { kind: 'compare', ...request }, {
+      'Idempotency-Key': crypto.randomUUID(),
+    })
+    await this.waitForRun(created.run_id)
+    return created.run_id
   }
 
   async manualRate(profileId: string, category: string, price: string): Promise<void> {
@@ -228,5 +239,13 @@ export async function chooseProfile(page: Page, index: number, profileName: stri
   await expect(option).toHaveCount(1)
   const value = await option.getAttribute('value')
   if (!value) throw new Error(`profile ${profileName} not offered`)
+  await select.selectOption(value)
+}
+
+/** Select an option of a native select by (part of) its visible text. */
+export async function selectByText(select: Locator, text: string | RegExp): Promise<void> {
+  const option = select.locator('option', { hasText: text }).first()
+  const value = await option.getAttribute('value')
+  if (value === null) throw new Error(`option ${String(text)} not found`)
   await select.selectOption(value)
 }

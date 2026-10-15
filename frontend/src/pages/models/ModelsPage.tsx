@@ -3,8 +3,8 @@ import { NavLink, Navigate, Route, Routes } from 'react-router'
 import { EndpointsPanel } from './EndpointsPanel'
 import { PricingPanel } from './PricingPanel'
 import { ProfilesPanel } from './ProfilesPanel'
+import { ProjectionsPanel } from './ProjectionsPanel'
 import { SettingsPanel } from './SettingsPanel'
-import { ProjectionsSlot } from '../../slots'
 
 export function ModelsPage() {
   return (
@@ -22,7 +22,7 @@ export function ModelsPage() {
         <Route path="profiles" element={<ProfilesPanel />} />
         <Route path="pricing" element={<PricingPanel />} />
         <Route path="pricing/:profileId" element={<PricingPanel />} />
-        <Route path="projections" element={<ProjectionsSlot />} />
+        <Route path="projections" element={<ProjectionsPanel />} />
         <Route path="settings" element={<SettingsPanel />} />
       </Routes>
     </div>

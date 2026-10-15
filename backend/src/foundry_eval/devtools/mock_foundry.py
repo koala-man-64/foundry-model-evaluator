@@ -137,10 +137,10 @@ def _judge_output(schema: dict[str, Any] | None, prompt_text: str, deployment: s
 
 def _answer(deployment: str, effort: str | None, user_text: str) -> str:
     snippet = " ".join(user_text.split())[:80]
-    return (
-        f"Mock answer from {deployment} (effort: {effort or 'default'}). "
-        f"You asked: “{snippet}”. Here is a concise, well-structured reply."
-    )
+    # The deployment name is deliberately not echoed, so judge requests stay free of model identities.
+    variant = int(_hash(deployment)[:2], 16) % 3
+    style = ("concise", "detailed", "step-by-step")[variant]
+    return f"Mock {style} answer (effort: {effort or 'default'}). You asked: “{snippet}”."
 
 
 def create_mock_app(expected_key: str | None = None) -> FastAPI:

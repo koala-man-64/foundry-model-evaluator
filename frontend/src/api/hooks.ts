@@ -3,13 +3,16 @@ import { useQuery } from '@tanstack/react-query'
 import { get } from './client'
 import type {
   EndpointOut,
+  EvaluationOut,
   ModelProfile,
   PresetCatalog,
   PricingStatus,
   RatesOut,
+  Rubric,
   RunDetail,
   RunSummary,
   SettingsOut,
+  Suite,
 } from './types'
 
 export const keys = {
@@ -21,6 +24,10 @@ export const keys = {
   pricingStatus: ['pricing-status'] as const,
   runs: (filter = '') => ['runs', filter] as const,
   run: (runId: string) => ['run', runId] as const,
+  suites: (archived = false) => ['suites', archived] as const,
+  suite: (suiteId: string) => ['suite', suiteId] as const,
+  rubrics: ['rubrics'] as const,
+  evaluations: (runId: string) => ['evaluations', runId] as const,
 }
 
 export function useSettings() {
@@ -68,6 +75,38 @@ export function useRun(runId: string | undefined) {
       if (!data) return false
       const busy = data.active || data.run.status === 'running' || data.run.status === 'queued'
       return busy ? 1000 : false
+    },
+  })
+}
+
+export function useSuites(includeArchived = false) {
+  return useQuery({
+    queryKey: keys.suites(includeArchived),
+    queryFn: () => get<Suite[]>(`/api/suites?include_archived=${includeArchived}`),
+  })
+}
+
+export function useSuite(suiteId: string | undefined) {
+  return useQuery({
+    queryKey: keys.suite(suiteId ?? ''),
+    queryFn: () => get<Suite>(`/api/suites/${suiteId}`),
+    enabled: Boolean(suiteId),
+  })
+}
+
+export function useRubrics() {
+  return useQuery({ queryKey: keys.rubrics, queryFn: () => get<Rubric[]>('/api/rubrics') })
+}
+
+/** Evaluations of a run, polled while any of them is still queued or running. */
+export function useEvaluations(runId: string | undefined) {
+  return useQuery({
+    queryKey: keys.evaluations(runId ?? ''),
+    queryFn: () => get<EvaluationOut[]>(`/api/runs/${runId}/evaluations`),
+    enabled: Boolean(runId),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      return data?.some((e) => e.status === 'queued' || e.status === 'running') ? 1000 : false
     },
   })
 }

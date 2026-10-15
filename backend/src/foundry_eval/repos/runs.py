@@ -95,6 +95,7 @@ class Run(BaseModel):
     trials: int
     budget: Money | None
     judge_config: dict[str, Any] | None
+    judge_error: str | None = None
     created_at: str
     started_at: str | None
     finished_at: str | None
@@ -118,6 +119,7 @@ def _run(row: sqlite3.Row) -> Run:
         trials=row["trials"],
         budget=to_decimal(row["budget"]) if row["budget"] is not None else None,
         judge_config=json.loads(row["judge_config_json"]) if row["judge_config_json"] else None,
+        judge_error=row["judge_error"],
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],
@@ -400,6 +402,10 @@ class RunRepository:
                 " WHERE id = ?",
                 (iso_now(), run_id),
             )
+
+    def set_judge_error(self, run_id: str, message: str | None) -> None:
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE runs SET judge_error = ? WHERE id = ?", (message, run_id))
 
     def finish_run(self, run_id: str, status: RunStatus) -> None:
         with self.db.transaction() as conn:
