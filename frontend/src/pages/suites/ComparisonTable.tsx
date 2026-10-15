@@ -1,7 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-
-import { get } from '../../api/client'
-import type { Comparison, ComparisonCandidate } from '../../api/types'
+import { useComparison } from '../../api/hooks'
+import type { ComparisonCandidate } from '../../api/types'
+import { ComparisonCharts } from '../../components/charts/ComparisonCharts'
 import { Badge, Empty, ErrorMessage, Spinner } from '../../components/ui'
 import { formatMs } from '../../lib/format'
 import { formatMoney } from '../../lib/money'
@@ -39,13 +38,8 @@ function CostCell({ item, currency }: { item: ComparisonCandidate; currency: str
   )
 }
 
-export function ComparisonTable({ runIds }: { runIds: string[] }) {
-  const params = runIds.map((id) => `run_id=${encodeURIComponent(id)}`).join('&')
-  const comparison = useQuery({
-    queryKey: ['comparison', ...runIds],
-    queryFn: () => get<Comparison>(`/api/comparisons?${params}`),
-    enabled: runIds.length > 0,
-  })
+export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; charts?: boolean }) {
+  const comparison = useComparison(runIds)
   if (runIds.length === 0) return <Empty>Select one or more runs to compare.</Empty>
   if (comparison.isLoading) return <Spinner />
   if (comparison.error) return <ErrorMessage error={comparison.error} />
@@ -53,6 +47,7 @@ export function ComparisonTable({ runIds }: { runIds: string[] }) {
   if (!data) return null
   return (
     <div className="stack-sm" aria-label="Comparison">
+      {charts && <ComparisonCharts comparison={data} />}
       <p className="small" data-testid="coverage">
         Coverage: <strong>{data.cells_matched}</strong> of {data.cells_total} cells (prompt × trial) have a usable answer from every
         candidate. Each average uses only the cells where every candidate has that value, so the averages side by side cover the same

@@ -7,6 +7,9 @@ quality, token usage, latency and **estimated token cost**.
   reasoning effort), and see the answers next to each other.
 - **Suites and history.** Save prompts, models and settings as a suite and run it with repeated trials. You get average
   cost, latency, scores and failure counts over matching prompts and trials, and the coverage is always shown.
+- **Charts.** Runs and suite comparisons are charted: quality against estimated cost per task (log scale, with the
+  Pareto frontier and the most attractive quadrant), output tokens split into answer and reasoning, and latency. Every
+  chart has a table view.
 - **Scoring.** Rate answers yourself on a 1–5 scale with notes, or have a Foundry model judge them anonymously against
   a versioned rubric. Manual and judge scores are kept separate.
 - **Models and pricing.** Manage endpoints and API keys, model profiles and rates. Rates come from the Azure Retail
@@ -22,6 +25,8 @@ makes the estimate **incomplete**: it is shown as a lower bound, never as zero.
 | ![A run comparing three candidates with usage, latency and cost](docs/screenshots/run.png) | ![Judge evaluation with revealed labels and criterion scores](docs/screenshots/scoring.png) |
 | **Suite comparison with coverage** | **Cost projection with what-if assumptions** |
 | ![Suite runs compared on matching prompts and trials](docs/screenshots/suite.png) | ![Projected per-request, per-1,000 and monthly costs](docs/screenshots/projections.png) |
+| **Quality vs. estimated token cost, with the Pareto frontier** | **Output tokens per task: answer and reasoning** |
+| ![Judge score against average cost per task on a log scale, with the most attractive quadrant](docs/screenshots/chart-quality.png) | ![Stacked bars of answer and reasoning tokens per candidate](docs/screenshots/chart-tokens.png) |
 
 ## Quick start (Windows)
 

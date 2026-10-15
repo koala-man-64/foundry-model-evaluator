@@ -86,6 +86,21 @@ test('documentation screenshots', async ({ page, request }) => {
     { 'Idempotency-Key': crypto.randomUUID() },
   )
   await api.waitForRun(runId)
+  await page.goto(`/runs/${runId}`)
+  const charts = page.getByRole('region', { name: 'Comparison charts' })
+  await expect(charts.getByTestId('cost-score-chart').locator('circle')).toHaveCount(3)
+  await charts.screenshot({ path: join(outDir, 'chart-quality.png') })
+  await charts.getByRole('tab', { name: 'Token use' }).click()
+  await expect(charts.getByTestId('chart-bar')).toHaveCount(3)
+  await charts.screenshot({ path: join(outDir, 'chart-tokens.png') })
+  if (process.env.FME_DARK_CHECK) {
+    // Not documentation: a dark-mode render to check contrast and labels.
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await charts.screenshot({ path: join(here, '..', 'test-results', 'chart-tokens-dark.png') })
+    await charts.getByRole('tab', { name: 'Quality vs cost' }).click()
+    await charts.screenshot({ path: join(here, '..', 'test-results', 'chart-quality-dark.png') })
+    await page.emulateMedia({ colorScheme: 'light' })
+  }
   await page.goto(`/scoring/${runId}`)
   await expect(page.getByTestId('evaluation').first()).toContainText('Succeeded')
   await page.getByRole('article', { name: /Score GPT-5.6 terra \(effort=high\)/ }).getByRole('button', { name: 'Score 4' }).click()

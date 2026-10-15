@@ -3,8 +3,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router'
 
 import { newIdempotencyKey, post } from '../api/client'
-import { keys, useRun } from '../api/hooks'
+import { keys, useComparison, useRun } from '../api/hooks'
 import type { Attempt, RunDetail } from '../api/types'
+import { ComparisonCharts } from '../components/charts/ComparisonCharts'
 import { TotalBox } from '../components/cost'
 import { ResponseCard } from '../components/ResponseCard'
 import { Badge, Empty, ErrorMessage, Spinner, StatusBadge } from '../components/ui'
@@ -207,6 +208,13 @@ export function RunPage() {
           history and in cost totals.
         </p>
       )}
+      {!detail.active && candidates.length >= 2 && <RunCharts runId={detail.run.id} />}
     </div>
   )
+}
+
+function RunCharts({ runId }: { runId: string }) {
+  const comparison = useComparison([runId])
+  if (!comparison.data) return comparison.error ? <ErrorMessage error={comparison.error} /> : null
+  return <ComparisonCharts comparison={comparison.data} />
 }

@@ -250,6 +250,24 @@ def test_a_tie_gives_each_judged_answer_an_equal_share(client):
         assert candidate["win_rate"] == pytest.approx(1 / 3)
         assert candidate["judge_wins"] == pytest.approx(2 / 3)
     assert sum(c["judge_wins"] for c in comparison["candidates"]) == pytest.approx(2)
+    # Charts colour points by publisher: the profile's, else one derived from the API style.
+    assert {(c["publisher"], c["api_style"]) for c in comparison["candidates"]} == {("Other", "openai_chat")}
+
+
+def test_candidates_carry_their_publisher(client):
+    endpoint = create_endpoint(client)
+    profile = create_profile(
+        client,
+        endpoint["id"],
+        preset="generic-chat",
+        api_style=ApiStyle.OPENAI_CHAT,
+        deployment="deepseek-v",
+        publisher="DeepSeek",
+    )
+    run_id = start_run(client, {"prompts": [{"user": "Hi"}], "candidates": [{"profile_id": profile["id"]}]})
+    wait_for_run(client, run_id)
+    [candidate] = client.get("/api/comparisons", params={"run_id": run_id}).json()["candidates"]
+    assert candidate["publisher"] == "DeepSeek"
 
 
 def test_unfinished_attempts_are_pending_not_failures(client):
