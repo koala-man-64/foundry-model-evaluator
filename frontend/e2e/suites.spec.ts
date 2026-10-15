@@ -62,11 +62,27 @@ test('a suite with repeated trials, automatic judging and a comparison with cove
   await expect(page.getByTestId('response-cards').getByTestId('judge-score')).toHaveCount(2)
   await expect(page.locator('.total-box').filter({ hasText: 'Judging' })).not.toContainText('nothing yet')
 
+  // The run page charts the candidates: quality against cost, token use and latency.
+  const runCharts = page.getByRole('region', { name: 'Comparison charts' })
+  const scatter = runCharts.getByTestId('cost-score-chart')
+  await expect(scatter.getByRole('img', { name: new RegExp(`^${terra} \\(effort=low\\)`) })).toBeVisible()
+  await expect(scatter.getByRole('img', { name: new RegExp(`^${terra} \\(effort=high\\)`) })).toBeVisible()
+  await scatter.getByRole('img', { name: new RegExp(`^${terra} \\(effort=low\\)`) }).hover()
+  await expect(scatter.getByRole('tooltip')).toContainText('Avg estimated token cost')
+  await runCharts.getByRole('tab', { name: 'Token use' }).click()
+  await expect(runCharts.getByTestId('chart-bar')).toHaveCount(2)
+  await runCharts.getByRole('tab', { name: 'Latency' }).click()
+  await expect(runCharts.getByTestId('chart-bar')).toHaveCount(2)
+
   await page.getByRole('link', { name: 'Suites & history' }).click()
   await page.getByRole('link', { name: 'Suites', exact: true }).click()
   await page.getByRole('link', { name: suiteName }).click()
   const comparison = page.getByRole('region', { name: 'Comparison of selected runs' })
   await expect(comparison.getByTestId('coverage')).toContainText('4 of 4 cells')
+  await expect(comparison.getByRole('region', { name: 'Comparison charts' }).getByTestId('cost-score-chart')).toBeVisible()
+  await comparison.getByRole('button', { name: 'Show table' }).click()
+  await expect(comparison.getByRole('table', { name: /Quality vs. estimated token cost per task/ })).toContainText(terra)
+  await comparison.getByRole('button', { name: 'Show chart' }).click()
   const rows = comparison.getByRole('row').filter({ hasText: terra })
   await expect(rows).toHaveCount(2)
   for (const label of [`${terra} (effort=low)`, `${terra} (effort=high)`]) {

@@ -860,6 +860,10 @@
       },
       "ComparisonCandidate": {
         "properties": {
+          "api_style": {
+            "title": "Api Style",
+            "type": "string"
+          },
           "attempts": {
             "title": "Attempts",
             "type": "integer"
@@ -1001,6 +1005,10 @@
             "title": "Profile Name",
             "type": "string"
           },
+          "publisher": {
+            "title": "Publisher",
+            "type": "string"
+          },
           "reasoning_cells": {
             "title": "Reasoning Cells",
             "type": "integer"
@@ -1037,6 +1045,8 @@
           "candidate_key",
           "label",
           "profile_name",
+          "publisher",
+          "api_style",
           "runs",
           "attempts",
           "succeeded",

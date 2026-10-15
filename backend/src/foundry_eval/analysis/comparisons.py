@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -42,6 +43,9 @@ class ComparisonCandidate(BaseModel):
     candidate_key: str
     label: str
     profile_name: str
+    # Who makes the model (the profile's publisher, else its API style), for colouring charts.
+    publisher: str
+    api_style: str
     runs: int
     attempts: int
     succeeded: int
@@ -102,6 +106,8 @@ class _CandidateData:
     key: str
     label: str
     profile_name: str
+    publisher: str
+    api_style: str
     runs: set[str] = field(default_factory=set)
     slots: list[_Observation] = field(default_factory=list)
     by_cell: dict[Cell, list[_Observation]] = field(default_factory=dict)
@@ -126,6 +132,14 @@ class _CellValues:
     wins: dict[Cell, list[float]] = field(default_factory=dict)
     cost_excluded: int = 0
     cost_other_currency: int = 0
+
+
+_STYLE_PUBLISHERS = {"anthropic_messages": "Anthropic", "openai_responses": "OpenAI", "openai_chat": "Other"}
+
+
+def _publisher(snapshot: dict[str, Any]) -> str:
+    publisher = str(snapshot.get("publisher") or "").strip()
+    return publisher or _STYLE_PUBLISHERS.get(str(snapshot.get("api_style", "")), "Other")
 
 
 def _mean(values: list[float]) -> float | None:
@@ -227,6 +241,8 @@ class ComparisonService:
                         key=candidate.candidate_key,
                         label=candidate.label,
                         profile_name=str(candidate.profile_snapshot.get("name", "")),
+                        publisher=_publisher(candidate.profile_snapshot),
+                        api_style=str(candidate.profile_snapshot.get("api_style", "")),
                     )
                     order.append(candidate.candidate_key)
                 item.runs.add(run.id)
@@ -296,6 +312,8 @@ class ComparisonService:
                     candidate_key=key,
                     label=item.label,
                     profile_name=item.profile_name,
+                    publisher=item.publisher,
+                    api_style=item.api_style,
                     runs=len(item.runs),
                     attempts=len(item.slots),
                     succeeded=sum(1 for o in item.slots if o.attempt.status is AttemptStatus.SUCCEEDED),

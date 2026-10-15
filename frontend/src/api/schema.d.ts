@@ -995,6 +995,8 @@ export interface components {
         };
         /** ComparisonCandidate */
         ComparisonCandidate: {
+            /** Api Style */
+            api_style: string;
             /** Attempts */
             attempts: number;
             /** Avg Cost */
@@ -1041,6 +1043,8 @@ export interface components {
             pending: number;
             /** Profile Name */
             profile_name: string;
+            /** Publisher */
+            publisher: string;
             /** Reasoning Cells */
             reasoning_cells: number;
             /** Runs */

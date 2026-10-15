@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { get } from './client'
 import type {
+  Comparison,
   EndpointOut,
   EvaluationOut,
   ModelProfile,
@@ -108,5 +109,16 @@ export function useEvaluations(runId: string | undefined) {
       const data = query.state.data
       return data?.some((e) => e.status === 'queued' || e.status === 'running') ? 1000 : false
     },
+  })
+}
+
+
+/** A comparison of runs on matching prompt x trial cells (shared by the charts and the table). */
+export function useComparison(runIds: string[], enabled = true) {
+  const params = runIds.map((id) => `run_id=${encodeURIComponent(id)}`).join('&')
+  return useQuery({
+    queryKey: ['comparison', ...runIds],
+    queryFn: () => get<Comparison>(`/api/comparisons?${params}`),
+    enabled: enabled && runIds.length > 0,
   })
 }
