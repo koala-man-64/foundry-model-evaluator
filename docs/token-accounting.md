@@ -139,6 +139,10 @@ A run can have a budget. Before each call (including judge calls), the app reser
 A call that could exceed the budget is skipped and costs $0. A budget needs complete rates and `max_output_tokens`, so
 that the worst case can be bounded.
 
+The worst case is as good as the rate card. A category marked *not applicable* counts at the input rate, as the preset
+or you declared. Providers can also add a few instructions of their own, for example for structured output; the 256
+framing tokens and the gap between bytes and tokens cover these in practice.
+
 When a sent call reports no usage, its whole reservation counts as spent. The reservation is saved with the call, so
 spending is not under-counted after a restart either.
 
