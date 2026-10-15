@@ -11,18 +11,30 @@ function number(value: number | null | undefined, digits = 0): string {
   return value.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits })
 }
 
+function cells(count: number): string {
+  return `${count} cell${count === 1 ? '' : 's'}`
+}
+
 function CostCell({ item, currency }: { item: ComparisonCandidate; currency: string }) {
-  if (!item.avg_cost) return <span className="muted">—</span>
+  const excluded = [
+    item.cost_excluded > 0 ? `${item.cost_excluded} incomplete excluded` : '',
+    item.cost_other_currency > 0 ? `${item.cost_other_currency} in another currency excluded` : '',
+  ].filter(Boolean)
   return (
-    <span title={`${item.cost_cells} cells averaged; ${item.cost_excluded} incomplete estimates excluded`}>
-      {formatMoney(item.avg_cost, currency)}
-      {item.custom_rates && (
+    <span title={[`${cells(item.cost_cells)} averaged`, ...excluded].join('; ')}>
+      {item.avg_cost ? formatMoney(item.avg_cost, currency) : <span className="muted">—</span>}
+      {item.avg_cost && item.custom_rates && (
         <>
           {' '}
           <Badge tone="custom">custom rates</Badge>
         </>
       )}
-      {item.cost_excluded > 0 && <div className="small muted">{item.cost_excluded} incomplete excluded</div>}
+      <div className="small muted">{cells(item.cost_cells)}</div>
+      {excluded.map((note) => (
+        <div key={note} className="small muted">
+          {note}
+        </div>
+      ))}
     </span>
   )
 }
@@ -43,7 +55,8 @@ export function ComparisonTable({ runIds }: { runIds: string[] }) {
     <div className="stack-sm" aria-label="Comparison">
       <p className="small" data-testid="coverage">
         Coverage: <strong>{data.cells_matched}</strong> of {data.cells_total} cells (prompt × trial) have a usable answer from every
-        candidate. Averages use those cells only; failures count all cells.
+        candidate. Each average uses only the cells where every candidate has that value, so the averages side by side cover the same
+        prompts and trials; the count under each value says how many. Failures count all cells.
       </p>
       <div className="table-wrap card">
         <table>
@@ -55,7 +68,9 @@ export function ComparisonTable({ runIds }: { runIds: string[] }) {
               <th className="num">Avg input / output (reasoning) tokens</th>
               <th className="num">Manual score</th>
               <th className="num">Judge score</th>
-              <th className="num">Judge win rate</th>
+              <th className="num" title="Share of the judge's preferences, averaged per cell. A tie gives each judged answer an equal share.">
+                Judge win rate
+              </th>
               <th className="num">Failures</th>
             </tr>
           </thead>
@@ -71,26 +86,34 @@ export function ComparisonTable({ runIds }: { runIds: string[] }) {
                 <td className="num">
                   <CostCell item={item} currency={data.currency} />
                 </td>
-                <td className="num">{item.avg_latency_ms === null || item.avg_latency_ms === undefined ? '—' : formatMs(Math.round(item.avg_latency_ms))}</td>
+                <td className="num">
+                  {item.avg_latency_ms === null || item.avg_latency_ms === undefined ? '—' : formatMs(Math.round(item.avg_latency_ms))}
+                  <div className="small muted">{cells(item.latency_cells)}</div>
+                </td>
                 <td className="num">
                   {number(item.avg_input_tokens)} / {number(item.avg_output_tokens)}
                   {item.avg_reasoning_tokens !== null && item.avg_reasoning_tokens !== undefined ? ` (${number(item.avg_reasoning_tokens)})` : ''}
+                  <div className="small muted" title={`Reasoning averaged over ${cells(item.reasoning_cells)}`}>
+                    {cells(item.token_cells)}
+                  </div>
                 </td>
                 <td className="num">
                   {number(item.avg_manual_score, 2)}
-                  <div className="small muted">{item.manual_scored} cells scored</div>
+                  <div className="small muted">{cells(item.manual_scored)} scored</div>
                 </td>
                 <td className="num">
                   {number(item.avg_judge_score, 2)}
-                  <div className="small muted">{item.judge_scored} cells judged</div>
+                  <div className="small muted">{cells(item.judge_scored)} judged</div>
                 </td>
                 <td className="num">
                   {item.win_rate === null || item.win_rate === undefined ? '—' : `${Math.round(item.win_rate * 100)}%`}
-                  <div className="small muted">{item.judge_comparisons} evaluations</div>
+                  <div className="small muted">
+                    {cells(item.win_cells)} · {item.judge_comparisons} evaluation{item.judge_comparisons === 1 ? '' : 's'}
+                  </div>
                 </td>
                 <td className="num">
                   {item.failures} of {item.attempts}
-                  <div className="small muted">attempts</div>
+                  <div className="small muted">attempts{item.pending > 0 ? ` · ${item.pending} not finished` : ''}</div>
                 </td>
               </tr>
             ))}

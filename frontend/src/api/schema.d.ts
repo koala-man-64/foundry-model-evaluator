@@ -852,7 +852,7 @@ export interface components {
         /** BudgetOut */
         BudgetOut: {
             /** Committed */
-            committed: string | null;
+            committed: string;
             /** Limit */
             limit: string;
         };
@@ -1017,6 +1017,8 @@ export interface components {
             cost_cells: number;
             /** Cost Excluded */
             cost_excluded: number;
+            /** Cost Other Currency */
+            cost_other_currency: number;
             /** Covered Cells */
             covered_cells: number;
             /** Custom Rates */
@@ -1031,14 +1033,24 @@ export interface components {
             judge_wins: number;
             /** Label */
             label: string;
+            /** Latency Cells */
+            latency_cells: number;
             /** Manual Scored */
             manual_scored: number;
+            /** Pending */
+            pending: number;
             /** Profile Name */
             profile_name: string;
+            /** Reasoning Cells */
+            reasoning_cells: number;
             /** Runs */
             runs: number;
             /** Succeeded */
             succeeded: number;
+            /** Token Cells */
+            token_cells: number;
+            /** Win Cells */
+            win_cells: number;
             /** Win Rate */
             win_rate: number | null;
         };
@@ -1117,6 +1129,11 @@ export interface components {
             incomplete: number;
             /** Lower */
             lower: string;
+            /**
+             * Other Currency
+             * @default 0
+             */
+            other_currency: number;
             /** Pending */
             pending: number;
             /**
@@ -2606,6 +2623,12 @@ export interface components {
             /** Cache Write Share */
             cache_write_share?: number | string | null;
             /**
+             * Cache Write Ttl
+             * @default 5m
+             * @enum {string}
+             */
+            cache_write_ttl: "5m" | "1h";
+            /**
              * Input Multiplier
              * @default 1
              */
@@ -2625,6 +2648,12 @@ export interface components {
             cache_read_share?: string | null;
             /** Cache Write Share */
             cache_write_share?: string | null;
+            /**
+             * Cache Write Ttl
+             * @default 5m
+             * @enum {string}
+             */
+            cache_write_ttl: "5m" | "1h";
             /**
              * Input Multiplier
              * @default 1

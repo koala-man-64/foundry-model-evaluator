@@ -82,3 +82,30 @@ Money = Annotated[
     BeforeValidator(_validate_money),
     PlainSerializer(to_text, return_type=str, when_used="always"),
 ]
+
+# Values a person enters (prices, budgets, what-if factors) are bounded, so that a value such as
+# 1E-50000000 cannot expand into megabytes of digits when it is stored, computed with or shown.
+INPUT_MAX_DIGITS = 30
+INPUT_MAX_PLACES = 20
+INPUT_MAX_MAGNITUDE = 15  # values below 10^15
+
+
+def validate_money_input(value: object) -> Decimal:
+    result = _validate_money(value)
+    # Checked on the digits and exponent alone: arithmetic on such values can overflow.
+    _sign, digits, exponent = result.as_tuple()
+    assert isinstance(exponent, int)  # finite, checked above
+    if len(digits) > INPUT_MAX_DIGITS:
+        raise ValueError(f"use at most {INPUT_MAX_DIGITS} digits")
+    if exponent < -INPUT_MAX_PLACES:
+        raise ValueError(f"use at most {INPUT_MAX_PLACES} decimal places")
+    if exponent + len(digits) > INPUT_MAX_MAGNITUDE:
+        raise ValueError(f"the value is too large (the limit is {10**INPUT_MAX_MAGNITUDE:,})")
+    return result
+
+
+MoneyInput = Annotated[
+    Decimal,
+    BeforeValidator(validate_money_input),
+    PlainSerializer(to_text, return_type=str, when_used="always"),
+]

@@ -4,18 +4,24 @@ Every attempt is re-priced on its own under the scenario (what-if multipliers an
 original or current prices); the context-length tier is chosen again from the scenario's input.
 Only then are costs averaged: prices are never applied to averaged token counts. Only attempts
 whose scenario estimate is complete are used, and the number excluded is reported.
+
+Scenario input: the measured total is scaled and rounded once. A cache share fixes its category's
+part of that total; the rest keeps the measured mix of the other categories. The parts are rounded
+with the largest-remainder method, so they always add up to the scenario total.
 """
 
 from __future__ import annotations
 
+import math
+import re
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..db.database import Database
 from ..judging.service import latest_attempts
-from ..money import Money, add, div, mul
+from ..money import Money, MoneyInput, add, div, mul
 from ..pricing.calculator import CostContext, estimate_cost
 from ..pricing.ratecard import Category, RateCard, RateStatus
 from ..pricing.service import PricingService
@@ -23,7 +29,7 @@ from ..pricing.snapshots import load_snapshot
 from ..repos.endpoints import EndpointRepository, NotFoundError
 from ..repos.profiles import ProfileRepository
 from ..repos.runs import RunCandidate, RunRepository
-from ..types import AttemptStatus
+from ..types import ApiStyle, AttemptStatus
 from ..usage.facts import UsageFacts
 
 _ONE = Decimal(1)
@@ -38,10 +44,13 @@ class WhatIf(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    input_multiplier: Money = Field(default=_ONE)
-    output_multiplier: Money = Field(default=_ONE)
-    cache_read_share: Money | None = None
-    cache_write_share: Money | None = None
+    input_multiplier: MoneyInput = Field(default=_ONE)
+    output_multiplier: MoneyInput = Field(default=_ONE)
+    cache_read_share: MoneyInput | None = None
+    cache_write_share: MoneyInput | None = None
+    # Claude: the cache TTL assumed for scenario cache writes when neither the measured usage (TTL
+    # split) nor the request (cache TTL setting) says which one applies.
+    cache_write_ttl: Literal["5m", "1h"] = "5m"
 
     @model_validator(mode="after")
     def _check(self) -> WhatIf:
@@ -124,64 +133,148 @@ def _write_categories(card: RateCard) -> tuple[Category, ...]:
     return (Category.CACHE_WRITE_5M, Category.CACHE_WRITE_1H)
 
 
+def _split(total: int, fractions: dict[str, Decimal]) -> dict[str, int]:
+    """Whole numbers proportional to fractions (which sum to 1) that add up exactly to total."""
+    exact = {key: Decimal(total) * fraction for key, fraction in fractions.items()}
+    parts = {key: math.floor(value) for key, value in exact.items()}
+    remaining = total - sum(parts.values())
+    # Largest remainders first; ties keep the order of the keys.
+    by_remainder = sorted(exact, key=lambda key: exact[key] - parts[key], reverse=True)
+    for key in by_remainder[: max(remaining, 0)]:
+        parts[key] += 1
+    for key in reversed(by_remainder):  # only for fractions that sum to slightly more than 1
+        if remaining >= 0:
+            break
+        if parts[key] > 0:
+            parts[key] -= 1
+            remaining += 1
+    return parts
+
+
+_NAMES = {"uncached": "uncached input", "read": "cache reads", "write": "cache writes"}
+
+
+class ScenarioUsage(NamedTuple):
+    usage: UsageFacts | None
+    reason: str | None  # why the attempt cannot be projected (usage is None)
+    assumptions: list[str]  # assumptions this attempt's scenario needed beyond the what-if labels
+
+
 def scenario_usage(
-    facts: UsageFacts, what_if: WhatIf, *, read_applies: bool = True, write_applies: bool = True
-) -> tuple[UsageFacts | None, str | None]:
-    """Usage under the scenario, or (None, reason) when the measured counts are insufficient."""
+    facts: UsageFacts,
+    what_if: WhatIf,
+    *,
+    read_applies: bool = True,
+    write_applies: bool = True,
+    requested_ttl: str | None = None,
+) -> ScenarioUsage:
+    """Usage under the scenario, or no usage and a reason when the measured counts are insufficient."""
     if facts.output_total is None:
-        return None, "output tokens not reported"
+        return ScenarioUsage(None, "output tokens not reported", [])
+    if facts.input_total is None:
+        return ScenarioUsage(None, "total input tokens not reported", [])
     m_in, m_out = what_if.input_multiplier, what_if.output_multiplier
-
-    def scaled(value: int | None, factor: Decimal) -> int | None:
-        return None if value is None else _round(Decimal(value) * factor)
-
-    read_share = what_if.cache_read_share if read_applies else None
-    write_share = what_if.cache_write_share if write_applies else None
-    known_uncached, known_read, known_write = facts.input_uncached, facts.cache_read, facts.cache_write
-    read = scaled(known_read, m_in)
-    write = scaled(known_write, m_in)
-    total: int | None
-    if known_uncached is not None and read is not None and write is not None:
-        # Scale each part, so the total stays their exact sum.
-        total = _round(Decimal(known_uncached) * m_in) + read + write
+    total = _round(Decimal(facts.input_total) * m_in)  # rounded once, so the parts cannot cross a tier
+    shares: dict[str, Decimal] = {}
+    if what_if.cache_read_share is not None and read_applies:
+        shares["read"] = what_if.cache_read_share
+    if what_if.cache_write_share is not None and write_applies:
+        shares["write"] = what_if.cache_write_share
+    measured: dict[str, int | None] = {
+        key: value if value is None or value >= 0 else None
+        for key, value in (("uncached", facts.input_uncached), ("read", facts.cache_read), ("write", facts.cache_write))
+    }
+    rest = _ONE - sum(shares.values(), Decimal(0))
+    unspecified = [key for key in measured if key not in shares]
+    assumptions: list[str] = []
+    parts: dict[str, int | None]
+    if all(measured[key] is not None for key in unspecified):
+        # The rest of the input keeps the measured mix of the categories without a share.
+        weights = {key: Decimal(measured[key] or 0) for key in unspecified}
+        weight_sum = sum(weights.values(), Decimal(0))
+        if weight_sum == 0:
+            weights, weight_sum = {key: Decimal(key == "uncached") for key in unspecified}, _ONE
+        fractions = {key: shares[key] if key in shares else rest * weights[key] / weight_sum for key in measured}
+        parts = dict(_split(total, fractions))
+        mixed = [key for key in unspecified if key != "uncached" and measured[key]]
+        if shares and mixed:
+            assumptions.append(
+                "the rest of the input keeps its measured mix of uncached input and "
+                + " and ".join(_NAMES[key] for key in mixed)
+            )
     else:
-        total = scaled(facts.input_total, m_in)
-    if total is None:
-        return None, "total input tokens not reported"
-    if read_share is not None:
-        read = _round(Decimal(total) * read_share)
-    if write_share is not None:
-        write = _round(Decimal(total) * write_share)
-    if read is not None and write is not None and read + write > total:
-        write = total - read  # rounding of two shares can overshoot by one token
-    uncached_out = total - read - write if read is not None and write is not None else None
+        # Some measured count is unknown (and so is uncached input). Shares still apply; a known
+        # count without a share keeps its measured fraction of the input; unknown counts stay unknown.
+        fractions = dict(shares)
+        known = {
+            key: Decimal(measured[key] or 0) / Decimal(facts.input_total) if facts.input_total else Decimal(0)
+            for key in ("read", "write")
+            if key not in shares and measured[key] is not None
+        }
+        room = rest
+        known_sum = sum(known.values(), Decimal(0))
+        if known_sum > room:
+            known = {key: value * room / known_sum for key, value in known.items()}
+            assumptions.append(" and ".join(_NAMES[key] for key in known) + " reduced to fit the cache shares")
+        fractions.update(known)
+        if all(key in fractions for key in ("read", "write")):
+            fractions["uncached"] = _ONE - sum(fractions.values(), Decimal(0))
+            parts = dict(_split(total, fractions))
+        else:
+            parts = {key: _round(Decimal(total) * fraction) for key, fraction in fractions.items()}
+            parts.update({key: None for key in measured if key not in parts})
+    write = parts["write"]
     write_5m = write_1h = None
-    if write is not None and facts.cache_write_split_reported and facts.cache_write:
-        # Keep the measured TTL mix when the write volume changes.
-        ratio = Decimal(facts.cache_write_5m or 0) / Decimal(facts.cache_write)
-        write_5m = _round(Decimal(write) * ratio)
-        write_1h = write - write_5m
-    elif write == 0:
-        write_5m = write_1h = 0
-    return (
+    if facts.api_style is ApiStyle.ANTHROPIC_MESSAGES and write is not None:
+        if write == 0:
+            write_5m = write_1h = 0
+        elif facts.cache_write_split_reported and facts.cache_write:
+            # Keep the measured TTL mix when the write volume changes.
+            ttl = _split(
+                write,
+                {
+                    "5m": Decimal(facts.cache_write_5m or 0) / Decimal(facts.cache_write),
+                    "1h": Decimal(facts.cache_write_1h or 0) / Decimal(facts.cache_write),
+                },
+            )
+            write_5m, write_1h = ttl["5m"], ttl["1h"]
+        elif not facts.cache_write_split_partial and requested_ttl not in ("5m", "1h"):
+            # Nothing measured or requested tells the TTL: use the scenario's assumption.
+            five = what_if.cache_write_ttl == "5m"
+            write_5m, write_1h = (write, 0) if five else (0, write)
+            assumptions.append(
+                f"cache writes priced at the {'5-minute' if five else '1-hour'} cache rate (assumed TTL)"
+            )
+        # Otherwise the calculator uses the request's TTL, or treats a partial split as unknown.
+    return ScenarioUsage(
         UsageFacts(
             api_style=facts.api_style,
             input_total=total,
-            input_uncached=uncached_out,
+            input_uncached=parts["uncached"],
             input_uncached_derived=facts.api_style.is_openai,
-            cache_read=read,
+            cache_read=parts["read"],
             cache_write=write,
             cache_write_5m=write_5m,
             cache_write_1h=write_1h,
-            output_total=scaled(facts.output_total, m_out),
-            reasoning=scaled(facts.reasoning, m_out),
+            cache_write_split_partial=facts.cache_write_split_partial,
+            output_total=_round(Decimal(facts.output_total) * m_out),
+            reasoning=None if facts.reasoning is None else _round(Decimal(facts.reasoning) * m_out),
             service_tier=facts.service_tier,
             anomalies=list(facts.anomalies),
             unrecognized_nonzero=dict(facts.unrecognized_nonzero),
             unsupported_modalities=dict(facts.unsupported_modalities),
         ),
         None,
+        assumptions,
     )
+
+
+_COUNTS = re.compile(r"\s*\(\d[\d,]* tokens?\)|^\d[\d,]* tokens?: | = -?\d[\d,]*")
+
+
+def _stable_reason(reason: str) -> str:
+    """An exclusion reason without the token counts, so the same cause is counted once."""
+    return _COUNTS.sub("", reason)
 
 
 class ProjectionService:
@@ -290,25 +383,29 @@ class ProjectionService:
             write_applies = _applicable(card, _write_categories(card))
             read_applicable = read_applicable or read_applies
             write_applicable = write_applicable or write_applies
+            requested_ttl = candidate.settings.prompt_cache_ttl
             for facts in facts_list:
-                scenario, reason = scenario_usage(
-                    facts, request.what_if, read_applies=read_applies, write_applies=write_applies
+                scenario = scenario_usage(
+                    facts,
+                    request.what_if,
+                    read_applies=read_applies,
+                    write_applies=write_applies,
+                    requested_ttl=requested_ttl,
                 )
-                if scenario is None:
+                if scenario.usage is None:
                     excluded += 1
-                    reasons[reason or "usage incomplete"] = reasons.get(reason or "usage incomplete", 0) + 1
+                    reason = scenario.reason or "usage incomplete"
+                    reasons[reason] = reasons.get(reason, 0) + 1
                     continue
-                estimate = estimate_cost(
-                    scenario, card, CostContext(requested_cache_ttl=candidate.settings.prompt_cache_ttl)
-                )
+                estimate = estimate_cost(scenario.usage, card, CostContext(requested_cache_ttl=requested_ttl))
                 if estimate.status != "complete" or estimate.total is None:
                     excluded += 1
-                    first = estimate.reasons[0] if estimate.reasons else "estimate incomplete"
+                    first = _stable_reason(estimate.reasons[0]) if estimate.reasons else "estimate incomplete"
                     reasons[first] = reasons.get(first, 0) + 1
                     continue
                 costs.append(estimate.total)
                 custom = custom or any(line.custom_rate for line in estimate.lines)
-                for item in estimate.assumptions:
+                for item in [*scenario.assumptions, *estimate.assumptions]:
                     if item not in assumptions:
                         assumptions.append(item)
         if request.what_if.cache_read_share is not None and not read_applicable:

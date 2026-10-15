@@ -20,6 +20,7 @@ from ..credentials.redaction import sanitize_error_text
 from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.profiles import Endpoint, ModelProfile, host_identity
+from ..money import add
 from ..pricing.calculator import CostContext, CostEstimate, estimate_cost
 from ..pricing.ratecard import RateCard
 from ..pricing.snapshots import load_snapshot
@@ -199,6 +200,11 @@ class Engine:
     def budget(self, run_id: str) -> BudgetState | None:
         return self._budgets.get(run_id)
 
+    def committed(self, run_id: str) -> Decimal:
+        """Spending counted against the run's budget. Read-only: never creates the budget state."""
+        state = self._budgets.get(run_id)
+        return state.committed if state is not None else self._spent(run_id)
+
     def ensure_budget(self, run_id: str) -> BudgetState | None:
         """The run's budget state, rebuilt from recorded spending when needed (e.g. after a restart)."""
         state = self._budgets.get(run_id)
@@ -294,12 +300,8 @@ class Engine:
     # ------------------------------------------------------------------ internals
     def _spent(self, run_id: str) -> Decimal:
         """Recorded spending for a run: every sent call at its upper bound, or its reserved worst case."""
-        total = Decimal(0)
-        for attempt in self.runs.attempts(run_id):
-            total += sent_cost(attempt.request_sent_at, attempt.cost, attempt.budget_reserved)
-        for hook in self.spent_hooks:
-            total += hook(run_id)
-        return total
+        total = add(*(sent_cost(a.request_sent_at, a.cost, a.budget_reserved) for a in self.runs.attempts(run_id)))
+        return add(total, *(hook(run_id) for hook in self.spent_hooks))
 
     def _task_done(self, run_id: str, task: asyncio.Task[None]) -> None:
         group = self._tasks.get(run_id)
@@ -337,7 +339,6 @@ class Engine:
             self._track_side_in_loop(run_id, hook(run_id), f"after-generation-{run_id}")
 
     async def _run_attempt(self, run_id: str, attempt_id: str, semaphore: asyncio.Semaphore) -> None:
-        currency = self.settings.get().currency
         try:
             await self._execute(run_id, attempt_id, semaphore)
         except asyncio.CancelledError:
@@ -347,23 +348,23 @@ class Engine:
                 if self._shutting_down
                 else "Cancelled. If the request had already been sent, the provider may still bill it."
             )
-            self._finish_if_active(attempt_id, status, message, currency)
+            self._finish_if_active(attempt_id, status, message)
             raise
         except Exception as exc:
             log.exception("attempt %s failed unexpectedly", attempt_id)
             self._finish_if_active(
-                attempt_id, AttemptStatus.FAILED, sanitize_error_text(f"Internal error: {exc}") or "", currency
+                attempt_id, AttemptStatus.FAILED, sanitize_error_text(f"Internal error: {exc}") or ""
             )
         finally:
             self.finish_budget(run_id, attempt_id)
 
-    def _finish_if_active(self, attempt_id: str, status: AttemptStatus, message: str, currency: str) -> None:
+    def _finish_if_active(self, attempt_id: str, status: AttemptStatus, message: str) -> None:
         try:
             attempt = self.runs.attempt(attempt_id)
         except NotFoundError:
             return
         if attempt.status in (AttemptStatus.QUEUED, AttemptStatus.RUNNING):
-            self.runs.finish_unsent_or_sent(attempt_id, status=status, message=message, currency=currency)
+            self.runs.finish_unsent_or_sent(attempt_id, status=status, message=message)
 
     async def _execute(self, run_id: str, attempt_id: str, semaphore: asyncio.Semaphore) -> None:
         attempt = self.runs.attempt(attempt_id)
@@ -398,7 +399,7 @@ class Engine:
             reason = "usage not reported by the provider"
             if not result.ok:
                 reason += f" (request failed: {result.error_type or 'error'}); no usage was reported"
-            cost = CostEstimate.usage_missing(currency, reason)
+            cost = CostEstimate.usage_missing(currency, reason, self.runs.attempt(attempt_id).budget_reserved)
         else:
             cost = estimate_cost(facts, card, CostContext(requested_cache_ttl=candidate.settings.prompt_cache_ttl))
         status = AttemptStatus.SUCCEEDED if result.ok else AttemptStatus.FAILED

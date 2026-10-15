@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from .rubric import RubricDefinition
 
-_FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL | re.IGNORECASE)
+# A judge result is a few kilobytes of JSON. Anything far larger is not one, and is not parsed.
+MAX_OUTPUT_CHARS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -35,18 +35,33 @@ class ParseResult:
         return not self.errors
 
 
+def _strip_fence(text: str) -> str:
+    """Remove one surrounding Markdown code fence (an optional json tag included), in linear time."""
+    if len(text) < 6 or not (text.startswith("```") and text.endswith("```")):
+        return text
+    inner = text[3:-3]
+    if inner[:4].lower() == "json":
+        inner = inner[4:]
+    return inner.strip()
+
+
 def extract_json(text: str) -> tuple[Any, str | None]:
-    """Parse the output as JSON (a single surrounding Markdown code fence is tolerated)."""
-    stripped = text.strip()
-    fenced = _FENCE.match(stripped)
-    if fenced:
-        stripped = fenced.group(1)
+    """Parse the output as JSON (a single surrounding Markdown code fence is tolerated).
+
+    Every failure is reported as an error, never raised, so the raw output stays inspectable.
+    """
+    if len(text) > MAX_OUTPUT_CHARS:
+        return None, f"the output is too long to be a judge result ({len(text):,} characters)"
+    stripped = _strip_fence(text.strip())
     if not stripped:
         return None, "the output is empty"
     try:
         return json.loads(stripped), None
     except json.JSONDecodeError as exc:
         return None, f"the output is not valid JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})"
+    except (ValueError, RecursionError):
+        # Python refuses integers with thousands of digits and very deep nesting.
+        return None, "the output is not a readable JSON object (a number or the nesting is too large)"
 
 
 def _whole_number(value: Any) -> int | None:

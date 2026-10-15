@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from foundry_eval.money import add, div, mul, to_decimal, to_text
+from foundry_eval.money import add, div, mul, to_decimal, to_text, validate_money_input
 
 
 def test_to_decimal_accepts_strings_ints_decimals():
@@ -37,3 +37,25 @@ def test_arithmetic_is_exact():
     assert mul(Decimal("1160"), Decimal("1.25")) == Decimal("1450.00")
     assert div(Decimal("1"), Decimal("3")).as_tuple().exponent < -30
     assert add(Decimal("0.1"), Decimal("0.2")) == Decimal("0.3")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("1E-50000000", "decimal places"),
+        ("1E-999999999999", "decimal places"),
+        ("1E+30000000", "too large"),
+        ("0E+30000000", "too large"),
+        ("1000000000000000", "too large"),
+        ("0.000000000000000000001", "decimal places"),
+        ("1." + "1" * 30, "digits"),
+    ],
+)
+def test_entered_amounts_are_bounded(value, message):
+    with pytest.raises(ValueError, match=message):
+        validate_money_input(value)
+
+
+@pytest.mark.parametrize("value", ["0", "0.05", "2.75", "0.0000025", "100", "999999999999999", "1.5E-7", 3])
+def test_ordinary_amounts_are_accepted(value):
+    assert validate_money_input(value) == Decimal(str(value))

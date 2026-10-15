@@ -10,7 +10,7 @@ import socket
 import sys
 import threading
 import webbrowser
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from . import __version__
@@ -138,13 +138,15 @@ def cmd_pricing_check(args: argparse.Namespace) -> int:
 
 def cmd_smoke(args: argparse.Namespace) -> int:
     from .domain.generation import GenerationSettings
+    from .execution.engine import sent_cost
     from .execution.runs import CandidateSpec, PromptSpec, RunRequest, RunValidationError
     from .judging.service import JudgeRequest, JudgeValidationError
+    from .money import add, validate_money_input
     from .timeutil import new_id
 
     try:
-        budget = Decimal(args.budget)
-    except InvalidOperation:
+        budget = validate_money_input(args.budget)
+    except ValueError:
         print("--budget must be a decimal amount such as 0.05", file=sys.stderr)
         return 2
     if budget <= 0:
@@ -213,7 +215,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
             candidate = services.runs.candidate(attempt.candidate_id)
             usage = attempt.usage
             cost = attempt.cost
-            spent += cost.upper if cost and cost.upper is not None else (cost.lower if cost else Decimal(0))
+            spent = add(spent, sent_cost(attempt.request_sent_at, cost, attempt.budget_reserved))
             if attempt.status.value != "succeeded":
                 failures += 1
             print(f"\n{candidate.label}: {attempt.status.value} ({attempt.finish_reason}) in {attempt.latency_ms} ms")
@@ -233,8 +235,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         for evaluation_id in evaluation_ids:
             evaluation = services.evaluations.get(evaluation_id)
             cost = evaluation.cost
-            if cost and cost.status != "not_sent":
-                spent += cost.upper if cost.upper is not None else cost.lower
+            spent = add(spent, sent_cost(evaluation.request_sent_at, cost, evaluation.budget_reserved))
             print(f"\nJudge ({args.judge}): {evaluation.status}")
             if evaluation.error_message:
                 print(f"  {evaluation.error_message}")

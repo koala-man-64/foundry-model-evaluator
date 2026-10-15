@@ -93,8 +93,19 @@ class CostEstimate(BaseModel):
         return cls(status="not_sent", currency=currency, total=ZERO, lower=ZERO, upper=ZERO)
 
     @classmethod
-    def usage_missing(cls, currency: str, reason: str) -> CostEstimate:
-        return cls(status="incomplete", currency=currency, total=None, lower=ZERO, upper=None, reasons=[reason])
+    def usage_missing(cls, currency: str, reason: str, reserved: Decimal | None = None) -> CostEstimate:
+        """A sent call without usage: never $0. Its budget reservation, when known, bounds it from above."""
+        return cls(
+            status="incomplete",
+            currency=currency,
+            total=None,
+            lower=ZERO,
+            upper=reserved,
+            reasons=[reason],
+            assumptions=["upper bound: the worst case reserved for the budget before sending"]
+            if reserved is not None
+            else [],
+        )
 
     @property
     def is_complete(self) -> bool:

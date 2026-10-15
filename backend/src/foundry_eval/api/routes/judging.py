@@ -34,7 +34,7 @@ class EvaluationOut(Evaluation):
     judge_profile_name: str
     rubric_name: str
     rubric: RubricVersion
-    # Revealed after judging: run candidate id -> candidate label.
+    # Revealed after judging, like the label order: run candidate id -> candidate label.
     candidate_labels: dict[str, str]
 
 
@@ -51,12 +51,16 @@ class EvaluationRaw(BaseModel):
 
 def _evaluation_out(services: ServicesDep, evaluation: Evaluation, labels: dict[str, str]) -> EvaluationOut:
     rubric = services.rubrics.version(evaluation.rubric_version_id)
+    data = evaluation.model_dump()
+    judging = evaluation.status in ("queued", "running")
+    if judging:
+        data["order"] = []  # which label is which candidate is revealed only after judging
     return EvaluationOut(
-        **evaluation.model_dump(),
+        **data,
         judge_profile_name=str(evaluation.judge_profile_snapshot.get("name", "")),
         rubric_name=services.rubrics.get(rubric.rubric_id).name,
         rubric=rubric,
-        candidate_labels=labels,
+        candidate_labels={} if judging else labels,
     )
 
 

@@ -39,7 +39,7 @@ class RunCandidateOut(BaseModel):
 
 class BudgetOut(BaseModel):
     limit: Money
-    committed: Money | None
+    committed: Money
 
 
 class RunDetail(BaseModel):
@@ -125,15 +125,12 @@ def judging_total(services: ServicesDep, run_id: str, currency: str) -> CostTota
 
 def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
     run = services.runs.get(run_id)
-    currency = services.settings.get().currency
+    currency = services.runs.run_currency(run_id, services.settings.get().currency)
     attempts = services.runs.attempts(run_id)
     generation = total_costs([a.cost for a in attempts], currency)
     judging = judging_total(services, run_id, currency)
-    budget_state = services.engine.budget(run_id)
     budget = (
-        BudgetOut(limit=run.budget, committed=budget_state.committed if budget_state else None)
-        if run.budget is not None
-        else None
+        BudgetOut(limit=run.budget, committed=services.engine.committed(run_id)) if run.budget is not None else None
     )
     evaluation_counts: dict[str, int] = {}
     for evaluation in services.evaluations.list_for_run(run_id):
@@ -173,9 +170,10 @@ def create_run(payload: RunRequest, key: IdempotencyKey, services: ServicesDep, 
 def list_runs(
     services: ServicesDep, kind: str | None = None, suite_id: str | None = None, limit: int = 100
 ) -> list[RunSummary]:
-    currency = services.settings.get().currency
+    default_currency = services.settings.get().currency
     summaries: list[RunSummary] = []
     for run in services.runs.list_runs(limit=min(max(limit, 1), 500), kind=kind, suite_id=suite_id):
+        currency = services.runs.run_currency(run.id, default_currency)
         attempts = services.runs.attempts(run.id)
         generation = total_costs([a.cost for a in attempts], currency)
         judging = judging_total(services, run.id, currency)
@@ -212,7 +210,9 @@ def get_progress(run_id: str, services: ServicesDep) -> Progress:
         counts=counts,
         total=len(attempts),
         active=services.engine.is_active(run_id),
-        generation_cost=total_costs([a.cost for a in attempts], services.settings.get().currency),
+        generation_cost=total_costs(
+            [a.cost for a in attempts], services.runs.run_currency(run_id, services.settings.get().currency)
+        ),
     )
 
 

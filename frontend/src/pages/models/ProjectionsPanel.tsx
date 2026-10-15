@@ -34,6 +34,7 @@ export function ProjectionsPanel() {
   const [outputMultiplier, setOutputMultiplier] = useState('1')
   const [readShare, setReadShare] = useState('')
   const [writeShare, setWriteShare] = useState('')
+  const [writeTtl, setWriteTtl] = useState<'5m' | '1h'>('5m')
   useEffect(() => {
     if (selected === null && finished.length) setSelected([finished[0].run.id])
   }, [finished, selected])
@@ -58,6 +59,7 @@ export function ProjectionsPanel() {
             output_multiplier: outputMultiplier.trim(),
             cache_read_share: readFraction,
             cache_write_share: writeFraction,
+            cache_write_ttl: writeTtl,
           },
         }
       : null
@@ -105,6 +107,9 @@ export function ProjectionsPanel() {
           </Field>
         </div>
         <h3>What-if assumptions</h3>
+        <p className="small muted">
+          A cache share sets that part of each request's input; the rest keeps the measured mix of the other input categories.
+        </p>
         <div className="grid-form">
           <Field label="Input length multiplier" hint="1 = as measured">
             <input inputMode="decimal" value={inputMultiplier} onChange={(e) => setInputMultiplier(e.target.value)} />
@@ -133,6 +138,15 @@ export function ProjectionsPanel() {
               disabled={!writeApplicable && !writeShare}
               onChange={(e) => setWriteShare(e.target.value)}
             />
+          </Field>
+          <Field
+            label="Cache write TTL when unknown"
+            hint="Claude: for scenario cache writes when neither the run's usage nor its cache setting shows the TTL"
+          >
+            <select value={writeTtl} disabled={!writeShare.trim()} onChange={(e) => setWriteTtl(e.target.value as '5m' | '1h')}>
+              <option value="5m">5 minutes</option>
+              <option value="1h">1 hour</option>
+            </select>
           </Field>
         </div>
       </div>

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...domain.generation import validate_settings
 from ...domain.suites import Suite, SuiteIn
 from ...execution.runs import CandidateSpec, PromptSpec, RunPreview, RunRequest
-from ...money import Money
+from ...money import MoneyInput
 from ...repos.endpoints import NotFoundError
 from ..deps import IdempotencyKey, ServicesDep
 from .runs import CreatedRun
@@ -20,7 +20,7 @@ class SuiteRunIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(default="", max_length=200)
-    budget: Money | None = None
+    budget: MoneyInput | None = None
 
 
 class SuiteArchiveIn(BaseModel):

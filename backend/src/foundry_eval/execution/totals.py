@@ -20,28 +20,32 @@ class CostTotal(BaseModel):
     counted: int
     incomplete: int
     pending: int
+    # Estimates in another currency cannot be added; they make the total incomplete.
+    other_currency: int = 0
 
 
 def total_costs(costs: list[CostEstimate | None], currency: str = "USD") -> CostTotal:
     lower = ZERO
     upper: Decimal | None = ZERO
-    incomplete = pending = counted = 0
+    incomplete = pending = counted = other_currency = 0
     for cost in costs:
         if cost is None:
             pending += 1
             continue
         if cost.currency != currency:
-            raise ValueError(f"cannot add {cost.currency} amounts to a {currency} total")
+            other_currency += 1
+            upper = None
+            continue
         counted += 1
         lower = add(lower, cost.lower)
         upper = None if upper is None or cost.upper is None else add(upper, cost.upper)
         if not cost.is_complete:
             incomplete += 1
-    if counted == 0 and pending == 0:
+    if counted == 0 and pending == 0 and other_currency == 0:
         status: Literal["complete", "incomplete", "pending", "empty"] = "empty"
     elif pending:
         status = "pending"
-    elif incomplete:
+    elif incomplete or other_currency:
         status = "incomplete"
     else:
         status = "complete"
@@ -54,11 +58,15 @@ def total_costs(costs: list[CostEstimate | None], currency: str = "USD") -> Cost
         counted=counted,
         incomplete=incomplete,
         pending=pending,
+        other_currency=other_currency,
     )
 
 
 def combine_totals(*totals: CostTotal) -> CostTotal:
+    """Add totals computed in the same currency (generation + judging of one run)."""
     currency = totals[0].currency if totals else "USD"
+    if any(t.currency != currency for t in totals):
+        raise ValueError("totals in different currencies cannot be combined")
     lower = ZERO
     upper: Decimal | None = ZERO
     for item in totals:
@@ -82,4 +90,5 @@ def combine_totals(*totals: CostTotal) -> CostTotal:
         counted=sum(t.counted for t in totals),
         incomplete=sum(t.incomplete for t in totals),
         pending=sum(t.pending for t in totals),
+        other_currency=sum(t.other_currency for t in totals),
     )

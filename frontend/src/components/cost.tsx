@@ -103,10 +103,15 @@ export function TotalBox({ title, total }: { title: string; total: CostTotal }) 
     value = formatMoney(total.total, total.currency)
   } else {
     value = `≥ ${formatMoney(total.lower, total.currency)}`
-    note =
-      total.status === 'pending'
-        ? `${total.pending} pending`
-        : `${total.incomplete} of ${total.counted} incomplete${total.upper ? ` · ≤ ${formatMoney(total.upper, total.currency)}` : ''}`
+    const parts: string[] = []
+    if (total.status === 'pending') {
+      parts.push(`${total.pending} pending`)
+    } else {
+      if (total.incomplete) parts.push(`${total.incomplete} of ${total.counted} incomplete`)
+      if (total.other_currency) parts.push(`${total.other_currency} in another currency not included`)
+      if (total.upper) parts.push(`≤ ${formatMoney(total.upper, total.currency)}`)
+    }
+    note = parts.join(' · ')
   }
   return (
     <div className="total-box">

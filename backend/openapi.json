@@ -405,15 +405,8 @@
       "BudgetOut": {
         "properties": {
           "committed": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Committed"
+            "title": "Committed",
+            "type": "string"
           },
           "limit": {
             "title": "Limit",
@@ -960,6 +953,10 @@
             "title": "Cost Excluded",
             "type": "integer"
           },
+          "cost_other_currency": {
+            "title": "Cost Other Currency",
+            "type": "integer"
+          },
           "covered_cells": {
             "title": "Covered Cells",
             "type": "integer"
@@ -988,13 +985,25 @@
             "title": "Label",
             "type": "string"
           },
+          "latency_cells": {
+            "title": "Latency Cells",
+            "type": "integer"
+          },
           "manual_scored": {
             "title": "Manual Scored",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
             "type": "integer"
           },
           "profile_name": {
             "title": "Profile Name",
             "type": "string"
+          },
+          "reasoning_cells": {
+            "title": "Reasoning Cells",
+            "type": "integer"
           },
           "runs": {
             "title": "Runs",
@@ -1002,6 +1011,14 @@
           },
           "succeeded": {
             "title": "Succeeded",
+            "type": "integer"
+          },
+          "token_cells": {
+            "title": "Token Cells",
+            "type": "integer"
+          },
+          "win_cells": {
+            "title": "Win Cells",
             "type": "integer"
           },
           "win_rate": {
@@ -1024,20 +1041,26 @@
           "attempts",
           "succeeded",
           "failures",
+          "pending",
           "covered_cells",
           "avg_cost",
           "cost_cells",
           "cost_excluded",
+          "cost_other_currency",
           "avg_latency_ms",
+          "latency_cells",
           "avg_input_tokens",
           "avg_output_tokens",
+          "token_cells",
           "avg_reasoning_tokens",
+          "reasoning_cells",
           "avg_manual_score",
           "manual_scored",
           "avg_judge_score",
           "judge_scored",
           "judge_wins",
           "judge_comparisons",
+          "win_cells",
           "win_rate",
           "custom_rates"
         ],
@@ -1274,6 +1297,11 @@
           "lower": {
             "title": "Lower",
             "type": "string"
+          },
+          "other_currency": {
+            "default": 0,
+            "title": "Other Currency",
+            "type": "integer"
           },
           "pending": {
             "title": "Pending",
@@ -5729,6 +5757,15 @@
             ],
             "title": "Cache Write Share"
           },
+          "cache_write_ttl": {
+            "default": "5m",
+            "enum": [
+              "5m",
+              "1h"
+            ],
+            "title": "Cache Write Ttl",
+            "type": "string"
+          },
           "input_multiplier": {
             "anyOf": [
               {
@@ -5782,6 +5819,15 @@
               }
             ],
             "title": "Cache Write Share"
+          },
+          "cache_write_ttl": {
+            "default": "5m",
+            "enum": [
+              "5m",
+              "1h"
+            ],
+            "title": "Cache Write Ttl",
+            "type": "string"
           },
           "input_multiplier": {
             "default": "1",

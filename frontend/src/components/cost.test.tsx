@@ -10,7 +10,7 @@ function estimate(partial: Partial<CostEstimate>): CostEstimate {
 }
 
 function total(partial: Partial<CostTotal>): CostTotal {
-  return { status: 'complete', currency: 'USD', lower: '0', total: null, upper: null, counted: 1, incomplete: 0, pending: 0, ...partial }
+  return { status: 'complete', currency: 'USD', lower: '0', total: null, upper: null, counted: 1, incomplete: 0, pending: 0, other_currency: 0, ...partial }
 }
 
 describe('CostValue', () => {
@@ -94,6 +94,12 @@ describe('TotalBox', () => {
     expect(screen.getByText('Estimated token cost · nothing yet')).toBeVisible()
     expect(screen.getByText('≥ $1.50')).toBeVisible()
     expect(screen.getByText('Estimated token cost · 1 of 3 incomplete · ≤ $2.00')).toBeVisible()
+  })
+
+  it('says when amounts in another currency are left out', () => {
+    render(<TotalBox title="Judging" total={total({ status: 'incomplete', lower: '0.1', counted: 1, other_currency: 2 })} />)
+    expect(screen.getByText('≥ $0.1000')).toBeVisible()
+    expect(screen.getByText('Estimated token cost · 2 in another currency not included')).toBeVisible()
   })
 
   it('shows pending calls as a lower bound', () => {

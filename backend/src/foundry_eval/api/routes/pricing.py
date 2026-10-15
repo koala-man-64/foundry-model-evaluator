@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ...money import Money
+from ...money import Money, MoneyInput
 from ...pricing.catalog import FetchInfo
 from ...pricing.matcher import Candidate, MeterInfo, search_catalog
 from ...pricing.ratecard import Category, RateCard, categories_for
@@ -108,7 +108,7 @@ class RateIn(BaseModel):
     mode: Literal["azure_auto", "azure_pinned", "manual", "not_applicable"]
     meter_id: str | None = None
     sku_id: str | None = None
-    price: Money | None = None
+    price: MoneyInput | None = None
     unit: str | None = None
     source_url: str | None = Field(default=None, max_length=1000)
     effective_date: str | None = Field(default=None, max_length=40)
@@ -124,7 +124,7 @@ class OverrideIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tier: int = Field(default=0, ge=0)
-    price: Money
+    price: MoneyInput
     unit: str
     note: str = Field(min_length=1, max_length=500)
     source_url: str | None = Field(default=None, max_length=1000)

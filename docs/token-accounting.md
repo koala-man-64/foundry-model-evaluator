@@ -114,7 +114,7 @@ $1.50 + $0.045 = **$1.545**. If the total input is not reported, the tier is unk
 | Situation | Estimated token cost |
 |---|---|
 | Never sent: cancelled while waiting, skipped by the budget, or interrupted before sending | **$0.00 (not sent)** |
-| Sent, but no usage came back: failed, cancelled or interrupted mid-call | **≥ $0.00, incomplete**. The provider may still bill it. |
+| Sent, but no usage came back: failed, cancelled or interrupted mid-call | **≥ $0.00, incomplete**. The provider may still bill it. In a run with a budget, the call's reservation is shown as its upper bound. |
 
 ## Totals
 
@@ -123,6 +123,10 @@ it shows a lower bound and how many estimates are incomplete.
 
 Generation, judging and combined totals are always shown separately, and combined = generation + judging. Judge
 evaluations take their own price snapshot, so judging costs follow the same rules.
+
+A run's totals use the currency the run was priced in, even after you change the app's currency. Amounts are never
+converted: an estimate in another currency (for example, judging done after a currency change) is left out, and the
+total becomes incomplete and says how many estimates it left out.
 
 ## Budgets
 
@@ -138,17 +142,50 @@ that the worst case can be bounded.
 When a sent call reports no usage, its whole reservation counts as spent. The reservation is saved with the call, so
 spending is not under-counted after a restart either.
 
-## Averages and projections
+The judge preview shows the same worst case that is reserved: it bounds the whole request body, including the
+structured-output schema. It warns when that worst case is more than what is left of the budget; evaluations that do
+not fit are skipped and cost nothing. Judging a run that has a budget needs judge rates in the run's currency.
 
-Averages (for example in suite comparisons) use complete estimates only, and the number excluded is shown.
+## Comparisons
+
+A suite comparison matches **cells**: the same prompt text and trial number, across the selected runs. A cell counts
+as *matched* when every candidate has a succeeded answer in it, and the page shows how many cells matched.
+
+- **Common cells.** Each metric is averaged within a cell first, so a cell repeated across runs counts once. The cell
+  values are then averaged over the matched cells where every candidate has that value. The averages side by side
+  therefore always cover the same prompts and trials, and each value shows how many cells it used.
+- **Costs** use complete estimates in the app's currency. Incomplete estimates and estimates in another currency are
+  left out and counted.
+- **Judge win rate.** The share of the judge's preferences, averaged per cell in the same way. A tie among *n* judged
+  answers gives each one 1/*n*, so the shares of one evaluation always add up to 1.
+- **Failures** count finished attempts that did not succeed. Attempts that have not finished are shown separately.
+
+## Projections
 
 Projections price **each measured request on its own** under the scenario, then average the costs. They never apply
-prices to averaged token counts. The scenario can change four things:
+prices to averaged token counts. The scenario can change these things:
 
 - input and output length multipliers
 - cache read share
 - cache write share
+- the cache-write TTL to assume when it is unknown (Claude)
 - the price basis: each run's original snapshot, or current rates
 
-After scaling, the context-length tier is chosen again. Shares are not applied to a category that the model does not
-bill separately, and the page says so.
+Each request's input is scaled and rounded once, and the context-length tier is chosen again from that total. A share
+sets its category's part of the total. The rest keeps the measured mix of the other categories, and the result lists
+this as an assumption. The parts are rounded so that they add up to the total exactly, so rounding can never push a
+request over a tier threshold.
+
+Shares are not applied to a category that the model does not bill separately, and the page says so.
+
+Claude prices cache writes by TTL:
+
+1. A measured TTL split is kept when the write volume changes.
+2. Otherwise the request's cache setting decides, as for measured usage.
+3. When neither shows the TTL, the scenario's assumption is used (5 minutes unless you choose 1 hour), and it is
+   listed with the result.
+
+A partial TTL breakdown from the provider is never trusted, so such requests stay incomplete and are excluded.
+
+Requests that cannot be priced completely under the scenario are excluded. Exclusions with the same cause are counted
+together.

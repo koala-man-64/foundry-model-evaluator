@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 import logging
 import random
 from dataclasses import dataclass
@@ -24,7 +23,12 @@ from ..db.database import Database
 from ..domain.generation import GenerationSettings
 from ..domain.profiles import Endpoint, ModelProfile, host_identity
 from ..domain.suites import SuiteJudge
-from ..execution.budget import estimate_input_tokens, input_token_upper_bound, worst_case_cost
+from ..execution.budget import (
+    body_input_upper_bound,
+    estimate_input_tokens,
+    input_token_upper_bound,
+    worst_case_cost,
+)
 from ..execution.engine import Engine, NotSent, sent_cost
 from ..execution.runs import profile_snapshot
 from ..execution.totals import CostTotal, total_costs
@@ -254,6 +258,12 @@ class JudgeService:
         )
         return entries, prompt, nonce
 
+    @staticmethod
+    def _request_body(setup: _Setup, settings: GenerationSettings, prompt: Prompt, labels: list[str]) -> dict[str, Any]:
+        """The exact judge request body; the preview bounds its cost with the same body the engine sends."""
+        schema = judge_schema(labels, setup.rubric.definition) if setup.structured else None
+        return build_body(setup.profile, settings, prompt, json_schema=schema)
+
     def preview(self, run_id: str, request: JudgeRequest) -> JudgePreview:
         run = self.runs.get(run_id)
         errors: list[str] = []
@@ -304,16 +314,17 @@ class JudgeService:
         previews: list[GroupPreview] = []
         worst_total: Decimal | None = Decimal(0)
         calls = 0
-        for index, group in enumerate(groups):
+        dense = 0
+        for group in groups:
             entries, prompt, _nonce = self._judge_prompt(group, setup, shuffle=False)
-            if index == 0:
-                try:
-                    schema = judge_schema([e.label for e in entries], setup.rubric.definition)
-                    build_body(
-                        setup.profile, request.settings, prompt, json_schema=schema if setup.structured else None
-                    )
-                except SettingsValidationError as exc:
+            try:
+                body: dict[str, Any] | None = self._request_body(
+                    setup, request.settings, prompt, [e.label for e in entries]
+                )
+            except SettingsValidationError as exc:
+                if not any(e.startswith("Judge settings:") for e in errors):
                     errors.extend(f"Judge settings: {issue.message}" for issue in exc.issues)
+                body = None
             estimate = estimate_input_tokens(prompt.system, prompt.user)
             oversized = estimate > setup.input_limit
             previews.append(
@@ -331,9 +342,15 @@ class JudgeService:
             if oversized:
                 continue
             calls += 1
-            worst, _reason = worst_case_cost(
-                setup.card, input_token_upper_bound(prompt.system, prompt.user), request.settings.max_output_tokens
+            # The same bound the engine reserves before sending: the JSON body, schema included.
+            upper = (
+                body_input_upper_bound(body)
+                if body is not None
+                else input_token_upper_bound(prompt.system, prompt.user)
             )
+            if upper > setup.input_limit:
+                dense += 1
+            worst, _reason = worst_case_cost(setup.card, upper, request.settings.max_output_tokens)
             worst_total = None if worst is None or worst_total is None else add(worst_total, worst)
         oversized_count = sum(1 for g in previews if g.oversized)
         if oversized_count:
@@ -341,11 +358,31 @@ class JudgeService:
                 f"{oversized_count} of {len(previews)} evaluations exceed the judge's input limit; they will be "
                 "recorded as rejected without sending anything (nothing is truncated)."
             )
-        if run.budget is not None and calls and worst_total is None:
-            errors.append(
-                "This run has a budget: set the judge's max output tokens and complete its rates so each call's "
-                "cost is bounded."
+        if dense:
+            warnings.append(
+                f"{dense} evaluation{'s' if dense != 1 else ''} fit the input limit by estimate only. Very "
+                "token-dense text could still exceed the judge's context window; the provider would then reject "
+                "the call, and it is recorded as rejected (nothing is truncated)."
             )
+        if run.budget is not None and calls:
+            run_currency = self.runs.run_currency(run_id, setup.card.currency)
+            if worst_total is None:
+                errors.append(
+                    "This run has a budget: set the judge's max output tokens and complete its rates so each "
+                    "call's cost is bounded."
+                )
+            elif setup.card.currency != run_currency:
+                errors.append(
+                    f"This run's budget is in {run_currency}, but the judge's rates are in {setup.card.currency}."
+                )
+            else:
+                remaining = run.budget - self.engine.committed(run_id)
+                if worst_total > remaining:
+                    warnings.append(
+                        f"The worst case ({worst_total} {run_currency}) is above the run's remaining budget "
+                        f"({max(remaining, Decimal(0))} {run_currency}). Evaluations that do not fit are skipped "
+                        "and cost nothing."
+                    )
         return JudgePreview(
             ok=not errors,
             errors=errors,
@@ -395,9 +432,7 @@ class JudgeService:
             price_snapshot_id = create_snapshot(conn, setup.profile, setup.endpoint, setup.card)
             for group in groups:
                 entries, prompt, _nonce = self._judge_prompt(group, setup, shuffle=True)
-                labels = [e.label for e in entries]
-                schema = judge_schema(labels, setup.rubric.definition) if setup.structured else None
-                body = build_body(setup.profile, request.settings, prompt, json_schema=schema)
+                body = self._request_body(setup, request.settings, prompt, [e.label for e in entries])
                 estimate = estimate_input_tokens(prompt.system, prompt.user)
                 rejected: tuple[str, CostEstimate] | None = None
                 if estimate > setup.input_limit:
@@ -442,7 +477,6 @@ class JudgeService:
 
     # ------------------------------------------------------------------ execution
     async def run_evaluation(self, run_id: str, evaluation_id: str) -> None:
-        currency = self.settings.get().currency
         try:
             await self._execute(run_id, evaluation_id)
         except asyncio.CancelledError:
@@ -453,22 +487,22 @@ class JudgeService:
                     "cancelled",
                     "Cancelled. If the request had already been sent, the provider may still bill it.",
                 )
-            self._finish_if_active(evaluation_id, status, message, currency)
+            self._finish_if_active(evaluation_id, status, message)
             raise
         except Exception as exc:
             log.exception("evaluation %s failed unexpectedly", evaluation_id)
             message = sanitize_error_text(f"Internal error: {exc}") or "Internal error"
-            self._finish_if_active(evaluation_id, "failed", message, currency)
+            self._finish_if_active(evaluation_id, "failed", message)
         finally:
             self.engine.finish_budget(run_id, evaluation_id)
 
-    def _finish_if_active(self, evaluation_id: str, status: str, message: str, currency: str) -> None:
+    def _finish_if_active(self, evaluation_id: str, status: str, message: str) -> None:
         try:
             evaluation = self.evaluations.get(evaluation_id)
         except NotFoundError:
             return
         if evaluation.status in ("queued", "running"):
-            self.evaluations.finish_unsent_or_sent(evaluation_id, status, message, currency)
+            self.evaluations.finish_unsent_or_sent(evaluation_id, status, message)
 
     async def _execute(self, run_id: str, evaluation_id: str) -> None:
         evaluation = self.evaluations.get(evaluation_id)
@@ -487,7 +521,7 @@ class JudgeService:
             endpoint_info=endpoint_info,
             body=body,
             card=card,
-            input_upper=input_token_upper_bound(json.dumps(body, ensure_ascii=False)),
+            input_upper=body_input_upper_bound(body),
             max_output_tokens=evaluation.judge_settings.max_output_tokens,
             mark_sent=functools.partial(self.evaluations.mark_sent, evaluation_id),
         )
@@ -497,7 +531,8 @@ class JudgeService:
         result = outcome
         facts = normalize_usage(profile.api_style, result.raw_usage, service_tier=result.service_tier)
         if facts is None:
-            cost = CostEstimate.usage_missing(card.currency, "usage not reported by the provider")
+            reserved = self.evaluations.get(evaluation_id).budget_reserved
+            cost = CostEstimate.usage_missing(card.currency, "usage not reported by the provider", reserved)
         else:
             cost = estimate_cost(
                 facts, card, CostContext(requested_cache_ttl=evaluation.judge_settings.prompt_cache_ttl)

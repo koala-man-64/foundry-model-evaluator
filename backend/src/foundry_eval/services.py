@@ -78,8 +78,7 @@ class Services:
 
     def recover_interrupted(self) -> int:
         """After a restart: mark unfinished attempts, runs and evaluations interrupted (never replayed)."""
-        currency = self.settings.get().currency
-        return self.runs.recover_interrupted(currency) + self.evaluations.recover_interrupted(currency)
+        return self.runs.recover_interrupted() + self.evaluations.recover_interrupted()
 
 
 def build_services(

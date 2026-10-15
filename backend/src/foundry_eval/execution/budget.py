@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import Any
 
 from ..money import ZERO, add, mul
 from ..pricing.calculator import CostEstimate
@@ -25,6 +27,11 @@ _INPUT_CATEGORIES = (
 
 def input_token_upper_bound(*texts: str) -> int:
     return sum(len(t.encode("utf-8")) for t in texts) + FRAMING_TOKENS
+
+
+def body_input_upper_bound(body: dict[str, Any]) -> int:
+    """Upper bound on the input tokens of a request body: its JSON bytes (schema included) plus framing."""
+    return input_token_upper_bound(json.dumps(body, ensure_ascii=False))
 
 
 def estimate_input_tokens(*texts: str) -> int:

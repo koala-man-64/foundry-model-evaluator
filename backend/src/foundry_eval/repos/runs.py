@@ -282,6 +282,28 @@ class RunRepository:
             json.loads(row["raw_usage_json"]) if row["raw_usage_json"] else None,
         )
 
+    def attempt_currency(self, attempt_id: str) -> str:
+        """The currency of the price snapshot an attempt is priced with."""
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT s.currency FROM attempts a JOIN run_candidates c ON c.id = a.candidate_id"
+                " JOIN price_snapshots s ON s.id = c.price_snapshot_id WHERE a.id = ?",
+                (attempt_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("Attempt not found.")
+        return str(row["currency"])
+
+    def run_currency(self, run_id: str, default: str) -> str:
+        """The currency a run was priced in (its price snapshots), so its totals survive a currency change."""
+        with self.db.connect() as conn:
+            row = conn.execute(
+                "SELECT s.currency FROM run_candidates c JOIN price_snapshots s ON s.id = c.price_snapshot_id"
+                " WHERE c.run_id = ? ORDER BY c.position LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        return str(row["currency"]) if row is not None else default
+
     def status_counts(self, run_id: str) -> dict[str, int]:
         with self.db.connect() as conn:
             rows = conn.execute(
@@ -484,13 +506,19 @@ class RunRepository:
                 ),
             )
 
-    def finish_unsent_or_sent(self, attempt_id: str, *, status: AttemptStatus, message: str, currency: str) -> None:
-        """Terminal state after cancellation/interruption/unexpected error, respecting whether it was sent."""
+    def finish_unsent_or_sent(self, attempt_id: str, *, status: AttemptStatus, message: str) -> None:
+        """Terminal state after cancellation/interruption/unexpected error, respecting whether it was sent.
+
+        The estimate uses the currency of the attempt's price snapshot, whatever the app currency is now.
+        """
         attempt = self.attempt(attempt_id)
+        currency = self.attempt_currency(attempt_id)
         if attempt.request_sent_at is None:
             self.finish_not_sent(attempt_id, status, message, currency)
             return
-        cost = CostEstimate.usage_missing(currency, "request was sent but no usage was received")
+        cost = CostEstimate.usage_missing(
+            currency, "request was sent but no usage was received", attempt.budget_reserved
+        )
         with self.db.transaction() as conn:
             conn.execute(
                 "UPDATE attempts SET status = ?, finished_at = ?, error_type = ?, error_message = ?, cost_json = ?,"
@@ -498,7 +526,7 @@ class RunRepository:
                 (status.value, iso_now(), status.value, message, *_cost_columns(cost), attempt_id),
             )
 
-    def recover_interrupted(self, currency: str) -> int:
+    def recover_interrupted(self) -> int:
         """Mark unfinished work from a previous process as interrupted. Never replays it."""
         with self.db.connect() as conn:
             rows = conn.execute("SELECT id FROM attempts WHERE status IN (?, ?)", ACTIVE_ATTEMPT_STATUSES).fetchall()
@@ -507,7 +535,6 @@ class RunRepository:
                 row["id"],
                 status=AttemptStatus.INTERRUPTED,
                 message="The app stopped before this attempt finished; it was not replayed.",
-                currency=currency,
             )
         with self.db.transaction() as conn:
             conn.execute(

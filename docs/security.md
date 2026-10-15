@@ -31,6 +31,8 @@ account you control. The provider's own billing and data handling are outside th
 - **Responses** carry a strict Content Security Policy (`default-src 'self'`, no framing), `nosniff`, `no-referrer`
   and other security headers, including on errors.
 - **Model output** is shown as plain text, or as Markdown without raw HTML or remote images.
+- **Amounts you enter** (prices, budgets and what-if factors) can have at most 30 digits and 20 decimal places, and
+  must be below 10^15, so a typo cannot expand into megabytes of digits.
 
 ## API keys
 
@@ -75,21 +77,24 @@ Linux and macOS the folder is private to the user (mode 0700). Only one instance
 
 - The judge sees only the task (its system instructions and user prompt), the rubric, and the answers. It never sees
   model, profile, deployment or endpoint names, costs, latency or reasoning summaries.
-- Answers are labelled A, B, … in a random order. The order is stored, and revealed in the app only after judging.
+- Answers are labelled A, B, … in a random order. The order is stored, and revealed only after judging; until then
+  the API does not say which label is which candidate.
 - Each answer is wrapped in markers that contain a random code, and the instructions tell the judge to treat
   everything between markers as data. The output is checked strictly against the expected labels, criteria and score
   range; anything else is kept as *malformed*, with the raw output.
-- Input that is too large for the judge is rejected before sending, never truncated. A judge that also produced
-  answers in the run is flagged.
+- Judge output is parsed in linear time, and output that cannot be read at all (for example, numbers with thousands of
+  digits or very deep nesting) is also kept as *malformed*, never lost to an internal error after a paid call.
+- Input that is too large for the judge is rejected before sending, never truncated. The size check uses an estimate,
+  so the preview also warns when very token-dense text might still exceed the context window; the provider would then
+  reject the call, and it is recorded as rejected. A judge that also produced answers in the run is flagged.
 
 ## Reviews
 
-Two independent reviews were run before the first release:
+Independent reviews were run in two rounds: before the first release, and again after suites, judging and projections
+were added. Each round reviewed the token accounting, and the key handling and request security, separately. Every
+finding below was fixed with regression tests.
 
-1. A review of the token accounting.
-2. A review of key handling and request security.
-
-The second review's findings were fixed with regression tests:
+First round, key handling and request security:
 
 - the Claude SDK following redirects
 - the run budget not counting cancelled calls that had already been sent
@@ -97,3 +102,18 @@ The second review's findings were fixed with regression tests:
 - unredacted raw responses
 - control characters accepted in keys
 - loopback endpoints going through proxies
+
+Second round, token accounting:
+
+- the judge preview showing a lower worst case than the budget reserves
+- comparison averages covering different cells for each candidate, and ignoring the currency
+- the judge win rate counting a cell once per run that judged it
+- run totals failing after a change of the app currency, and budget spending not shown after a restart
+- the smoke test's spending summary leaving out reservations
+- projection scenarios that could cross a context-length tier through rounding, silently shrink a cache category
+  without a share, trust a partial TTL breakdown, or exclude Claude cache writes that had no TTL
+
+Second round, security:
+
+- judge output parsing that could stall on crafted output, or end in an internal error after the paid call
+- amounts entered without size limits, which could produce very large responses and stored values

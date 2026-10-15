@@ -98,9 +98,13 @@ requests and per month for a monthly volume you enter.
 - **Price basis.** *Original* uses each run's snapshot; *current* uses today's rates. The current basis warns when a
   profile's pricing identity (deployment, tier, region or endpoint) has changed since the run.
 - **What-if assumptions.** You can set input and output length multipliers, and the share of input that is cache
-  reads or cache writes. Every result lists the assumptions it used, and a share control is disabled when the selected
-  models do not bill that category separately.
-- **Exclusions.** Requests that failed, have no usage, or would still be incomplete under the scenario are excluded,
-  with the counts and reasons shown.
+  reads or cache writes. A share sets that part of each request's input, and the rest keeps the measured mix of the
+  other categories. For Claude cache writes whose TTL neither the usage nor the request shows, you choose the TTL to
+  assume (5 minutes by default). Every result lists the assumptions it used, and a share control is disabled when the
+  selected models do not bill that category separately.
+- **Exclusions.** Requests that failed, have no usage, have prices in another currency, or would still be incomplete
+  under the scenario are excluded. The counts and reasons are shown, with the same cause counted once.
+
+The details, with the rounding rules, are in [token accounting](token-accounting.md#projections).
 
 All amounts are **estimated token costs**. Projections cover generation only; judging is excluded.

@@ -14,7 +14,7 @@ from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.generation import GenerationSettings, SettingIssue
 from ..domain.profiles import Endpoint, ModelProfile
-from ..money import Money, add, mul, to_text
+from ..money import Money, MoneyInput, add, mul, to_text
 from ..pricing.ratecard import CATEGORY_LABELS, RateStatus
 from ..pricing.service import PricingService
 from ..pricing.snapshots import create_snapshot
@@ -51,7 +51,7 @@ class RunRequest(BaseModel):
     prompts: list[PromptSpec] = Field(min_length=1, max_length=500)
     candidates: list[CandidateSpec] = Field(min_length=1, max_length=16)
     trials: int = Field(default=1, ge=1, le=50)
-    budget: Money | None = None
+    budget: MoneyInput | None = None
     suite_id: str | None = None
     judge_config: dict[str, Any] | None = None
 

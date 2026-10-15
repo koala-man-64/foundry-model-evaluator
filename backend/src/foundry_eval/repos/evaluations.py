@@ -327,15 +327,22 @@ class EvaluationRepository:
                 (status, iso_now(), status, message, *_cost_columns(CostEstimate.not_sent(currency)), evaluation_id),
             )
 
-    def finish_unsent_or_sent(self, evaluation_id: str, status: str, message: str, currency: str) -> None:
+    def finish_unsent_or_sent(self, evaluation_id: str, status: str, message: str) -> None:
+        """Terminal state after cancellation/interruption/unexpected error, in the snapshot's currency."""
         with self.db.connect() as conn:
-            row = conn.execute("SELECT request_sent_at FROM evaluations WHERE id = ?", (evaluation_id,)).fetchone()
+            row = conn.execute(
+                "SELECT e.request_sent_at, e.budget_reserved, s.currency FROM evaluations e"
+                " JOIN price_snapshots s ON s.id = e.price_snapshot_id WHERE e.id = ?",
+                (evaluation_id,),
+            ).fetchone()
         if row is None:
             return
+        currency = str(row["currency"])
         if row["request_sent_at"] is None:
             self.finish_not_sent(evaluation_id, status, message, currency)
             return
-        cost = CostEstimate.usage_missing(currency, "request was sent but no usage was received")
+        reserved = to_decimal(row["budget_reserved"]) if row["budget_reserved"] is not None else None
+        cost = CostEstimate.usage_missing(currency, "request was sent but no usage was received", reserved)
         with self.db.transaction() as conn:
             conn.execute(
                 "UPDATE evaluations SET status = ?, finished_at = ?, error_type = ?, error_message = ?, cost_json = ?,"
@@ -421,7 +428,7 @@ class EvaluationRepository:
                         (evaluation_id, candidate.label, key, score, candidate.criterion_explanations.get(key, "")),
                     )
 
-    def recover_interrupted(self, currency: str) -> int:
+    def recover_interrupted(self) -> int:
         """Mark evaluations left unfinished by a previous process as interrupted (never replayed)."""
         with self.db.connect() as conn:
             rows = conn.execute("SELECT id FROM evaluations WHERE status IN (?, ?)", ACTIVE).fetchall()
@@ -430,6 +437,5 @@ class EvaluationRepository:
                 row["id"],
                 "interrupted",
                 "The app stopped before this evaluation finished; it was not replayed.",
-                currency,
             )
         return len(rows)

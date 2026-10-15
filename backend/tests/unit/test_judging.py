@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 from decimal import Decimal
 
 import pytest
@@ -226,3 +227,27 @@ def test_stopping_at_the_token_limit_makes_output_malformed():
 def test_extract_json_reports_position():
     _data, error = extract_json('{"a": }')
     assert error is not None and "line 1" in error
+
+
+def test_fences_are_stripped_in_linear_time():
+    data = json.loads(output())
+    for fenced in (
+        f"```JSON\n{json.dumps(data)}\n```",
+        f"```\n{json.dumps(data)}\n```",
+        f"```json {json.dumps(data)}```",
+    ):
+        assert parse_judge_output(fenced, ["A", "B"], DEFAULT_RUBRIC).ok
+    # An opening fence with a long run of spaces and no closing fence made the old regex backtrack.
+    started = time.perf_counter()
+    _data, error = extract_json("```json" + " " * 200_000 + "x")
+    assert error is not None and time.perf_counter() - started < 1
+
+
+def test_unreadable_json_is_reported_not_raised():
+    huge_number = '{"responses": [], "preferred": ' + "9" * 5000 + "}"
+    deep = "[" * 100_000 + "]" * 100_000
+    for text in (huge_number, deep):
+        result = parse_judge_output(text, ["A", "B"], DEFAULT_RUBRIC)
+        assert not result.ok and "not a readable JSON object" in result.errors[0]
+    too_long = parse_judge_output(" " * 1_000_001, ["A", "B"], DEFAULT_RUBRIC)
+    assert "too long" in too_long.errors[0]

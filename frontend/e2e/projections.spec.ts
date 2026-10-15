@@ -50,6 +50,18 @@ test('projections re-price measured usage under what-if assumptions and either p
   await expect(projection).toContainText('output length x3')
   await expect.poll(async () => dollars(await row.getByRole('cell').nth(2).textContent())).toBeGreaterThan(perRequest)
 
+  // Claude cache writes from a share need a TTL when the run does not show one: a labelled assumption.
+  const ttl = page.getByLabel('Cache write TTL when unknown')
+  await expect(ttl).toBeDisabled()
+  await page.getByLabel('Cache write share of input (%)').fill('30')
+  await expect(row).toContainText('cache writes priced at the 5-minute cache rate (assumed TTL)')
+  const fiveMinute = dollars(await row.getByRole('cell').nth(2).textContent())
+  await ttl.selectOption('1h')
+  await expect(row).toContainText('cache writes priced at the 1-hour cache rate (assumed TTL)')
+  await expect.poll(async () => dollars(await row.getByRole('cell').nth(2).textContent())).toBeGreaterThan(fiveMinute)
+  await page.getByLabel('Cache write share of input (%)').fill('')
+  await expect(ttl).toBeDisabled()
+
   // New rates do not change the original basis; the current basis uses them.
   await page.getByLabel('Output length multiplier').fill('1')
   await api.claudeRates(profileId, { input: '30', read: '3', w5m: '37.5', w1h: '60', output: '150' })
