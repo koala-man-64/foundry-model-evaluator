@@ -6,8 +6,23 @@ import type { EvaluationOut, EvaluationRaw } from '../../api/types'
 import { CostValue } from '../../components/cost'
 import { Badge, Dialog, ErrorMessage, JsonView, StatusBadge } from '../../components/ui'
 import { FINISH_LABELS, formatDate, formatMs } from '../../lib/format'
+import { SwapPass, swappable } from './SwapPass'
 
-export function EvaluationCard({ evaluation }: { evaluation: EvaluationOut }) {
+const LEFT_OUT =
+  'Not used by comparisons: its prompt and trial have evaluations of more answers, or more (or more recent) ' +
+  'evaluations with another judge, rubric version or settings, or an answer it judged was retried since. It stays ' +
+  'in the history and in judging cost.'
+
+interface Props {
+  evaluation: EvaluationOut
+  /** The run, to offer a swap pass from this evaluation (left out where no paid action belongs). */
+  runId?: string
+  /** Whether comparisons use this evaluation (undefined: not known here). */
+  counted?: boolean
+  swapDisabled?: boolean
+}
+
+export function EvaluationCard({ evaluation, runId, counted, swapDisabled }: Props) {
   const [raw, setRaw] = useState<EvaluationRaw | null>(null)
   const [show, setShow] = useState<'request' | 'response' | null>(null)
   const load = useMutation({
@@ -29,7 +44,9 @@ export function EvaluationCard({ evaluation }: { evaluation: EvaluationOut }) {
             Judge: {evaluation.judge_profile_name} · {evaluation.rubric_name} v{evaluation.rubric.version}
           </div>
           <div className="row small muted">
-            <span>{evaluation.trigger === 'auto' ? 'automatic (suite setting)' : 'run explicitly'}</span>
+            <span>
+              {evaluation.swap_of ? 'order swap of an earlier evaluation' : evaluation.trigger === 'auto' ? 'automatic (suite setting)' : 'run explicitly'}
+            </span>
             <span>{formatDate(evaluation.created_at)}</span>
             <span>trial {evaluation.trial_index}</span>
             {evaluation.latency_ms !== null && evaluation.latency_ms !== undefined && <span>{formatMs(evaluation.latency_ms)}</span>}
@@ -37,6 +54,10 @@ export function EvaluationCard({ evaluation }: { evaluation: EvaluationOut }) {
         </div>
         <div className="stack-sm right">
           <StatusBadge status={evaluation.status} />
+          {evaluation.swap_of && <Badge tone="info">order swap</Badge>}
+          {counted === false && evaluation.status === 'succeeded' && (
+            <Badge title={LEFT_OUT}>not in comparisons</Badge>
+          )}
           {evaluation.judge_is_participant && (
             <Badge tone="warn" title={evaluation.participant_reasons.join('; ')}>
               judge also took part
@@ -69,8 +90,9 @@ export function EvaluationCard({ evaluation }: { evaluation: EvaluationOut }) {
       {evaluation.status === 'succeeded' && (
         <>
           <p className="small muted">
-            Responses were shown to the judge as {evaluation.order.map((o) => o.label).join(', ')} in this random order, without
-            model names, costs or timing. Revealed below. Scores are whole numbers from {scale}.
+            Responses were shown to the judge as {evaluation.order.map((o) => o.label).join(', ')}{' '}
+            {evaluation.swap_of ? 'in the reverse of the order of the evaluation it swaps' : 'in this random order'}, without model
+            names, costs or timing. Revealed below. Scores are whole numbers from {scale}.
           </p>
           <div className="table-wrap">
             <table className="compact">
@@ -155,6 +177,7 @@ export function EvaluationCard({ evaluation }: { evaluation: EvaluationOut }) {
         <button type="button" className="small" onClick={() => open('response')} disabled={!evaluation.request_sent_at}>
           Raw judge response
         </button>
+        {runId && swappable(evaluation) && <SwapPass runId={runId} evaluation={evaluation} disabled={swapDisabled} />}
       </div>
       <ErrorMessage error={load.error} />
       <Dialog open={show === 'request'} title="Exact judge request" onClose={() => setShow(null)}>

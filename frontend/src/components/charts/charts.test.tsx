@@ -41,6 +41,8 @@ function candidate(partial: Partial<ComparisonCandidate>): ComparisonCandidate {
     win_rate: 0.5,
     custom_rates: false,
     checks_cells: 0,
+    judge_evaluations: 2,
+    judge_spread_cells: 0,
     ...partial,
   }
 }

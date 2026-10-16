@@ -97,6 +97,8 @@ class Evaluation(BaseModel):
     created_at: str
     candidates: list[EvaluationCandidate]
     budget_reserved: Money | None = None
+    # A position-swap pass: the evaluation whose answers this one re-judged in reversed order.
+    swap_of: str | None = None
 
 
 def _cost_columns(cost: CostEstimate) -> tuple[str, str, str | None, str, str | None]:
@@ -164,6 +166,7 @@ class EvaluationRepository:
             error_message=row["error_message"],
             created_at=row["created_at"],
             budget_reserved=to_decimal(row["budget_reserved"]) if row["budget_reserved"] is not None else None,
+            swap_of=row["swap_of"],
             candidates=[
                 EvaluationCandidate(
                     label=c["label"],
@@ -202,6 +205,19 @@ class EvaluationRepository:
                 "SELECT id FROM evaluations WHERE idempotency_key = ? ORDER BY created_at", (idempotency_key,)
             ).fetchall()
         return [r["id"] for r in rows]
+
+    @staticmethod
+    def swapped(conn: sqlite3.Connection, evaluation_ids: list[str]) -> set[str]:
+        """Which of these evaluations already have a swap pass that is queued, running or succeeded."""
+        if not evaluation_ids:
+            return set()
+        marks = ", ".join("?" for _ in evaluation_ids)
+        rows = conn.execute(
+            f"SELECT swap_of FROM evaluations WHERE swap_of IN ({marks})"
+            " AND status IN ('queued', 'running', 'succeeded')",
+            evaluation_ids,
+        ).fetchall()
+        return {row["swap_of"] for row in rows}
 
     def has_trigger(self, run_id: str, trigger: str) -> bool:
         with self.db.connect() as conn:
@@ -267,6 +283,7 @@ class EvaluationRepository:
         input_limit_tokens: int,
         request_body: dict[str, Any],
         rejected: tuple[str, CostEstimate] | None = None,
+        swap_of: str | None = None,
     ) -> str:
         evaluation_id = new_id()
         now = iso_now()
@@ -275,8 +292,8 @@ class EvaluationRepository:
             "INSERT INTO evaluations (id, run_id, prompt_id, trial_index, batch_id, idempotency_key, trigger, status,"
             " judge_profile_id, judge_profile_snapshot_json, judge_settings_json, rubric_version_id,"
             " price_snapshot_id, structured_output, judge_is_participant, participant_reasons_json, order_json,"
-            " input_estimate_tokens, input_limit_tokens, request_json, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " input_estimate_tokens, input_limit_tokens, request_json, created_at, swap_of)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 evaluation_id,
                 run_id,
@@ -299,6 +316,7 @@ class EvaluationRepository:
                 input_limit_tokens,
                 scrub_json(request_body),
                 now,
+                swap_of,
             ),
         )
         if rejected:

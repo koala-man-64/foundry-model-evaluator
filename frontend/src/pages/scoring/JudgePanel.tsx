@@ -65,11 +65,14 @@ export function JudgePanel({ detail, promptId, trial }: Props) {
       queryClient.invalidateQueries({ queryKey: ['comparison'] })
     },
   })
+  // The evaluations comparisons use: every one on its prompt and trial's chosen judge basis.
+  const counted = new Set(Object.values(detail.judge_aggregates ?? {}).flatMap((a) => a.evaluation_ids))
   const shown = (evaluations.data ?? [])
     .filter((e) => e.prompt_id === promptId && e.trial_index === trial)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
   const data = preview.data
-  const canRun = Boolean(request && data?.ok && blocking.length === 0 && !start.isPending && !detail.active)
+  // Only a preview of exactly this request may confirm the paid call.
+  const canRun = Boolean(request && data?.ok && preview.current && blocking.length === 0 && !start.isPending && !detail.active)
 
   return (
     <section className="stack" aria-label="Judge">
@@ -176,13 +179,22 @@ export function JudgePanel({ detail, promptId, trial }: Props) {
           <button type="button" className="primary" disabled={!canRun} onClick={() => request && start.mutate(request)}>
             {start.isPending ? 'Starting…' : 'Run judge'}
           </button>
-          <span className="small muted">A paid call. Re-running creates a new evaluation; earlier ones are kept.</span>
+          <span className="small muted">
+            A paid call. Re-running creates a new evaluation; earlier ones are kept, and comparisons average the evaluations that
+            share a judge, rubric version and settings.
+          </span>
         </div>
       </div>
       <ErrorMessage error={evaluations.error} />
       {shown.length === 0 && !evaluations.isLoading && <Empty>No evaluations for this prompt and trial yet.</Empty>}
       {shown.map((evaluation) => (
-        <EvaluationCard key={evaluation.id} evaluation={evaluation} />
+        <EvaluationCard
+          key={evaluation.id}
+          evaluation={evaluation}
+          runId={detail.run.id}
+          counted={counted.has(evaluation.id)}
+          swapDisabled={detail.active}
+        />
       ))}
     </section>
   )

@@ -81,7 +81,7 @@ function RunSuitePanel({ suite }: { suite: Suite }) {
         <button
           type="button"
           className="primary"
-          disabled={!data?.ok || start.isPending || suite.archived}
+          disabled={!data?.ok || !preview.current || start.isPending || suite.archived}
           onClick={() => start.mutate()}
         >
           {start.isPending ? 'Starting…' : 'Run suite'}

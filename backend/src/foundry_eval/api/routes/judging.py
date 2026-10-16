@@ -8,7 +8,7 @@ from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...judging.rubric import RubricDefinition
-from ...judging.service import JudgePreview, JudgeRequest
+from ...judging.service import JudgePreview, JudgeRequest, SwapRequest
 from ...repos.evaluations import Evaluation
 from ...repos.rubrics import Rubric, RubricVersion
 from ..deps import IdempotencyKey, ServicesDep
@@ -113,6 +113,24 @@ def create_evaluations(
 ) -> CreatedEvaluations:
     """Run the judge (a paid action) on the run's succeeded responses in the requested scope."""
     ids, created = services.judge.create(run_id, payload, key)
+    if created:
+        services.judge.start(run_id, ids)
+    else:
+        response.status_code = 200
+    return CreatedEvaluations(evaluation_ids=ids, created=created)
+
+
+@router.post("/runs/{run_id}/evaluations/swap/preview", response_model=JudgePreview)
+def preview_swap(run_id: str, payload: SwapRequest, services: ServicesDep) -> JudgePreview:
+    return services.judge.preview_swap(run_id, payload)
+
+
+@router.post("/runs/{run_id}/evaluations/swap", response_model=CreatedEvaluations, status_code=201)
+def create_swap(
+    run_id: str, payload: SwapRequest, key: IdempotencyKey, services: ServicesDep, response: Response
+) -> CreatedEvaluations:
+    """Re-judge earlier evaluations' answers with the order reversed (a paid action, only on request)."""
+    ids, created = services.judge.create_swap(run_id, payload, key)
     if created:
         services.judge.start(run_id, ids)
     else:

@@ -155,7 +155,9 @@ export function ScoringPage() {
                     <div className="response-text">
                       {attempt.output_text || (blind ? 'No answer.' : attempt.error_message) || '—'}
                     </div>
-                    {!blind && detail.judge_scores?.[attempt.id] && <JudgeScoreLine score={detail.judge_scores[attempt.id]} />}
+                    {!blind && detail.judge_scores?.[attempt.id] && (
+                      <JudgeScoreLine score={detail.judge_scores[attempt.id]} aggregate={detail.judge_aggregates?.[attempt.id]} />
+                    )}
                     {!blind && detail.check_results?.[attempt.id] && <CheckResultsLine outcome={detail.check_results[attempt.id]} />}
                     {attempt.status === 'succeeded' && (
                       <ManualScoreControl runId={detail.run.id} attemptId={attempt.id} score={detail.manual_scores[attempt.id]} />
