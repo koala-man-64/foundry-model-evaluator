@@ -46,6 +46,26 @@ describe('importPrompts', () => {
     ])
   })
 
+  it('refuses unknown or malformed check fields instead of dropping or defaulting them', () => {
+    const jsonl = [
+      '{"user": "a", "checks": [{"kind": "number", "value": "1", "which": "first"}]}',
+      '{"user": "b", "checks": [{"kind": "contains", "value": "X", "casesensitive": true}]}',
+      '{"user": "c", "checks": [{"kind": "number", "value": "1", "tolerance": null}]}',
+      '{"user": "d", "checks": [{"kind": "number", "value": "1", "tolerance": "0.5", "which": "any"}]}',
+    ].join('\n')
+    const result = importPrompts('set.jsonl', jsonl)
+    expect(result.prompts.map((p) => p.user)).toEqual(['d'])
+    expect(result.errors).toEqual([
+      'Line 1: check 1: which must be "last" or "any".',
+      'Line 2: check 1: unknown field casesensitive for a contains check.',
+      'Line 3: check 1: give the tolerance as a string (or a whole number).',
+    ])
+  })
+
+  it('lists a repeated CSV column as ignored', () => {
+    expect(importPrompts('p.csv', ['user,User,title', 'q,r,t', ''].join('\n')).errors).toEqual(['Ignored columns: user.'])
+  })
+
   it('needs a user column in CSV', () => {
     expect(importPrompts('p.csv', 'question\nx\n').errors[0]).toMatch(/"user"/)
   })

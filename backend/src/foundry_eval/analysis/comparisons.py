@@ -512,14 +512,14 @@ class ComparisonService:
         for key in order:
             for cell in matched:
                 for o in data[key].by_cell[cell]:
-                    if o.attempt.status is AttemptStatus.SUCCEEDED and o.checks_fp is not None:
-                        check_fps.setdefault(cell, set()).add(o.checks_fp)
+                    if o.attempt.status is AttemptStatus.SUCCEEDED:
+                        check_fps.setdefault(cell, set()).add(o.checks_fp)  # None: that run had no checks
                     if o.judge is not None:
                         reference_fps.setdefault(cell, set()).add(o.reference_fp)
         for cell, _evaluation, _labels, reference_fp in evaluations:
             if cell in matched_set:
                 reference_fps.setdefault(cell, set()).add(reference_fp)
-        mixed_checks = {cell for cell, fps in check_fps.items() if len(fps) > 1}
+        mixed_checks = {cell for cell, fps in check_fps.items() if len(fps) > 1 and fps != {None}}
         mixed_references = {cell for cell, fps in reference_fps.items() if len(fps) > 1}
         for value in values.values():
             for cell in mixed_checks:
@@ -528,14 +528,17 @@ class ComparisonService:
                 value.judge.pop(cell, None)
                 value.judge_bases.pop(cell, None)
         if mixed_checks:
+            many = len(mixed_checks) != 1
             notes.append(
-                f"{len(mixed_checks)} cell{'s' if len(mixed_checks) != 1 else ''} used different checks in different "
-                "runs and are left out of the checks pass rate."
+                f"{len(mixed_checks)} cell{'s' if many else ''} used different checks in different runs and "
+                f"{'are' if many else 'is'} left out of the checks pass rate."
             )
         if mixed_references:
+            many = len(mixed_references) != 1
             notes.append(
-                f"{len(mixed_references)} cell{'s' if len(mixed_references) != 1 else ''} were judged with different "
-                "reference answers in different runs and are left out of the judge scores and win rates."
+                f"{len(mixed_references)} cell{'s' if many else ''} {'were' if many else 'was'} judged with different "
+                f"reference answers in different runs and {'are' if many else 'is'} left out of the judge scores and "
+                "win rates."
             )
         for cell, evaluation, labels, _reference_fp in evaluations:
             if cell not in matched_set or cell in mixed_references:

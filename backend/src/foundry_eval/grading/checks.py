@@ -22,20 +22,24 @@ import json
 import math
 import re
 import unicodedata
-from decimal import Decimal, DecimalException
+from decimal import Decimal, DecimalException, localcontext
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 MAX_CHECKS = 10
 MAX_SCHEMA_DEPTH = 20
+# Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
+MAX_SCHEMA_NODES = 500
+MAX_ENUM = 200
+MAX_PROPERTIES = 200
 # Numbers whose exponent is further from zero than this are not read: they cannot be a plausible answer
 # and exact arithmetic on them is expensive or overflows.
 MAX_EXPONENT = 1000
 
 # A sign belongs to a number only when it does not follow a word character or a dot, so "10-20" reads
 # as 10 and 20, not 10 and -20. Decimals may start with a dot (".5"). U+2212 is normalised to "-".
-_NUMBER = re.compile(r"(?<![\w.])[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?")
+_NUMBER = re.compile(r"(?<![\w.])[-+]?(?:(?:\d{1,3}(?:,\d{3})+(?!\d)|\d+)(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?")
 _UNICODE_MINUS = chr(0x2212)
 _FENCE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n(?P<body>.*)\n```\s*$", re.DOTALL)
 
@@ -98,7 +102,8 @@ class JsonSchemaCheck(_Check):
     @field_validator("json_schema")
     @classmethod
     def _supported(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _check_schema(value, "$", 0)
+        nodes = [0]
+        _check_schema(value, "$", 0, nodes)
         return value
 
 
@@ -133,12 +138,27 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, int | float | Decimal) and not isinstance(value, bool)
 
 
-def _check_schema(schema: Any, path: str, depth: int) -> None:
+def _finite_literal(value: Any, path: str) -> None:
+    """const and enum values: plain JSON, with no NaN or Infinity (they would be stored as null)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{path}: numbers must be finite")
+    if isinstance(value, list):
+        for item in value:
+            _finite_literal(item, path)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _finite_literal(item, path)
+
+
+def _check_schema(schema: Any, path: str, depth: int, nodes: list[int]) -> None:
     """Refuse at save time anything the validator below could not apply exactly as written."""
     if depth > MAX_SCHEMA_DEPTH:
         raise ValueError(f"{path}: the schema is nested too deeply")
     if not isinstance(schema, dict):
         raise ValueError(f"{path}: a schema must be an object")
+    nodes[0] += 1
+    if nodes[0] > MAX_SCHEMA_NODES:
+        raise ValueError(f"the schema has more than {MAX_SCHEMA_NODES} sub-schemas")
     unknown = set(schema) - _KEYWORDS - _ANNOTATIONS
     if unknown:
         supported = ", ".join(sorted(_KEYWORDS))
@@ -155,8 +175,14 @@ def _check_schema(schema: Any, path: str, depth: int) -> None:
         value = schema[name]
         if not _is_number(value) or (isinstance(value, float) and not math.isfinite(value)):
             raise ValueError(f"{path}: {name} must be a finite number")
-    if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
-        raise ValueError(f"{path}: enum must be a non-empty list")
+    if "enum" in schema:
+        if not isinstance(schema["enum"], list) or not schema["enum"]:
+            raise ValueError(f"{path}: enum must be a non-empty list")
+        if len(schema["enum"]) > MAX_ENUM:
+            raise ValueError(f"{path}: enum has more than {MAX_ENUM} values")
+        _finite_literal(schema["enum"], f"{path}.enum")
+    if "const" in schema:
+        _finite_literal(schema["const"], f"{path}.const")
     if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
         raise ValueError(f"{path}: additionalProperties must be true or false here")
     if "required" in schema and not (
@@ -166,10 +192,12 @@ def _check_schema(schema: Any, path: str, depth: int) -> None:
     if "properties" in schema:
         if not isinstance(schema["properties"], dict):
             raise ValueError(f"{path}: properties must be an object")
+        if len(schema["properties"]) > MAX_PROPERTIES:
+            raise ValueError(f"{path}: properties has more than {MAX_PROPERTIES} entries")
         for name, sub in schema["properties"].items():
-            _check_schema(sub, f"{path}.properties.{name}", depth + 1)
+            _check_schema(sub, f"{path}.properties.{name}", depth + 1, nodes)
     if "items" in schema:
-        _check_schema(schema["items"], f"{path}.items", depth + 1)
+        _check_schema(schema["items"], f"{path}.items", depth + 1, nodes)
 
 
 def _type_ok(value: Any, kind: str) -> bool:
@@ -199,29 +227,63 @@ def _plain(value: Any) -> Any:
     return value
 
 
+def canonical(value: Any) -> Any:
+    """A hashable form in which equal JSON values are equal, and true is not 1 nor false 0."""
+    if isinstance(value, bool):
+        return ("bool", value)
+    if _is_number(value):
+        number = Decimal(str(value)) if isinstance(value, float) else Decimal(value)
+        return ("num", number.normalize() if number else Decimal(0))
+    if isinstance(value, list):
+        return ("list", tuple(canonical(v) for v in value))
+    if isinstance(value, dict):
+        return ("dict", tuple(sorted((k, canonical(v)) for k, v in value.items())))
+    return (type(value).__name__, value)
+
+
 def json_equal(a: Any, b: Any) -> bool:
     """JSON equality: true is not 1 and false is not 0 (Python's == says they are)."""
-    if isinstance(a, bool) or isinstance(b, bool):
-        return isinstance(a, bool) and isinstance(b, bool) and a is b
-    if _is_number(a) and _is_number(b):
-        return bool(Decimal(a) == Decimal(b))
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(json_equal(x, y) for x, y in zip(a, b, strict=True))
-    if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(json_equal(a[k], b[k]) for k in a)
-    return type(a) is type(b) and bool(a == b)
+    return bool(canonical(a) == canonical(b))
 
 
-def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | None:
+class _Prepared:
+    """Per-evaluation lookups for a schema node, so a large answer does not redo them for every item."""
+
+    def __init__(self) -> None:
+        self._enums: dict[int, frozenset[Any]] = {}
+        self._consts: dict[int, Any] = {}
+        self._properties: dict[int, frozenset[str]] = {}
+
+    def enum(self, schema: dict[str, Any]) -> frozenset[Any]:
+        key = id(schema)
+        if key not in self._enums:
+            self._enums[key] = frozenset(canonical(v) for v in schema["enum"])
+        return self._enums[key]
+
+    def const(self, schema: dict[str, Any]) -> Any:
+        key = id(schema)
+        if key not in self._consts:
+            self._consts[key] = canonical(schema["const"])
+        return self._consts[key]
+
+    def properties(self, schema: dict[str, Any]) -> frozenset[str]:
+        key = id(schema)
+        if key not in self._properties:
+            self._properties[key] = frozenset(schema.get("properties") or {})
+        return self._properties[key]
+
+
+def schema_error(value: Any, schema: dict[str, Any], path: str = "$", prepared: _Prepared | None = None) -> str | None:
     """The first way ``value`` fails the schema subset, or None if it matches."""
+    prepared = prepared or _Prepared()
     kinds = schema.get("type")
     if kinds is not None:
         options = kinds if isinstance(kinds, list) else [kinds]
         if not any(_type_ok(value, k) for k in options):
             return f"{path} should be {' or '.join(options)}"
-    if "const" in schema and not json_equal(value, _plain(schema["const"])):
+    if "const" in schema and canonical(value) != prepared.const(schema):
         return f"{path} should equal {schema['const']!r}"
-    if "enum" in schema and not any(json_equal(value, _plain(v)) for v in schema["enum"]):
+    if "enum" in schema and canonical(value) not in prepared.enum(schema):
         return f"{path} should be one of {schema['enum']!r}"
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
@@ -240,7 +302,7 @@ def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | N
             return f"{path} has more than {schema['maxItems']} items"
         if "items" in schema:
             for index, item in enumerate(value):
-                if error := schema_error(item, schema["items"], f"{path}[{index}]"):
+                if error := schema_error(item, schema["items"], f"{path}[{index}]", prepared):
                     return error
     if isinstance(value, dict):
         for name in schema.get("required", []):
@@ -248,11 +310,11 @@ def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | N
                 return f"{path} is missing {name!r}"
         properties = schema.get("properties") or {}
         if schema.get("additionalProperties") is False:
-            extra = sorted(set(value) - set(properties))
+            extra = sorted(set(value) - prepared.properties(schema))
             if extra:
                 return f"{path} has unexpected {', '.join(repr(e) for e in extra)}"
-        for name, sub in properties.items():
-            if name in value and (error := schema_error(value[name], sub, f"{path}.{name}")):
+        for name in value.keys() & properties.keys():
+            if error := schema_error(value[name], properties[name], f"{path}.{name}", prepared):
                 return error
     return None
 
@@ -308,7 +370,10 @@ def _evaluate(check: Check, text: str) -> CheckResult:
         if not numbers:
             return CheckResult(kind=check.kind, passed=False, detail="no number in the answer")
         pool = numbers[-1:] if check.which == "last" else numbers
-        hit = next((n for n in pool if abs(n - check.value) <= check.tolerance), None)
+        with localcontext() as ctx:
+            # Exact: exponents are within +-MAX_EXPONENT, so this precision never rounds the difference.
+            ctx.prec = 2 * MAX_EXPONENT + 50
+            hit = next((n for n in pool if abs(n - check.value) <= check.tolerance), None)
         shown = hit if hit is not None else pool[-1]
         detail = f"found {shown} (expected {check.value} ± {check.tolerance})"
         return CheckResult(kind=check.kind, passed=hit is not None, detail=detail)

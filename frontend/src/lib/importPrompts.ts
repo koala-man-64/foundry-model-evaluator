@@ -24,18 +24,33 @@ const MAX_PROMPTS = 500
 const KNOWN_FIELDS = new Set(['title', 'system', 'user', 'prompt', 'reference', 'expected', 'checks'])
 const CHECK_KINDS = new Set(['contains', 'not_contains', 'exact', 'number', 'json_schema'])
 
-/** Why a check from a file cannot be used as written, or null. Nothing is coerced into another check. */
+const CHECK_FIELDS: Record<string, string[]> = {
+  contains: ['kind', 'value', 'case_sensitive'],
+  not_contains: ['kind', 'value', 'case_sensitive'],
+  exact: ['kind', 'value', 'case_sensitive'],
+  number: ['kind', 'value', 'tolerance', 'which'],
+  json_schema: ['kind', 'schema'],
+}
+
+function exactNumber(value: unknown): boolean {
+  return typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value))
+}
+
+/** Why a check from a file cannot be used as written, or null. Nothing is coerced, defaulted or dropped. */
 export function checkProblem(check: unknown): string | null {
   if (!check || typeof check !== 'object' || Array.isArray(check)) return 'a check must be an object'
   const c = check as Record<string, unknown>
   if (typeof c.kind !== 'string' || !CHECK_KINDS.has(c.kind))
     return `unknown check kind ${JSON.stringify(c.kind)} (use ${[...CHECK_KINDS].join(', ')})`
+  const unknown = Object.keys(c).filter((key) => !CHECK_FIELDS[c.kind as string].includes(key))
+  if (unknown.length) return `unknown field${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')} for a ${c.kind} check`
   if ('case_sensitive' in c && typeof c.case_sensitive !== 'boolean') return 'case_sensitive must be true or false'
   if (c.kind === 'json_schema') {
     if (!c.schema || typeof c.schema !== 'object' || Array.isArray(c.schema)) return 'a json_schema check needs a schema object'
   } else if (c.kind === 'number') {
-    if (typeof c.value !== 'string' && !(typeof c.value === 'number' && Number.isSafeInteger(c.value)))
-      return 'give a number check value as a string (or a whole number), so it stays exact'
+    if (!exactNumber(c.value)) return 'give a number check value as a string (or a whole number), so it stays exact'
+    if ('tolerance' in c && !exactNumber(c.tolerance)) return 'give the tolerance as a string (or a whole number)'
+    if ('which' in c && c.which !== 'last' && c.which !== 'any') return 'which must be "last" or "any"'
   } else if (typeof c.value !== 'string' || !c.value) {
     return `a ${c.kind} check needs a text value`
   }
@@ -86,7 +101,8 @@ function fromCsv(text: string): ImportResult {
   if (rows.length === 0) return { prompts: [], errors: ['The file is empty.'] }
   const header = rows[0].map((h) => h.trim().toLowerCase())
   const column = (name: string) => header.indexOf(name)
-  const unknown = header.filter((h) => h && !['title', 'system', 'user', 'reference'].includes(h))
+  // Columns that are not read: unknown names, and repeats of a known one (only the first is read).
+  const unknown = header.filter((h, at) => h && (!['title', 'system', 'user', 'reference'].includes(h) || header.indexOf(h) !== at))
   const user = column('user')
   if (user < 0) return { prompts: [], errors: ['The first row must name the columns, including "user".'] }
   const prompts: ImportedPrompt[] = []

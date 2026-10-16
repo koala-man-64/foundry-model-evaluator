@@ -188,6 +188,7 @@ def test_cells_graded_differently_across_runs_are_left_out(client):
     updated = suite_payload([first["id"], second["id"]], reference="Paris, the capital")
     updated["prompts"] = [{**p, "id": s["id"]} for p, s in zip(updated["prompts"], suite["prompts"], strict=True)]
     updated["prompts"][0]["checks"] = [{"kind": "contains", "value": "Paris"}]
+    updated["prompts"][1]["checks"] = []  # checked in the first run, not in the second
     assert client.put(f"/api/suites/{suite['id']}", json=updated).status_code == 200
     two = run_suite(client, suite["id"], "idem-gt-mixed-2")
     for index, detail in enumerate((one, two)):
@@ -208,9 +209,10 @@ def test_cells_graded_differently_across_runs_are_left_out(client):
     comparison = client.get("/api/comparisons", params={"run_id": [one["run"]["id"], two["run"]["id"]]}).json()
     assert comparison["cells_matched"] == 3
     notes = " ".join(comparison["notes"])
-    assert "1 cell used different checks" in notes and "1 cell were judged with different reference" in notes
+    assert "2 cells used different checks in different runs and are left out" in notes
+    assert "1 cell was judged with different reference answers" in notes
     for candidate in comparison["candidates"]:
-        assert candidate["checks_cells"] == 2 and candidate["judge_scored"] == 2
+        assert candidate["checks_cells"] == 1 and candidate["judge_scored"] == 2
 
 
 def test_exports_carry_check_outcomes_and_keep_reference_text_out_by_default(client):

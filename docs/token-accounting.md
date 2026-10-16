@@ -203,7 +203,9 @@ shown, so they cost nothing and always agree with the checks frozen into the run
 - Checks that could not run as written are refused when the suite is saved, never skipped later: a JSON schema
   keyword this checker does not implement (it supports `type`, `properties`, `required`, `additionalProperties: false`,
   `items`, `enum`, `const`, `minItems`/`maxItems`, `minLength`/`maxLength` and `minimum`/`maximum`), a keyword value of
-  the wrong type (such as `"minimum": "5"`), or a number given as a float.
+  the wrong type (such as `"minimum": "5"`), `NaN` or `Infinity` in `const` or `enum`, or a number given as a float.
+  A schema is limited to 500 sub-schemas, 200 `enum` values and 200 `properties` per object, so checking a large answer
+  stays fast.
 - There is **no regular-expression check**. Python's regular expressions have no time limit and block the whole app
   while they run, so one slow pattern on one answer would freeze every view of a run whose checks are frozen. A
   pattern check needs a regex engine with a time budget, which is a new dependency.

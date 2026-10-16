@@ -102,6 +102,17 @@ def test_json_schema_check_round_trips_with_its_alias():
         {"kind": "json_schema", "schema": {"properties": []}},
         {"kind": "json_schema", "schema": {"type": [["a"]]}},
         {"kind": "json_schema", "schema": {"type": {"a": 1}}},
+        {"kind": "json_schema", "schema": {"enum": list(range(201))}},
+        {"kind": "json_schema", "schema": {"properties": {f"k{i}": {} for i in range(201)}}},
+        {"kind": "json_schema", "schema": {"const": float("nan")}},
+        {"kind": "json_schema", "schema": {"enum": [1, float("inf")]}},
+        {
+            "kind": "json_schema",
+            "schema": {
+                "items": {"items": {}},
+                "properties": {f"p{i}": {"properties": {f"q{j}": {} for j in range(3)}} for i in range(150)},
+            },
+        },
         {"kind": "number", "value": 0.1},
         {"kind": "number", "value": "1", "tolerance": "-1"},
         {"kind": "json_schema", "schema": {"type": "object", "patternProperties": {}}},
@@ -139,6 +150,30 @@ def test_a_check_that_cannot_be_evaluated_is_unknown_not_a_failure_or_an_error()
     assert outcome.passed is None
     failing = run_checks([check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge)
     assert failing.passed is False  # a known failure wins over an unknown
+
+
+def test_number_checks_are_exact_beyond_28_digits():
+    result = run_check(check(kind="number", value="0", tolerance="1e40"), "10000000000000000000000000000000000000001")
+    assert result.passed is False  # 10**40 + 1 is outside a tolerance of 10**40
+
+
+def test_thousands_groups_must_be_complete():
+    from foundry_eval.grading.checks import numbers_in
+
+    assert numbers_in("total 1,234 items") == [Decimal(1234)]
+    assert numbers_in("1,2345") == [Decimal(1), Decimal(2345)]
+
+
+def test_large_schemas_stay_fast_on_large_answers():
+    import json
+    import time
+
+    values = [f"value-{i}" for i in range(200)]
+    schema = {"type": "array", "items": {"enum": values}}
+    answer = json.dumps([values[i % 200] for i in range(20_000)])
+    start = time.perf_counter()
+    assert run_check(check(kind="json_schema", schema=schema), answer).passed is True
+    assert time.perf_counter() - start < 1.0
 
 
 def test_schema_numbers_compare_exactly():
