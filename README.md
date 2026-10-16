@@ -19,7 +19,9 @@ quality, token usage, latency and **estimated token cost**.
 - **Scoring.** Rate answers yourself on a 1–5 scale with notes, or have a Foundry model judge them anonymously against
   a versioned rubric. Manual and judge scores are kept separate. Blind review hides the model names, keys 1–5 score
   the selected answer and N jumps to the next unscored one. **Judge vs. your scores** shows how closely the judge
-  agrees with you, so you know whether it can stand in for you on this kind of task.
+  agrees with you, so you know whether it can stand in for you on this kind of task. Re-judging adds evidence instead
+  of replacing it: comparisons average every evaluation on one judge basis. An opt-in **swap pass** re-judges the
+  same answers in reversed order and reports how often the judge's preference follows the position.
 - **Models and pricing.** Manage endpoints and API keys, model profiles and rates. Rates come from the Azure Retail
   Prices API (applied only when the match is unambiguous), from manual entries with a source URL, or from labelled
   custom overrides. Projections estimate the cost per request, per 1,000 requests and per month.
@@ -107,7 +109,8 @@ the price snapshots frozen with the run, so it never makes a call to a model.
   source and dates), every attempt (retries included, with usage, latency and cost), manual scores, judge
   evaluations with criterion scores, the run totals, and notes on how to read the costs.
 - **CSV** has one row per attempt, with the usage, latency, cost, manual score and latest judge score in separate
-  columns.
+  columns. Comparisons average every evaluation on a judge basis instead; the JSON has them all, with `swap_of` on
+  swap passes.
 - **Costs** are exact decimal strings. An empty cell or `null` means *not reported*, and `cost_status` says why
   (`complete`, `incomplete` with a lower bound, `not_sent`, or `pending`). An unknown cost is never written as 0.
 - **Checks.** Each attempt carries its check outcome (`checks_passed` in the CSV: `true`, `false`, `unknown` when a

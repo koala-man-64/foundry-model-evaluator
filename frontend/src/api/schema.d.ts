@@ -624,6 +624,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/evaluations/swap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Swap
+         * @description Re-judge earlier evaluations' answers with the order reversed (a paid action, only on request).
+         */
+        post: operations["create_swap_api_runs__run_id__evaluations_swap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/runs/{run_id}/evaluations/swap/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Swap */
+        post: operations["preview_swap_api_runs__run_id__evaluations_swap_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/export": {
         parameters: {
             query?: never;
@@ -918,6 +955,10 @@ export interface components {
         };
         /** CalibrationGroup */
         CalibrationGroup: {
+            /** Consistency Rate */
+            consistency_rate?: number | null;
+            /** Flip Rate */
+            flip_rate?: number | null;
             /** Judge */
             judge: string;
             /** Key */
@@ -944,6 +985,21 @@ export interface components {
             spearman_high: number | null;
             /** Spearman Low */
             spearman_low: number | null;
+            /**
+             * Swap Consistent
+             * @default 0
+             */
+            swap_consistent: number;
+            /**
+             * Swap Flips
+             * @default 0
+             */
+            swap_flips: number;
+            /**
+             * Swap Pairs
+             * @default 0
+             */
+            swap_pairs: number;
             /** Top Pick Agree */
             top_pick_agree: number;
             /** Top Pick Total */
@@ -1164,9 +1220,21 @@ export interface components {
             failures_billed: number;
             /** Judge Comparisons */
             judge_comparisons: number;
+            /**
+             * Judge Evaluations
+             * @default 0
+             */
+            judge_evaluations: number;
             judge_interval?: components["schemas"]["Interval"] | null;
             /** Judge Scored */
             judge_scored: number;
+            /** Judge Spread */
+            judge_spread?: number | null;
+            /**
+             * Judge Spread Cells
+             * @default 0
+             */
+            judge_spread_cells: number;
             /** Judge Wins */
             judge_wins: number;
             /** Label */
@@ -1202,6 +1270,18 @@ export interface components {
         ComparisonCell: {
             /** Content Hash */
             content_hash: string;
+            /**
+             * Judge Evaluations
+             * @default 0
+             */
+            judge_evaluations: number;
+            /**
+             * Judge Left Out
+             * @default 0
+             */
+            judge_left_out: number;
+            /** Judge Spread */
+            judge_spread?: number | null;
             /** Matched */
             matched: boolean;
             /** Missing */
@@ -1509,6 +1589,8 @@ export interface components {
             status: "queued" | "running" | "succeeded" | "malformed" | "failed" | "rejected_oversized" | "cancelled" | "interrupted" | "skipped_budget";
             /** Structured Output */
             structured_output: boolean;
+            /** Swap Of */
+            swap_of?: string | null;
             /** Trial Index */
             trial_index: number;
             /**
@@ -1609,6 +1691,8 @@ export interface components {
             prompt_title: string;
             /** Responses */
             responses: number;
+            /** Swap Of */
+            swap_of?: string | null;
             /** Trial Index */
             trial_index: number;
         };
@@ -1655,6 +1739,24 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * JudgeAggregate
+         * @description What comparisons use for one answer: its judge evidence on its (prompt, trial)'s chosen basis.
+         */
+        JudgeAggregate: {
+            /** Evaluation Ids */
+            evaluation_ids: string[];
+            /** Left Out */
+            left_out: number;
+            /** Mean Weighted Overall */
+            mean_weighted_overall: number;
+            /** N Evaluations */
+            n_evaluations: number;
+            /** Spread */
+            spread: number | null;
+            /** Win Share */
+            win_share: number | null;
         };
         /** JudgePreview */
         JudgePreview: {
@@ -1706,6 +1808,9 @@ export interface components {
         /**
          * JudgeScore
          * @description The latest successful judge result for one attempt (kept apart from manual scores).
+         *
+         *     The run view and the run export show this single evaluation; comparisons and calibration use
+         *     the aggregate instead (``JudgeAggregate``).
          */
         JudgeScore: {
             /** Evaluation Id */
@@ -2569,6 +2674,10 @@ export interface components {
                 [key: string]: number;
             };
             generation_cost: components["schemas"]["CostTotal"];
+            /** Judge Aggregates */
+            judge_aggregates?: {
+                [key: string]: components["schemas"]["JudgeAggregate"];
+            };
             /** Judge Scores */
             judge_scores?: {
                 [key: string]: components["schemas"]["JudgeScore"];
@@ -2878,6 +2987,25 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /**
+         * SwapRequest
+         * @description A position-swap pass: re-judge answers with an earlier evaluation's presentation order reversed.
+         *
+         *     The judge, rubric version and settings are those of ``evaluation_id``, so each swap pairs with the
+         *     evaluation it mirrors on the same basis. It is a paid action that runs only on this explicit
+         *     request, through the same preview, budget and idempotency checks as any judging, and it is never
+         *     retried automatically.
+         */
+        SwapRequest: {
+            /** Evaluation Id */
+            evaluation_id: string;
+            /**
+             * Scope
+             * @default evaluation
+             * @enum {string}
+             */
+            scope: "evaluation" | "run";
         };
         /** TokenPool */
         TokenPool: {
@@ -4516,6 +4644,78 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["JudgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JudgePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_swap_api_runs__run_id__evaluations_swap_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedEvaluations"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_swap_api_runs__run_id__evaluations_swap_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwapRequest"];
             };
         };
         responses: {

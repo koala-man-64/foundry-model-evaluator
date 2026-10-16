@@ -45,6 +45,8 @@ function candidate(label: string, partial: Partial<ComparisonCandidate> = {}): C
     win_rate: null,
     custom_rates: false,
     checks_cells: 0,
+    judge_evaluations: 0,
+    judge_spread_cells: 0,
     ...partial,
   }
 }
@@ -133,5 +135,33 @@ describe('ComparisonTable', () => {
     expect(row).toHaveTextContent('4.25')
     expect(row).toHaveTextContent('1 billed')
     expect(within(row).queryByText('withheld')).not.toBeInTheDocument()
+  })
+
+  it('says how many judge evaluations sit behind an average and how far repeated judging spread', () => {
+    state.data = {
+      ...comparison(1, [
+        candidate('Twice', { avg_judge_score: 4.13, judge_scored: 1, judge_evaluations: 2, judge_spread: 0.25, judge_spread_cells: 1 }),
+        candidate('Once', { avg_judge_score: 4.0, judge_scored: 1, judge_evaluations: 1 }),
+      ]),
+      cells: [
+        {
+          content_hash: 'h',
+          prompt_title: 'Hello',
+          trial_index: 1,
+          matched: true,
+          missing: [],
+          judge_evaluations: 3,
+          judge_left_out: 1,
+          judge_spread: 0.25,
+        },
+      ],
+    }
+    render(<ComparisonTable runIds={['r1']} charts={false} />)
+    expect(within(screen.getByRole('row', { name: /^Twice/ })).getByTestId('judge-evidence')).toHaveTextContent(
+      '2 evaluations · spread 0.25 (1 cell)',
+    )
+    // One evaluation per judged cell: nothing extra to say.
+    expect(within(screen.getByRole('row', { name: /^Once/ })).queryByTestId('judge-evidence')).not.toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /^Hello/ })).toHaveTextContent('3 · spread 0.25 · 1 left out')
   })
 })

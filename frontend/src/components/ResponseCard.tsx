@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 
 import { del, get, newIdempotencyKey, post, put } from '../api/client'
 import { keys } from '../api/hooks'
-import type { Attempt, CandidateOut, CheckOutcome, JudgeScore, ManualScore, RawOut } from '../api/types'
+import type { Attempt, CandidateOut, CheckOutcome, JudgeAggregate, JudgeScore, ManualScore, RawOut } from '../api/types'
 import { FINISH_LABELS } from '../lib/format'
 import { CostDetails, CostValue } from './cost'
 import { MarkdownView } from './MarkdownView'
@@ -18,6 +18,7 @@ interface Props {
   candidate: CandidateOut | undefined
   manualScore?: ManualScore
   judgeScore?: JudgeScore
+  judgeAggregate?: JudgeAggregate
   checks?: CheckOutcome
   retried: boolean
 }
@@ -56,16 +57,40 @@ export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
   )
 }
 
-/** The latest judge result for a response (separate from the manual score). */
-export function JudgeScoreLine({ score }: { score: JudgeScore }) {
+/**
+ * What comparisons use for an answer, when it differs from the latest evaluation alone: the mean over
+ * every evaluation on its prompt and trial's judge basis, how far those scores spread, and how many
+ * evaluations on another basis were left out.
+ */
+export function JudgeAggregateLine({ score, aggregate }: { score?: JudgeScore; aggregate: JudgeAggregate }) {
+  const n = aggregate.n_evaluations
+  const latestCounted = score ? aggregate.evaluation_ids.includes(score.evaluation_id) : false
+  if (n === 1 && aggregate.left_out === 0 && latestCounted) return null
+  const parts = [
+    `the mean of ${n} evaluation${n === 1 ? '' : 's'} on one judge, rubric version and settings`,
+    aggregate.spread !== null && aggregate.spread !== undefined ? `range ${aggregate.spread.toFixed(2)}` : '',
+    aggregate.left_out > 0 ? `${aggregate.left_out} on another basis left out` : '',
+  ].filter(Boolean)
   return (
-    <div className="row small" data-testid="judge-score">
-      <span className="muted">Judge score</span>
-      <strong>{score.weighted_overall.toFixed(2)}</strong>
-      <span className="muted">(weighted; judge overall {score.judge_overall.toFixed(2)}, label {score.label})</span>
-      {score.preferred && <Badge tone="ok">preferred</Badge>}
-      {score.tie && <Badge>tie</Badge>}
-      {score.judge_is_participant && <Badge tone="warn">judge also took part</Badge>}
+    <div className="small muted" data-testid="judge-aggregate">
+      Comparisons use <strong>{aggregate.mean_weighted_overall.toFixed(2)}</strong>: {parts.join('; ')}.
+    </div>
+  )
+}
+
+/** The latest judge result for a response (separate from the manual score), and what comparisons use. */
+export function JudgeScoreLine({ score, aggregate }: { score: JudgeScore; aggregate?: JudgeAggregate }) {
+  return (
+    <div className="stack-sm">
+      <div className="row small" data-testid="judge-score">
+        <span className="muted">Judge score</span>
+        <strong>{score.weighted_overall.toFixed(2)}</strong>
+        <span className="muted">(latest evaluation, weighted; judge overall {score.judge_overall.toFixed(2)}, label {score.label})</span>
+        {score.preferred && <Badge tone="ok">preferred</Badge>}
+        {score.tie && <Badge>tie</Badge>}
+        {score.judge_is_participant && <Badge tone="warn">judge also took part</Badge>}
+      </div>
+      {aggregate && <JudgeAggregateLine score={score} aggregate={aggregate} />}
     </div>
   )
 }
@@ -126,7 +151,7 @@ export function ManualScoreControl({ runId, attemptId, score }: { runId: string;
   )
 }
 
-export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScore, checks, retried }: Props) {
+export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScore, judgeAggregate, checks, retried }: Props) {
   const queryClient = useQueryClient()
   const [markdown, setMarkdown] = useState(false)
   const [showRequest, setShowRequest] = useState(false)
@@ -220,7 +245,7 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScor
       {done && (
         <div className="section stack-sm">
           <ManualScoreControl runId={runId} attemptId={attempt.id} score={manualScore} />
-          {judgeScore && <JudgeScoreLine score={judgeScore} />}
+          {judgeScore && <JudgeScoreLine score={judgeScore} aggregate={judgeAggregate} />}
           {checks && <CheckResultsLine outcome={checks} />}
         </div>
       )}

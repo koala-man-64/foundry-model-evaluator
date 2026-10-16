@@ -7,6 +7,19 @@ mean signed difference (judge minus you) and how often the judge preferred the a
 highest. Evaluations in which the judge also produced one of the answers are left out and counted.
 Nothing here costs anything: it only reads scores already stored.
 
+Every succeeded evaluation of an answer counts: within each judge basis, an answer judged several
+times is compared with you once, at its mean score, and the judge's pick for a prompt and trial is
+the answer with the highest mean preference share (no pick when they are level, for example when
+two evaluations preferred different answers). Each basis has its own row, so nothing is left out
+for using another basis here; evaluations of answers that were retried since are left out.
+
+Position swaps: a swap pass re-judges the same answers with the presentation order reversed. For
+each pair (an evaluation and its swap, both succeeded, on the same basis) the judge either kept its
+preference (*consistent*: the same answer, or a tie both times), moved it to another answer
+(*flip*: in a two-answer comparison it preferred the same position both times), or tied only once.
+The flip share is the position-bias statistic; it is reported with its counts, since a handful of
+pairs says little.
+
 Answers to the same prompt are related, so the interval for the rank correlation counts *prompts*,
 not answers, as its sample size, and is shown only from ``MIN_INTERVAL_PROMPTS`` prompts.
 """
@@ -16,16 +29,17 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..judging.service import latest_attempts, latest_evaluations
+from ..judging.aggregate import SCORING_SETTINGS, aggregate_answers, by_slot, is_current, judge_basis
+from ..judging.service import latest_attempts
 from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
 from ..repos.rubrics import RubricRepository
-from ..repos.runs import RunRepository
-from .comparisons import SCORING_SETTINGS, judge_basis
+from ..repos.runs import ManualScore, RunRepository
 
 MIN_PAIRS = 5  # below this a rank correlation is noise, so it is not reported
 MIN_INTERVAL_PROMPTS = 5
@@ -48,6 +62,13 @@ class CalibrationGroup(BaseModel):
     top_pick_agree: int
     top_pick_total: int
     participant_pairs_excluded: int
+    # Position swaps on this basis: pairs, how many moved the preference to another answer, and how
+    # many kept it. The rates are None without pairs (unknown, not zero).
+    swap_pairs: int = 0
+    swap_flips: int = 0
+    swap_consistent: int = 0
+    flip_rate: float | None = None
+    consistency_rate: float | None = None
 
 
 class Calibration(BaseModel):
@@ -70,6 +91,9 @@ class _Group:
     top_agree: int = 0
     top_total: int = 0
     excluded: int = 0
+    swap_pairs: int = 0
+    swap_flips: int = 0
+    swap_consistent: int = 0
 
 
 def average_ranks(values: list[float]) -> list[float]:
@@ -116,6 +140,58 @@ def spearman_interval(rho: float, n: int) -> tuple[float, float] | None:
     return math.tanh(z - half), math.tanh(z + half)
 
 
+def _preferred_answer(evaluation: Evaluation) -> str | None:
+    """The attempt the judge preferred, "tie" for a tie, None without a usable preference."""
+    if evaluation.preferred == "tie":
+        return "tie"
+    return {o.label: o.attempt_id for o in evaluation.order}.get(evaluation.preferred or "")
+
+
+SwapOutcome = Literal["consistent", "flip", "one_tie"]
+
+
+def swap_outcome(source: Evaluation, swap: Evaluation) -> SwapOutcome | None:
+    """How the judge's preference changed once the order was reversed; None if either has no preference.
+
+    consistent: the same answer, or a tie both times. flip: another answer (with two answers, the same
+    position both times). one_tie: a tie in only one of the two, which is neither.
+    """
+    before, after = _preferred_answer(source), _preferred_answer(swap)
+    if before is None or after is None:
+        return None
+    if before == after:
+        return "consistent"
+    return "one_tie" if "tie" in (before, after) else "flip"
+
+
+def _add_slot(group: _Group, evaluations: list[Evaluation], manual: dict[str, ManualScore], prompt: str) -> None:
+    """One (prompt, trial)'s evaluations on one basis: each answer once, at its mean score."""
+    counted = [e for e in evaluations if not e.judge_is_participant]
+    covered = {c.attempt_id for e in counted for c in e.candidates}
+    left_out = {
+        c.attempt_id for e in evaluations if e.judge_is_participant for c in e.candidates if c.attempt_id in manual
+    }
+    group.excluded += len(left_out - covered)
+    answers = aggregate_answers(counted)
+    scored = [a for a in answers.values() if a.attempt_id in manual]
+    for answer in scored:
+        judged = rescale(answer.mean, group.scale_min, group.scale_max)
+        group.pairs.append((float(manual[answer.attempt_id].score), judged))
+    if scored:
+        group.prompts.add(prompt)
+    if len(answers) < 2 or len(scored) < len(answers):
+        return
+    best = max(manual[a.attempt_id].score for a in scored)
+    top = [a for a in scored if manual[a.attempt_id].score == best]
+    shares = [a.win_share for a in scored if a.win_share is not None]
+    if len(top) != 1 or len(shares) < len(scored):
+        return
+    picks = [a for a in scored if a.win_share == max(shares)]
+    if len(picks) == 1:
+        group.top_total += 1
+        group.top_agree += int(picks[0].attempt_id == top[0].attempt_id)
+
+
 def rescale(score: float, scale_min: int, scale_max: int) -> float:
     """A judge score on its rubric scale, mapped linearly onto the 1-5 manual scale."""
     return 1 + 4 * (score - scale_min) / (scale_max - scale_min)
@@ -134,25 +210,17 @@ class CalibrationService:
             current = {a.id for a in latest_attempts(self.runs.attempts(run_id)).values()}
             hashes = {p.id: p.content_hash for p in self.runs.prompts(run_id)}
             manual = {k: v for k, v in self.runs.manual_scores(run_id).items() if k in current}
-            for evaluation in latest_evaluations(self.evaluations.list_for_run(run_id)).values():
-                group = groups.get(judge_basis(evaluation))
-                if group is None:
-                    group = groups[judge_basis(evaluation)] = self._group(evaluation)
-                scored = [c for c in evaluation.candidates if c.attempt_id in manual]
-                if evaluation.judge_is_participant:
-                    group.excluded += len(scored)
-                    continue
-                for candidate in scored:
-                    judged = rescale(candidate.weighted_overall, group.scale_min, group.scale_max)
-                    group.pairs.append((float(manual[candidate.attempt_id].score), judged))
-                if scored:
-                    group.prompts.add(hashes.get(evaluation.prompt_id, evaluation.prompt_id))
-                if len(evaluation.candidates) >= 2 and len(scored) == len(evaluation.candidates):
-                    best = max(manual[c.attempt_id].score for c in scored)
-                    top = [c for c in scored if manual[c.attempt_id].score == best]
-                    if len(top) == 1 and evaluation.preferred not in (None, "tie"):
-                        group.top_total += 1
-                        group.top_agree += int(evaluation.preferred == top[0].label)
+            succeeded = [e for e in self.evaluations.list_for_run(run_id) if e.status == "succeeded"]
+            for (prompt_id, _trial), items in by_slot(e for e in succeeded if is_current(e, current)).items():
+                by_basis: dict[str, list[Evaluation]] = {}
+                for evaluation in items:
+                    by_basis.setdefault(judge_basis(evaluation), []).append(evaluation)
+                for basis, basis_items in by_basis.items():
+                    group = groups.get(basis)
+                    if group is None:
+                        group = groups[basis] = self._group(basis_items[0])
+                    _add_slot(group, basis_items, manual, hashes.get(prompt_id, prompt_id))
+            self._add_swaps(groups, succeeded)
         notes = [
             "Your manual scores are one person's view, not ground truth.",
             "Judge scores are rescaled from the rubric's scale to 1-5 before they are compared with yours.",
@@ -160,14 +228,38 @@ class CalibrationService:
         notes.append(
             "The interval for rank agreement counts prompts, not answers, because answers to one prompt are related."
         )
+        notes.append("An answer judged more than once on the same basis is compared with you once, at its mean score.")
         if any(g.excluded for g in groups.values()):
             notes.append("Evaluations in which the judge also produced an answer are left out.")
+        if any(g.swap_pairs for g in groups.values()):
+            notes.append(
+                "Order swaps: a flip means the judge preferred another answer once the order was reversed, so its "
+                "preference followed the position rather than the answer."
+            )
         return Calibration(
             run_ids=list(dict.fromkeys(run_ids)),
             groups=[self._summary(g) for g in groups.values()],
             min_pairs=MIN_PAIRS,
             notes=notes,
         )
+
+    def _add_swaps(self, groups: dict[str, _Group], succeeded: list[Evaluation]) -> None:
+        """Pairs of an evaluation and its swap pass, both succeeded, counted on the source's basis."""
+        by_id = {e.id: e for e in succeeded}
+        for swap in succeeded:
+            source = by_id.get(swap.swap_of or "")
+            if source is None:
+                continue  # not a swap, or its source did not succeed
+            outcome = swap_outcome(source, swap)
+            basis = judge_basis(source)
+            if outcome is None or judge_basis(swap) != basis:
+                continue  # no preference to compare, or not like for like (the app always keeps the basis)
+            group = groups.get(basis)
+            if group is None:
+                group = groups[basis] = self._group(source)
+            group.swap_pairs += 1
+            group.swap_consistent += int(outcome == "consistent")
+            group.swap_flips += int(outcome == "flip")
 
     def _group(self, evaluation: Evaluation) -> _Group:
         snapshot = evaluation.judge_profile_snapshot
@@ -214,4 +306,9 @@ class CalibrationService:
             top_pick_agree=group.top_agree,
             top_pick_total=group.top_total,
             participant_pairs_excluded=group.excluded,
+            swap_pairs=group.swap_pairs,
+            swap_flips=group.swap_flips,
+            swap_consistent=group.swap_consistent,
+            flip_rate=group.swap_flips / group.swap_pairs if group.swap_pairs else None,
+            consistency_rate=group.swap_consistent / group.swap_pairs if group.swap_pairs else None,
         )

@@ -112,6 +112,40 @@ test('a judge that also produced responses is flagged', async ({ page, request }
   await expect(page.getByRole('region', { name: 'Judge' })).toContainText('The judge also took part in this run')
 })
 
+test('a swap pass re-judges in reversed order, is averaged in, and shows how often the judge flips', async ({ page, request }) => {
+  const problems = watchConsole(page)
+  const api = new AppApi(request)
+  const { runId, judge } = await setup(api)
+  await page.goto(`/scoring/${runId}`)
+  const panel = page.getByRole('region', { name: 'Judge' })
+  await chooseJudge(page, judge)
+  await panel.getByRole('button', { name: 'Run judge' }).click()
+  const source = panel.getByTestId('evaluation').first()
+  await expect(source.getByText('Succeeded', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('judge-aggregate')).toHaveCount(0) // one evaluation: nothing to add
+
+  // Nothing is sent until the swap is previewed and confirmed.
+  const before = await mockStats(request)
+  await source.getByRole('button', { name: 'Swap order and re-judge…' }).click()
+  const swap = source.getByRole('group', { name: 'Swap pass' })
+  await expect(swap.getByTestId('swap-preview')).toContainText('1 judge call')
+  expect((await mockStats(request)).requests['/openai/v1/responses']).toBe(before.requests['/openai/v1/responses'])
+  await swap.getByRole('button', { name: 'Run swap pass' }).click()
+
+  const swapped = panel.getByTestId('evaluation').first()
+  await expect(swapped.getByText('order swap', { exact: true })).toBeVisible()
+  await expect(swapped.getByText('Succeeded', { exact: true })).toBeVisible()
+  await expect(swapped).toContainText('in the reverse of the order of the evaluation it swaps')
+  expect((await mockStats(request)).requests['/openai/v1/responses']).toBe(before.requests['/openai/v1/responses'] + 1)
+  // A swap is not offered for swapping again (its source still is: the preview explains). Comparisons average both.
+  await expect(panel.getByRole('button', { name: 'Swap order and re-judge…' })).toHaveCount(1)
+  await expect(page.getByTestId('judge-aggregate').first()).toContainText('the mean of 2 evaluations')
+  // The mock judge always prefers the first position, so the swap flips its preference.
+  const calibration = page.getByRole('region', { name: 'Calibration against your scores' })
+  await expect(calibration).toContainText('1 of 1 flipped')
+  expect(problems).toEqual([])
+})
+
 test('rubrics are validated and edited as new versions', async ({ page }) => {
   await page.goto('/rubrics')
   await expect(page.getByTestId('rubric').filter({ hasText: 'Default rubric' })).toContainText('Instruction following')

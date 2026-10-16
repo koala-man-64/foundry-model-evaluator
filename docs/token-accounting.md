@@ -149,7 +149,8 @@ spending is not under-counted after a restart either.
 The run and judge previews show the same worst case that is reserved: they bound the whole request body of every
 call, including any structured-output schema, and the run preview shows the largest per-call worst case of each
 candidate. It warns when that worst case is more than what is left of the budget; evaluations that do
-not fit are skipped and cost nothing. Judging a run that has a budget needs judge rates in the run's currency.
+not fit are skipped and cost nothing. Judging a run that has a budget needs judge rates in the run's currency. A
+position-swap pass (below) is previewed, bounded and reserved in exactly the same way.
 
 ## Comparisons
 
@@ -169,12 +170,61 @@ as *matched* when every candidate has a succeeded answer in it, and the page sho
   Otherwise a 1–5 and a 1–10 rubric, or two different judges, would be averaged together, so the judge averages and
   win rates are shown as withheld and a note says why. Re-judging with a larger `max_output_tokens`, other display
   options or a seed keeps the basis.
+- **Every judge evaluation counts.** Judge scores and wins aggregate all succeeded evaluations of a prompt and trial
+  on one basis, instead of using only the newest one (see *Judge evidence* below).
 - **Only answers count as succeeded.** A response that asks to call a tool, or that has no answer text (for example a
   reasoning model that used all of `max_output_tokens` before answering), is recorded as a failed attempt with the
   reason. It keeps its usage and estimated cost, because the provider billed it, but it is never matched or judged.
   Comparisons count these billed failures per candidate, projections list them as "billed, but not an answer", and
   **Retry failed** leaves them out because the same request would most likely repeat; retry one explicitly instead.
 - **Failures** count finished attempts that did not succeed. Attempts that have not finished are shown separately.
+
+### Judge evidence
+
+Re-judging used to replace evidence: comparisons and calibration used only the newest succeeded evaluation of each
+prompt and trial, and silently ignored the rest. Now every succeeded evaluation is kept and used.
+
+- **One basis per prompt and trial.** The succeeded evaluations of each prompt and trial of a run are grouped by judge
+  basis (rubric version, judge and scoring settings, as above). The basis with the **most evaluations** is used; on a
+  tie, the one judged **most recently** (then a fixed order, so the choice never depends on how rows are read).
+  Evaluations on another basis are **left out, never mixed in**, and a note says how many. Re-judging once with a new
+  rubric therefore still switches to it (one each, and the newer wins), but one re-judge no longer outweighs two
+  evaluations on the original basis.
+- **Averages.** An answer's judge score is the mean of its weighted overall scores over that basis's evaluations. A
+  candidate's win share in a cell is averaged over the evaluations of each run first, then over runs, so a run judged
+  three times weighs as much as one judged once. Comparisons show how many evaluations are behind each judge average
+  and their **spread**: how far one answer's score moved between evaluations (highest minus lowest), averaged over the
+  cells judged more than once. A single evaluation has no spread: that is unknown, not zero.
+- **Retried answers.** An evaluation of an answer that was retried since judged text that is no longer shown. It is
+  left out and counted.
+- **Across runs**, each run's prompts and trials choose their basis separately, and the basis rule above still holds:
+  if the cells being averaged end up on different bases, judge averages and win rates are withheld.
+- **What did not change.** The run view's judge score and the export's `judge_weighted_overall` column are still the
+  latest single evaluation, because they name its evaluation and label; the run view adds the mean that comparisons
+  use when it differs. The aggregate only reads stored evaluations, so it costs nothing and never calls a model.
+
+### Position swaps
+
+The judge sees the answers in a random order. That spreads position bias over the answers but does not measure it.
+A **swap pass** measures it:
+
+- From a succeeded evaluation, **Swap order and re-judge** sends the same answers to the same judge, rubric version
+  and settings, in exactly the reverse order (label A is always the answer shown first). With the scope **every prompt
+  and trial of the run judged this way**, it swaps the most recent unswapped evaluation on that basis in each prompt
+  and trial.
+- It is a paid action like any judging: never a default, run only when you confirm its preview (calls, worst-case
+  cost, budget), sent with an idempotency key, and never retried automatically. A swap that fails stays failed;
+  swapping that evaluation again takes a new explicit request. An evaluation cannot be swapped when it already has a
+  queued, running or succeeded swap, is a swap itself, judged fewer than two answers, or judged an answer that was
+  retried since. If the judge profile's deployment, model, API style or structured output changed since, the swap is
+  refused, because it would not be like for like.
+- A swap is on the same basis as its source, so its scores join the aggregate above and comparisons average both
+  orders.
+- **Judge vs. your scores** reports, per judge basis, the swap pairs (an evaluation and its swap, both succeeded):
+  **flipped** when the judge preferred a different answer once the order was reversed (with two answers, it preferred
+  the same *position* both times), and **consistent** when it kept the same answer, or a tie both times. A tie in only
+  one of the two is neither. The flip share is the position-bias statistic; it is shown with its counts, because a
+  handful of pairs says little.
 
 ### Checks
 
@@ -251,9 +301,14 @@ The Scoring page shows how closely the judge agrees with your manual scores on t
   appears from 5 prompts, and not for perfect agreement.
 - **Within 1 point** is the share of answers where the judge is within one point of you; **average difference** is
   judge minus you, so a positive value means the judge scores higher.
-- **Same top pick** counts evaluations where the judge preferred the answer you scored highest (only when exactly
-  one answer had your top score).
+- An answer judged more than once on a basis is compared with you **once, at its mean score**, so repeated judging
+  does not count as more answers. Each basis has its own row, so nothing is left out here for using another basis.
+- **Same top pick** counts prompts and trials where the judge's pick matches the answer you scored highest (only when
+  exactly one answer had your top score). The judge's pick is the answer with the highest mean preference share over
+  that basis's evaluations; when evaluations disagree so that answers are level, there is no pick.
 - Evaluations in which the judge also produced one of the answers are left out and counted.
+- **Order swap** shows the swap pairs of each basis: how many flipped and how many were consistent (see *Position
+  swaps*).
 - Your scores are one person's view, not ground truth: the panel tells you whether the judge agrees with *you*.
 - During blind review the panel is hidden, because the comparison would reveal the judge's scores.
 

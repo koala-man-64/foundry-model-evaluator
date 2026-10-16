@@ -45,6 +45,24 @@ function CostCell({ item, currency }: { item: ComparisonCandidate; currency: str
 
 const WITHHELD = 'Withheld: the judge scores use different rubrics, judges or judge settings'
 
+const AVERAGED =
+  'Each answer’s judge score is first averaged over its evaluations on one judge, rubric version and settings ' +
+  '(the one with the most evaluations for its prompt and trial, then the most recent). The spread is how far one ' +
+  'answer’s score moved between those evaluations (highest minus lowest), averaged over the cells judged more than once.'
+
+/** How many judge evaluations sit behind a judge average, and how much repeated judging disagreed. */
+function JudgeEvidence({ item }: { item: ComparisonCandidate }) {
+  const evaluations = item.judge_evaluations
+  if (evaluations <= item.judge_scored) return null
+  const spread = item.judge_spread
+  return (
+    <div className="small muted" title={AVERAGED} data-testid="judge-evidence">
+      {evaluations} evaluations
+      {spread !== null && spread !== undefined ? ` · spread ${spread.toFixed(2)} (${cells(item.judge_spread_cells)})` : ''}
+    </div>
+  )
+}
+
 export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; charts?: boolean }) {
   const [baseline, setBaseline] = useState('')
   const comparison = useComparison(runIds, true, baseline)
@@ -159,6 +177,7 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
                     <td className="num">
                       {number(item.avg_judge_score, 2)}
                       <div className="small muted">{cells(item.judge_scored)} judged</div>
+                      <JudgeEvidence item={item} />
                       <IntervalLine kind="score" interval={item.judge_interval} shown={item.avg_judge_score} />
                       <DifferenceLine kind="score" difference={item.vs_baseline?.judge} />
                     </td>
@@ -209,6 +228,9 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
                 <th>Trial</th>
                 <th>Matched</th>
                 <th>Missing a usable answer</th>
+                <th className="num" title={AVERAGED}>
+                  Judge evaluations
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -218,6 +240,11 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
                   <td>{cell.trial_index}</td>
                   <td>{cell.matched ? <Badge tone="ok">yes</Badge> : <Badge tone="warn">no</Badge>}</td>
                   <td className="small">{cell.missing.join(', ') || '—'}</td>
+                  <td className="num small">
+                    {cell.judge_evaluations}
+                    {cell.judge_spread !== null && cell.judge_spread !== undefined ? ` · spread ${cell.judge_spread.toFixed(2)}` : ''}
+                    {cell.judge_left_out > 0 ? ` · ${cell.judge_left_out} left out` : ''}
+                  </td>
                 </tr>
               ))}
             </tbody>

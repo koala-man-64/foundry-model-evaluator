@@ -532,6 +532,28 @@
       },
       "CalibrationGroup": {
         "properties": {
+          "consistency_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consistency Rate"
+          },
+          "flip_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flip Rate"
+          },
           "judge": {
             "title": "Judge",
             "type": "string"
@@ -611,6 +633,21 @@
               }
             ],
             "title": "Spearman Low"
+          },
+          "swap_consistent": {
+            "default": 0,
+            "title": "Swap Consistent",
+            "type": "integer"
+          },
+          "swap_flips": {
+            "default": 0,
+            "title": "Swap Flips",
+            "type": "integer"
+          },
+          "swap_pairs": {
+            "default": 0,
+            "title": "Swap Pairs",
+            "type": "integer"
           },
           "top_pick_agree": {
             "title": "Top Pick Agree",
@@ -1340,6 +1377,11 @@
             "title": "Judge Comparisons",
             "type": "integer"
           },
+          "judge_evaluations": {
+            "default": 0,
+            "title": "Judge Evaluations",
+            "type": "integer"
+          },
           "judge_interval": {
             "anyOf": [
               {
@@ -1352,6 +1394,22 @@
           },
           "judge_scored": {
             "title": "Judge Scored",
+            "type": "integer"
+          },
+          "judge_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Spread"
+          },
+          "judge_spread_cells": {
+            "default": 0,
+            "title": "Judge Spread Cells",
             "type": "integer"
           },
           "judge_wins": {
@@ -1496,6 +1554,27 @@
           "content_hash": {
             "title": "Content Hash",
             "type": "string"
+          },
+          "judge_evaluations": {
+            "default": 0,
+            "title": "Judge Evaluations",
+            "type": "integer"
+          },
+          "judge_left_out": {
+            "default": 0,
+            "title": "Judge Left Out",
+            "type": "integer"
+          },
+          "judge_spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Judge Spread"
           },
           "matched": {
             "title": "Matched",
@@ -2399,6 +2478,17 @@
             "title": "Structured Output",
             "type": "boolean"
           },
+          "swap_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swap Of"
+          },
           "trial_index": {
             "title": "Trial Index",
             "type": "integer"
@@ -2768,6 +2858,17 @@
             "title": "Responses",
             "type": "integer"
           },
+          "swap_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swap Of"
+          },
           "trial_index": {
             "title": "Trial Index",
             "type": "integer"
@@ -2866,6 +2967,62 @@
           "schema"
         ],
         "title": "JsonSchemaCheck",
+        "type": "object"
+      },
+      "JudgeAggregate": {
+        "description": "What comparisons use for one answer: its judge evidence on its (prompt, trial)'s chosen basis.",
+        "properties": {
+          "evaluation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evaluation Ids",
+            "type": "array"
+          },
+          "left_out": {
+            "title": "Left Out",
+            "type": "integer"
+          },
+          "mean_weighted_overall": {
+            "title": "Mean Weighted Overall",
+            "type": "number"
+          },
+          "n_evaluations": {
+            "title": "N Evaluations",
+            "type": "integer"
+          },
+          "spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spread"
+          },
+          "win_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Share"
+          }
+        },
+        "required": [
+          "mean_weighted_overall",
+          "n_evaluations",
+          "spread",
+          "win_share",
+          "evaluation_ids",
+          "left_out"
+        ],
+        "title": "JudgeAggregate",
         "type": "object"
       },
       "JudgePreview": {
@@ -3064,7 +3221,7 @@
         "type": "object"
       },
       "JudgeScore": {
-        "description": "The latest successful judge result for one attempt (kept apart from manual scores).",
+        "description": "The latest successful judge result for one attempt (kept apart from manual scores).\n\nThe run view and the run export show this single evaluation; comparisons and calibration use\nthe aggregate instead (``JudgeAggregate``).",
         "properties": {
           "evaluation_id": {
             "title": "Evaluation Id",
@@ -5433,6 +5590,13 @@
           "generation_cost": {
             "$ref": "#/components/schemas/CostTotal"
           },
+          "judge_aggregates": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JudgeAggregate"
+            },
+            "title": "Judge Aggregates",
+            "type": "object"
+          },
           "judge_scores": {
             "additionalProperties": {
               "$ref": "#/components/schemas/JudgeScore"
@@ -6394,6 +6558,30 @@
           }
         },
         "title": "SuiteRunIn",
+        "type": "object"
+      },
+      "SwapRequest": {
+        "additionalProperties": false,
+        "description": "A position-swap pass: re-judge answers with an earlier evaluation's presentation order reversed.\n\nThe judge, rubric version and settings are those of ``evaluation_id``, so each swap pairs with the\nevaluation it mirrors on the same basis. It is a paid action that runs only on this explicit\nrequest, through the same preview, budget and idempotency checks as any judging, and it is never\nretried automatically.",
+        "properties": {
+          "evaluation_id": {
+            "title": "Evaluation Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "evaluation",
+            "enum": [
+              "evaluation",
+              "run"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evaluation_id"
+        ],
+        "title": "SwapRequest",
         "type": "object"
       },
       "TokenPool": {
@@ -9005,6 +9193,127 @@
           }
         },
         "summary": "Preview Evaluations",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/evaluations/swap": {
+      "post": {
+        "description": "Re-judge earlier evaluations' answers with the order reversed (a paid action, only on request).",
+        "operationId": "create_swap_api_runs__run_id__evaluations_swap_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedEvaluations"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Swap",
+        "tags": [
+          "judging"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/evaluations/swap/preview": {
+      "post": {
+        "operationId": "preview_swap_api_runs__run_id__evaluations_swap_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwapRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JudgePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Swap",
         "tags": [
           "judging"
         ]

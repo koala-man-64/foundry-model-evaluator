@@ -41,9 +41,14 @@ def assign_labels(responses: list[tuple[str, str, str]], rng: random.Random | No
     """Shuffle (attempt_id, candidate_id, text) items and label them in presentation order."""
     shuffled = list(responses)
     (rng or secrets.SystemRandom()).shuffle(shuffled)
+    return label_in_order(shuffled)
+
+
+def label_in_order(responses: list[tuple[str, str, str]]) -> list[JudgeEntry]:
+    """Label (attempt_id, candidate_id, text) items A, B, ... in the order given (a swap pass's order)."""
     return [
         JudgeEntry(label=label, attempt_id=attempt_id, candidate_id=candidate_id, text=text)
-        for label, (attempt_id, candidate_id, text) in zip(labels_for(len(shuffled)), shuffled, strict=True)
+        for label, (attempt_id, candidate_id, text) in zip(labels_for(len(responses)), responses, strict=True)
     ]
 
 

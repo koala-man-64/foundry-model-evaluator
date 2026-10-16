@@ -324,6 +324,7 @@ def _evaluation_json(e: Evaluation, include_text: bool) -> dict[str, Any]:
         "judge_model_name": e.judge_profile_snapshot.get("model_name"),
         "rubric_version_id": e.rubric_version_id,
         "judge_is_participant": e.judge_is_participant,
+        "swap_of": e.swap_of,
         "preferred": e.preferred,
         "preferred_candidate_id": e.preferred_candidate_id,
         "error_type": e.error_type,

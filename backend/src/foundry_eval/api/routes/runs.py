@@ -12,7 +12,7 @@ from ...domain.generation import GenerationSettings
 from ...execution.runs import RunPreview, RunRequest
 from ...execution.totals import CostTotal, combine_totals, total_costs
 from ...grading.checks import CheckOutcome, run_checks
-from ...judging.service import JudgeScore
+from ...judging.service import JudgeAggregate, JudgeScore
 from ...money import Money
 from ...pricing.ratecard import RateCard
 from ...pricing.snapshots import load_snapshot
@@ -54,7 +54,10 @@ class RunDetail(BaseModel):
     combined_cost: CostTotal
     active: bool
     budget: BudgetOut | None
+    # The latest succeeded judge result per attempt (what the run view and the export show).
     judge_scores: dict[str, JudgeScore] = Field(default_factory=dict)
+    # What comparisons and calibration use instead: every evaluation on its prompt and trial's basis.
+    judge_aggregates: dict[str, JudgeAggregate] = Field(default_factory=dict)
     evaluation_counts: dict[str, int] = Field(default_factory=dict)
     # Deterministic checks on each succeeded answer whose prompt has checks (computed, free).
     check_results: dict[str, CheckOutcome] = Field(default_factory=dict)
@@ -157,6 +160,7 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
         active=services.engine.is_active(run_id),
         budget=budget,
         judge_scores=services.judge.scores_for_run(run_id),
+        judge_aggregates=services.judge.aggregates_for_run(run_id),
         evaluation_counts=evaluation_counts,
         check_results=check_results,
     )

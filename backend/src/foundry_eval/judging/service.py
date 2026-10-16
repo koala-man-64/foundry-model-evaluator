@@ -3,6 +3,10 @@
 Judging runs only on an explicit request or when a suite's automatic judging setting was frozen
 into the run. Each evaluation covers one (prompt, trial) of a run, takes its own price snapshot,
 shares the run's concurrency limit and budget, and is never retried or replayed automatically.
+
+A position-swap pass is one more explicit request: it re-judges the answers of earlier evaluations
+with their presentation order reversed, on the same judge, rubric version and settings, so each swap
+pairs with the evaluation it mirrors (see ``analysis.calibration`` for the position-bias numbers).
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ from ..pricing.service import PricingService
 from ..pricing.snapshots import create_snapshot, load_snapshot
 from ..providers.base import Prompt
 from ..providers.request_builder import SettingsValidationError, build_body
-from ..repos.endpoints import EndpointRepository, NotFoundError
+from ..repos.endpoints import ConflictError, EndpointRepository, NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository, OrderEntry
 from ..repos.profiles import ProfileRepository
 from ..repos.rubrics import RubricRepository, RubricVersion
@@ -48,8 +52,9 @@ from ..repos.settings import SettingsRepository
 from ..timeutil import new_id
 from ..types import AttemptStatus, FinishReason
 from ..usage.normalizers import normalize_usage
+from .aggregate import basis_of, is_current, judge_basis, judge_run
 from .parse import parse_judge_output
-from .prompt import assign_labels, build_judge_prompt, judge_schema, labels_for, new_nonce
+from .prompt import assign_labels, build_judge_prompt, judge_schema, label_in_order, labels_for, new_nonce
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +70,23 @@ class JudgeRequest(BaseModel):
     trial_index: int | None = Field(default=None, ge=1)  # scope: None means every trial
 
 
+class SwapRequest(BaseModel):
+    """A position-swap pass: re-judge answers with an earlier evaluation's presentation order reversed.
+
+    The judge, rubric version and settings are those of ``evaluation_id``, so each swap pairs with the
+    evaluation it mirrors on the same basis. It is a paid action that runs only on this explicit
+    request, through the same preview, budget and idempotency checks as any judging, and it is never
+    retried automatically.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_id: str
+    # evaluation: swap that evaluation only. run: swap the latest unswapped evaluation on the same
+    # basis in every (prompt, trial) of the run.
+    scope: Literal["evaluation", "run"] = "evaluation"
+
+
 class GroupPreview(BaseModel):
     prompt_id: str
     prompt_position: int
@@ -74,6 +96,7 @@ class GroupPreview(BaseModel):
     input_estimate_tokens: int
     input_limit_tokens: int
     oversized: bool
+    swap_of: str | None = None  # a swap pass: the evaluation whose order this group reverses
 
 
 class JudgePreview(BaseModel):
@@ -95,7 +118,11 @@ class JudgePreview(BaseModel):
 
 
 class JudgeScore(BaseModel):
-    """The latest successful judge result for one attempt (kept apart from manual scores)."""
+    """The latest successful judge result for one attempt (kept apart from manual scores).
+
+    The run view and the run export show this single evaluation; comparisons and calibration use
+    the aggregate instead (``JudgeAggregate``).
+    """
 
     evaluation_id: str
     label: str
@@ -104,6 +131,17 @@ class JudgeScore(BaseModel):
     preferred: bool
     tie: bool
     judge_is_participant: bool
+
+
+class JudgeAggregate(BaseModel):
+    """What comparisons use for one answer: its judge evidence on its (prompt, trial)'s chosen basis."""
+
+    mean_weighted_overall: float
+    n_evaluations: int
+    spread: float | None  # highest minus lowest weighted overall; None from one evaluation
+    win_share: float | None  # mean preference share; None if no evaluation compared answers
+    evaluation_ids: list[str]  # the evaluations of its (prompt, trial) on the chosen basis
+    left_out: int  # succeeded evaluations of its (prompt, trial) on another basis
 
 
 class JudgeValidationError(ValueError):
@@ -116,7 +154,19 @@ class JudgeValidationError(ValueError):
 class _Group:
     prompt: RunPrompt
     trial: int
-    responses: list[tuple[str, str, str]]  # (attempt_id, candidate_id, text) in candidate order
+    # (attempt_id, candidate_id, text): in candidate order, or for a swap pass in presentation order.
+    responses: list[tuple[str, str, str]]
+    swap_of: str | None = None
+
+
+@dataclass
+class _SwapPlan:
+    request: JudgeRequest | None  # the source evaluation's judge, rubric version and settings
+    basis: str | None
+    groups: list[_Group]
+    errors: list[str]
+    warnings: list[str]
+    skipped: int
 
 
 @dataclass
@@ -274,7 +324,9 @@ class JudgeService:
         )
 
     def _judge_prompt(self, group: _Group, setup: _Setup, *, shuffle: bool) -> tuple[list[Any], Prompt, str]:
-        if shuffle:
+        if group.swap_of is not None:  # a swap pass: exactly the reversed order, never shuffled
+            entries = label_in_order(group.responses)
+        elif shuffle:
             entries = assign_labels(group.responses, self.rng)
         else:  # preview: the order does not change the size
             entries = assign_labels(group.responses, random.Random(0))  # noqa: S311 - not security relevant
@@ -297,15 +349,36 @@ class JudgeService:
         return build_body(setup.profile, settings, prompt, json_schema=schema)
 
     def preview(self, run_id: str, request: JudgeRequest) -> JudgePreview:
-        run = self.runs.get(run_id)
-        errors: list[str] = []
-        warnings: list[str] = []
-        if self.engine.generation_active(run_id):
-            errors.append("The run is still generating responses; judge it when it finishes.")
-        setup = self._resolve(request, errors)
         groups, skipped = self.groups(run_id, request.prompt_id, request.trial_index)
+        return self._preview(
+            run_id, request, groups, skipped, empty_error="There are no succeeded responses to judge in this scope."
+        )
+
+    def _preview(
+        self,
+        run_id: str,
+        request: JudgeRequest,
+        groups: list[_Group],
+        skipped: int,
+        *,
+        empty_error: str,
+        errors: list[str] | None = None,
+        warnings: list[str] | None = None,
+        expected_basis: str | None = None,
+    ) -> JudgePreview:
+        run = self.runs.get(run_id)
+        errors = list(errors or [])
+        warnings = list(warnings or [])
+        if self.engine.generation_active(run_id):
+            errors.insert(0, "The run is still generating responses; judge it when it finishes.")
+        setup = self._resolve(request, errors)
         if not groups:
-            errors.append("There are no succeeded responses to judge in this scope.")
+            errors.append(empty_error)
+        if setup is not None and expected_basis is not None and self._planned_basis(setup, request) != expected_basis:
+            errors.append(
+                "The judge profile changed since that evaluation (deployment, model, API style or structured "
+                "output), so a swap would not be comparable with it."
+            )
         if setup is None:
             return JudgePreview(
                 ok=False,
@@ -369,6 +442,7 @@ class JudgeService:
                     input_estimate_tokens=estimate,
                     input_limit_tokens=setup.input_limit,
                     oversized=oversized,
+                    swap_of=group.swap_of,
                 )
             )
             if oversized:
@@ -438,17 +512,39 @@ class JudgeService:
         self, run_id: str, request: JudgeRequest, idempotency_key: str, *, trigger: Literal["manual", "auto"] = "manual"
     ) -> tuple[list[str], bool]:
         """Create evaluations (queued, or rejected when oversized). Returns (ids, created)."""
-        existing = self.evaluations.ids_for_key(idempotency_key)
+        existing = self._existing(idempotency_key, swap=False)
         if existing:
             return existing, False
         preview = self.preview(run_id, request)
         if not preview.ok:
             raise JudgeValidationError(preview)
+        setup = self._setup_for_create(request, preview)
+        groups, _skipped = self.groups(run_id, request.prompt_id, request.trial_index)
+        return self._insert(run_id, request, setup, groups, idempotency_key, trigger)
+
+    def _existing(self, idempotency_key: str, *, swap: bool) -> list[str]:
+        """Evaluations already created with this key; a key used for the other kind of request conflicts."""
+        ids = self.evaluations.ids_for_key(idempotency_key)
+        if ids and (self.evaluations.get(ids[0]).swap_of is not None) != swap:
+            raise ConflictError("This Idempotency-Key was already used for a different action.")
+        return ids
+
+    def _setup_for_create(self, request: JudgeRequest, preview: JudgePreview) -> _Setup:
         errors: list[str] = []
         setup = self._resolve(request, errors)
         if setup is None or errors:
             raise JudgeValidationError(preview.model_copy(update={"ok": False, "errors": errors}))
-        groups, _skipped = self.groups(run_id, request.prompt_id, request.trial_index)
+        return setup
+
+    def _insert(
+        self,
+        run_id: str,
+        request: JudgeRequest,
+        setup: _Setup,
+        groups: list[_Group],
+        idempotency_key: str,
+        trigger: Literal["manual", "auto"],
+    ) -> tuple[list[str], bool]:
         reasons = participant_reasons(setup.profile, setup.endpoint, self.runs.candidates(run_id))
         snapshot_info = profile_snapshot(setup.profile, setup.endpoint)
         currency = setup.card.currency
@@ -461,6 +557,13 @@ class JudgeService:
             ).fetchall()
             if rows:
                 return [row["id"] for row in rows], False
+            sources = [g.swap_of for g in groups if g.swap_of is not None]
+            if sources:
+                # A swap pass re-checks under the lock that no other request swapped its sources meanwhile.
+                swapped = EvaluationRepository.swapped(conn, sources)
+                groups = [g for g in groups if g.swap_of not in swapped]
+                if not groups:
+                    raise ConflictError("Every evaluation in this scope was swapped meanwhile; nothing was started.")
             price_snapshot_id = create_snapshot(conn, setup.profile, setup.endpoint, setup.card)
             for group in groups:
                 entries, prompt, _nonce = self._judge_prompt(group, setup, shuffle=True)
@@ -498,9 +601,139 @@ class JudgeService:
                         input_limit_tokens=setup.input_limit,
                         request_body=body,
                         rejected=rejected,
+                        swap_of=group.swap_of,
                     )
                 )
         return ids, True
+
+    # ------------------------------------------------------------------ position-swap pass
+    @staticmethod
+    def _planned_basis(setup: _Setup, request: JudgeRequest) -> str:
+        """The basis new evaluations with this setup would have (as judge_basis() reads it back)."""
+        snapshot = profile_snapshot(setup.profile, setup.endpoint)
+        return basis_of(setup.rubric.id, setup.profile.id, snapshot, setup.structured, request.settings)
+
+    def _swap_plan(self, run_id: str, swap: SwapRequest) -> _SwapPlan:
+        """The groups a swap pass would judge: each source evaluation's answers in reversed order."""
+        self.runs.get(run_id)
+        try:
+            given = self.evaluations.get(swap.evaluation_id)
+        except NotFoundError:
+            given = None
+        if given is None or given.run_id != run_id:
+            return _SwapPlan(None, None, [], ["The evaluation to swap does not exist in this run."], [], 0)
+        if given.status != "succeeded":
+            return _SwapPlan(None, None, [], ["Only a succeeded evaluation can be swapped."], [], 0)
+        request = JudgeRequest(
+            judge_profile_id=given.judge_profile_id,
+            settings=given.judge_settings,
+            rubric_version_id=given.rubric_version_id,
+        )
+        basis = judge_basis(given)
+        attempts = latest_attempts(self.runs.attempts(run_id))
+        current = {a.id: a for a in attempts.values()}
+        if swap.scope == "evaluation":
+            sources = [given]
+        else:
+            sources = [
+                e
+                for e in self.evaluations.list_for_run(run_id)
+                if e.status == "succeeded" and e.swap_of is None and judge_basis(e) == basis
+            ]
+        with self.db.connect() as conn:
+            swapped = EvaluationRepository.swapped(conn, [e.id for e in sources])
+        reasons = {"swap": 0, "single": 0, "retried": 0, "swapped": 0, "older": 0}
+        chosen: dict[tuple[str, int], Evaluation] = {}
+        current_ids = set(current)
+        for source in sources:
+            if source.swap_of is not None:
+                reasons["swap"] += 1
+            elif len(source.order) < 2:
+                reasons["single"] += 1
+            elif not is_current(source, current_ids):
+                reasons["retried"] += 1
+            elif source.id in swapped:
+                reasons["swapped"] += 1
+            else:
+                slot = (source.prompt_id, source.trial_index)
+                previous = chosen.get(slot)
+                if previous is not None:
+                    reasons["older"] += 1  # one swap per prompt and trial: the most recent evaluation
+                if previous is None or (source.created_at, source.id) > (previous.created_at, previous.id):
+                    chosen[slot] = source
+        explained = {
+            "swap": "it is itself a swap pass (swap the evaluation it mirrors instead)",
+            "single": "it judged fewer than two answers, so there is no order to reverse",
+            "retried": "an answer it judged was retried since",
+            "swapped": "it already has a swap pass (queued, running or succeeded)",
+            "older": "a more recent evaluation of the same prompt and trial is swapped instead",
+        }
+        errors: list[str] = []
+        warnings: list[str] = []
+        if swap.scope == "evaluation":
+            errors += [f"This evaluation cannot be swapped: {explained[k]}." for k, n in reasons.items() if n]
+        else:
+            left = [f"{n} because {explained[k]}" for k, n in reasons.items() if n]
+            if left:
+                warnings.append("Evaluations left out of this swap pass: " + "; ".join(left) + ".")
+        prompts = {p.id: p for p in self.runs.prompts(run_id)}
+        groups = [
+            _Group(
+                prompt=prompts[source.prompt_id],
+                trial=source.trial_index,
+                responses=[
+                    (entry.attempt_id, entry.candidate_id, current[entry.attempt_id].output_text or "")
+                    for entry in reversed(source.order)
+                ],
+                swap_of=source.id,
+            )
+            for source in sorted(chosen.values(), key=lambda e: (prompts[e.prompt_id].position, e.trial_index))
+        ]
+        return _SwapPlan(request, basis, groups, errors, warnings, sum(reasons.values()))
+
+    def preview_swap(self, run_id: str, swap: SwapRequest) -> JudgePreview:
+        plan = self._swap_plan(run_id, swap)
+        if plan.request is None:
+            return JudgePreview(
+                ok=False,
+                errors=plan.errors,
+                warnings=[],
+                judge_profile_name=None,
+                rubric_version_id=None,
+                rubric_name=None,
+                rubric_version=None,
+                structured_output=False,
+                key_configured=False,
+                participant_reasons=[],
+                groups=[],
+                skipped_groups=0,
+                calls=0,
+                worst_case_total=None,
+                unknown_rates=[],
+            )
+        return self._preview(
+            run_id,
+            plan.request,
+            plan.groups,
+            plan.skipped,
+            empty_error="There is nothing to swap in this scope.",
+            errors=plan.errors,
+            warnings=plan.warnings,
+            expected_basis=plan.basis,
+        )
+
+    def create_swap(self, run_id: str, swap: SwapRequest, idempotency_key: str) -> tuple[list[str], bool]:
+        """Create a swap pass (a paid action, only on this explicit request). Returns (ids, created)."""
+        existing = self._existing(idempotency_key, swap=True)
+        if existing:
+            return existing, False
+        preview = self.preview_swap(run_id, swap)
+        if not preview.ok:
+            raise JudgeValidationError(preview)
+        plan = self._swap_plan(run_id, swap)
+        assert plan.request is not None  # the preview was ok
+        setup = self._setup_for_create(plan.request, preview)
+        return self._insert(run_id, plan.request, setup, plan.groups, idempotency_key, "manual")
 
     def start(self, run_id: str, evaluation_ids: list[str]) -> None:
         for evaluation_id in evaluation_ids:
@@ -671,3 +904,19 @@ class JudgeService:
     def scores_for_run(self, run_id: str) -> dict[str, JudgeScore]:
         """Latest successful judge result per attempt."""
         return judge_scores(self.evaluations.list_for_run(run_id))
+
+    def aggregates_for_run(self, run_id: str) -> dict[str, JudgeAggregate]:
+        """The judge evidence comparisons use, per current attempt (see ``judging.aggregate``)."""
+        current = {a.id for a in latest_attempts(self.runs.attempts(run_id)).values()}
+        judged = judge_run(self.evaluations.list_for_run(run_id), current)
+        return {
+            attempt_id: JudgeAggregate(
+                mean_weighted_overall=answer.mean,
+                n_evaluations=answer.evaluations,
+                spread=answer.spread,
+                win_share=answer.win_share,
+                evaluation_ids=[e.id for e in slot.evaluations],
+                left_out=slot.other_basis,
+            )
+            for attempt_id, (answer, slot) in judged.answers().items()
+        }
