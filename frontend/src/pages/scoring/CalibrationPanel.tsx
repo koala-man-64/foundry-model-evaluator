@@ -20,8 +20,8 @@ function bias(value: number | null | undefined): string {
 }
 
 /** How far the judge can stand in for you: agreement with your manual scores, per judge and rubric. */
-export function CalibrationPanel({ runIds }: { runIds: string[] }) {
-  const calibration = useCalibration(runIds)
+export function CalibrationPanel({ runIds, live = false }: { runIds: string[]; live?: boolean }) {
+  const calibration = useCalibration(runIds, live)
   if (calibration.isLoading) return <Spinner />
   if (calibration.error) return <ErrorMessage error={calibration.error} />
   const data = calibration.data
@@ -53,8 +53,11 @@ export function CalibrationPanel({ runIds }: { runIds: string[] }) {
             </thead>
             <tbody>
               {data.groups.map((group) => (
-                <tr key={`${group.judge}|${group.rubric}`}>
-                  <td>{group.judge}</td>
+                <tr key={group.key}>
+                  <td>
+                    {group.judge}
+                    <div className="small muted">{group.settings}</div>
+                  </td>
                   <td>
                     {group.rubric}
                     <div className="small muted">
@@ -63,6 +66,9 @@ export function CalibrationPanel({ runIds }: { runIds: string[] }) {
                   </td>
                   <td className="num">
                     {group.pairs}
+                    <div className="small muted">
+                      from {group.prompts} prompt{group.prompts === 1 ? '' : 's'}
+                    </div>
                     {group.participant_pairs_excluded > 0 && (
                       <div className="small muted">{group.participant_pairs_excluded} left out (judge took part)</div>
                     )}

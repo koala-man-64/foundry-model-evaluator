@@ -14,9 +14,15 @@ function typing(target: EventTarget): boolean {
   return target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement || target instanceof HTMLSelectElement
 }
 
+/** Plain key presses only: no modifiers (browser shortcuts), no key repeat, nothing typed into a field or a dialog. */
+function plainKey(event: KeyboardEvent<HTMLElement>): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.repeat || typing(event.target)) return false
+  return !(event.target instanceof Element && event.target.closest('[role="dialog"], dialog'))
+}
+
 /** 1–5 on a focused answer scores it, as if its score button were pressed. */
 function scoreHotkey(event: KeyboardEvent<HTMLElement>) {
-  if (typing(event.target) || !/^[1-5]$/.test(event.key)) return
+  if (!plainKey(event) || !/^[1-5]$/.test(event.key)) return
   const button = event.currentTarget.querySelector<HTMLButtonElement>(`button[aria-label="Score ${event.key}"]`)
   if (button) {
     event.preventDefault()
@@ -39,8 +45,10 @@ export function ScoringPage() {
   if (runs.isLoading) return <Spinner />
   if (!runs.data?.length) return <Empty>No runs to score yet.</Empty>
   const currentIndex = Math.min(promptIndex, (detail?.prompts.length ?? 1) - 1)
+  const currentTrial = Math.min(trial, Math.max(1, detail?.run.trials ?? 1))
   const prompt = detail?.prompts[currentIndex]
-  const next = detail ? nextUnscoredCell(detail, latest, { promptIndex: currentIndex, trial }) : null
+  const next = detail ? nextUnscoredCell(detail, latest, { promptIndex: currentIndex, trial: currentTrial }) : null
+  const judging = (detail?.evaluation_counts?.queued ?? 0) + (detail?.evaluation_counts?.running ?? 0) > 0
   const goNext = () => {
     if (!next) return
     setPromptIndex(next.promptIndex)
@@ -49,7 +57,7 @@ export function ScoringPage() {
   const cards: { attempt: Attempt; label: string }[] = []
   if (detail && prompt) {
     for (const candidate of detail.candidates) {
-      const attempt = latest.get(`${prompt.id}|${candidate.id}|${trial}`)
+      const attempt = latest.get(`${prompt.id}|${candidate.id}|${currentTrial}`)
       if (attempt) cards.push({ attempt, label: candidate.label })
     }
   }
@@ -58,7 +66,7 @@ export function ScoringPage() {
     <div
       className="stack"
       onKeyDown={(event) => {
-        if (!typing(event.target) && event.key.toLowerCase() === 'n' && next) goNext()
+        if (plainKey(event) && event.key.toLowerCase() === 'n' && next) goNext()
       }}
     >
       <div className="row">
@@ -86,7 +94,7 @@ export function ScoringPage() {
             </label>
             <label className="row">
               Trial
-              <select value={trial} onChange={(e) => setTrial(Number(e.target.value))}>
+              <select value={currentTrial} onChange={(e) => setTrial(Number(e.target.value))}>
                 {Array.from({ length: detail.run.trials }, (_, i) => i + 1).map((t) => (
                   <option key={t} value={t}>
                     {t}
@@ -98,7 +106,7 @@ export function ScoringPage() {
         )}
         {detail && (
           <button type="button" onClick={goNext} disabled={!next} title="Keyboard: N">
-            {next ? 'Next unscored' : 'All answers scored'}
+            {next ? 'Next unscored' : 'No other unscored answers'}
           </button>
         )}
         <label className="row small">
@@ -120,7 +128,8 @@ export function ScoringPage() {
             <p className="small muted">
               A 1–5 overall rating with optional notes, kept separately from judge scores. Select an answer and press 1–5 to score it;
               press N for the next unscored answer.
-              {blind && ' Blind review hides the model names and judge scores and shuffles the answers.'}
+              {blind &&
+                ' Blind review hides the model names, judge scores, provider error text and the judge comparison below, and shuffles the answers.'}
             </p>
             <div className="cards">
               {shown.map(({ attempt, label }, position) => {
@@ -137,7 +146,9 @@ export function ScoringPage() {
                       <strong>{name}</strong>
                       <StatusBadge status={attempt.status} />
                     </div>
-                    <div className="response-text">{attempt.output_text || attempt.error_message || '—'}</div>
+                    <div className="response-text">
+                      {attempt.output_text || (blind ? 'No answer.' : attempt.error_message) || '—'}
+                    </div>
                     {!blind && detail.judge_scores?.[attempt.id] && <JudgeScoreLine score={detail.judge_scores[attempt.id]} />}
                     {attempt.status === 'succeeded' && (
                       <ManualScoreControl runId={detail.run.id} attemptId={attempt.id} score={detail.manual_scores[attempt.id]} />
@@ -147,8 +158,9 @@ export function ScoringPage() {
               })}
             </div>
           </section>
-          {!blind && <JudgePanel detail={detail} promptId={prompt.id} trial={trial} />}
-          <CalibrationPanel runIds={[detail.run.id]} />
+          {!blind && <JudgePanel detail={detail} promptId={prompt.id} trial={currentTrial} />}
+          {/* The comparison with the judge would reveal judge scores during blind review. */}
+          {!blind && <CalibrationPanel runIds={[detail.run.id]} live={judging} />}
         </>
       )}
     </div>

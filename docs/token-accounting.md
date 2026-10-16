@@ -184,10 +184,18 @@ A small difference in an average can be noise, so every average also shows a **9
   counting ten trials of three prompts as thirty samples would make the range look far tighter than the evidence is.
 - The range is a Student-t interval of the mean of the per-prompt values over the metric's common cells. It needs at
   least **3 prompts**, and it is wide with few prompts: that is the honest answer, not a defect. Cost ranges are
-  computed in exact decimals and never go below zero; win-rate ranges stay between 0 and 100%.
+  computed in exact decimals and never go below zero; win-rate ranges stay between 0 and 100%, manual scores between
+  1 and 5, and judge scores within the rubric's scale.
+- The range is centred on the mean of the per-prompt values. When prompts have different numbers of matched trials,
+  that can differ slightly from the cell average shown above it, and the range then says which mean it is around.
+- **No range for identical values.** When every prompt gives the same value (three straight wins, a constant score
+  gap), a t-interval would shrink to a single point and claim a certainty the data cannot give, so no range is
+  shown.
 - **Baseline.** Pick a candidate as the baseline and every other candidate shows its paired difference to it (the
   difference per prompt, then the same interval). The verdict is *higher* or *lower* only when the whole interval is
-  on one side of zero; otherwise it is *cannot tell*. Below 3 shared prompts it says *too few prompts*.
+  on one side of zero; otherwise it is *cannot tell*. Below 3 shared prompts it says *too few prompts*. When every
+  prompt shows the same difference, there is no interval and the verdict follows an exact sign test: a direction only
+  from 6 prompts all on one side (two-sided p < 0.05), otherwise *cannot tell*.
 - The ranges are not corrected for comparing many candidates at once, so with many candidates expect the occasional
   "difference" by chance.
 
@@ -197,14 +205,16 @@ The Scoring page shows how closely the judge agrees with your manual scores on t
 (rubric version, judge and scoring settings). It reads stored scores only and costs nothing.
 
 - Judge scores are rescaled from the rubric's scale to 1–5 before they are compared with yours.
-- **Rank agreement** is Spearman's correlation (ties share their average rank), with an approximate 95% interval. It
-  is shown from 5 answers scored by both.
+- **Rank agreement** is Spearman's correlation (ties share their average rank). It is shown from 5 answers scored by
+  both. Its approximate 95% interval counts **prompts**, not answers, because answers to one prompt are related; it
+  appears from 5 prompts, and not for perfect agreement.
 - **Within 1 point** is the share of answers where the judge is within one point of you; **average difference** is
   judge minus you, so a positive value means the judge scores higher.
 - **Same top pick** counts evaluations where the judge preferred the answer you scored highest (only when exactly
   one answer had your top score).
 - Evaluations in which the judge also produced one of the answers are left out and counted.
 - Your scores are one person's view, not ground truth: the panel tells you whether the judge agrees with *you*.
+- During blind review the panel is hidden, because the comparison would reveal the judge's scores.
 
 ## Projections
 

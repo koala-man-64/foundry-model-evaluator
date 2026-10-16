@@ -26,16 +26,22 @@ function signed(kind: MetricKind, v: number | string, currency: string): string 
 export function IntervalLine({
   kind,
   interval,
+  shown,
   currency = 'USD',
 }: {
   kind: MetricKind
   interval: Interval | MoneyInterval | null | undefined
+  /** The average displayed above; when the per-prompt mean rounds differently, the line says so. */
+  shown?: number | string | null
   currency?: string
 }) {
   if (!interval) return null
+  const centre = value(kind, interval.mean, currency)
+  const differs = shown !== null && shown !== undefined && value(kind, shown, currency) !== centre
   return (
     <div className="small muted" data-testid="interval" title={`95% interval across ${interval.prompts} prompts`}>
       95% {value(kind, interval.low, currency)}–{value(kind, interval.high, currency)}
+      {differs && ` around the per-prompt mean ${centre}`}
     </div>
   )
 }

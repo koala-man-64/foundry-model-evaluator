@@ -14,12 +14,12 @@ export function unscoredIn(detail: RunDetail, latest: Map<string, Attempt>, cell
     .filter((a): a is Attempt => !!a && a.status === 'succeeded' && !detail.manual_scores[a.id])
 }
 
-/** The next cell (prompt × trial, in order, wrapping around) with an unscored answer, or null if none. */
+/** The next other cell (prompt × trial, in order, wrapping around) with an unscored answer, or null if none. */
 export function nextUnscoredCell(detail: RunDetail, latest: Map<string, Attempt>, from: CellRef): CellRef | null {
   const trials = Math.max(1, detail.run.trials)
   const total = detail.prompts.length * trials
   const start = from.promptIndex * trials + (from.trial - 1)
-  for (let step = 1; step <= total; step++) {
+  for (let step = 1; step < total; step++) {
     const index = (start + step) % total
     const cell = { promptIndex: Math.floor(index / trials), trial: (index % trials) + 1 }
     if (unscoredIn(detail, latest, cell).length > 0) return cell

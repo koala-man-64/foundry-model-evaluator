@@ -404,6 +404,16 @@
       },
       "BaselineDifferences": {
         "properties": {
+          "checks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cost": {
             "anyOf": [
               {
@@ -526,6 +536,10 @@
             "title": "Judge",
             "type": "string"
           },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
           "mean_bias": {
             "anyOf": [
               {
@@ -545,6 +559,10 @@
             "title": "Participant Pairs Excluded",
             "type": "integer"
           },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          },
           "rubric": {
             "title": "Rubric",
             "type": "string"
@@ -556,6 +574,10 @@
           "scale_min": {
             "title": "Scale Min",
             "type": "integer"
+          },
+          "settings": {
+            "title": "Settings",
+            "type": "string"
           },
           "spearman": {
             "anyOf": [
@@ -611,11 +633,14 @@
           }
         },
         "required": [
+          "key",
           "judge",
           "rubric",
+          "settings",
           "scale_min",
           "scale_max",
           "pairs",
+          "prompts",
           "spearman",
           "spearman_low",
           "spearman_high",
@@ -1011,6 +1036,50 @@
         "title": "CategoryRate",
         "type": "object"
       },
+      "CheckOutcome": {
+        "properties": {
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "passed",
+          "results"
+        ],
+        "title": "CheckOutcome",
+        "type": "object"
+      },
+      "CheckResult": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "passed",
+          "detail"
+        ],
+        "title": "CheckResult",
+        "type": "object"
+      },
       "Comparison": {
         "properties": {
           "baseline": {
@@ -1049,6 +1118,11 @@
           "currency": {
             "title": "Currency",
             "type": "string"
+          },
+          "has_checks": {
+            "default": false,
+            "title": "Has Checks",
+            "type": "boolean"
           },
           "interval_min_prompts": {
             "title": "Interval Min Prompts",
@@ -1102,6 +1176,17 @@
           "attempts": {
             "title": "Attempts",
             "type": "integer"
+          },
+          "avg_checks_passed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Checks Passed"
           },
           "avg_cost": {
             "anyOf": [
@@ -1183,6 +1268,21 @@
           "candidate_key": {
             "title": "Candidate Key",
             "type": "string"
+          },
+          "checks_cells": {
+            "default": 0,
+            "title": "Checks Cells",
+            "type": "integer"
+          },
+          "checks_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cost_cells": {
             "title": "Cost Cells",
@@ -1411,6 +1511,33 @@
           "missing"
         ],
         "title": "ComparisonCell",
+        "type": "object"
+      },
+      "ContainsCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "contains",
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "ContainsCheck",
         "type": "object"
       },
       "CostEstimate": {
@@ -2349,6 +2476,34 @@
         "title": "EvaluationRaw",
         "type": "object"
       },
+      "ExactCheck": {
+        "additionalProperties": false,
+        "description": "The whole answer equals the value, ignoring leading, trailing and repeated whitespace.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "exact",
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "ExactCheck",
+        "type": "object"
+      },
       "FetchOut": {
         "properties": {
           "currency": {
@@ -2649,7 +2804,7 @@
         "type": "object"
       },
       "Interval": {
-        "description": "95% interval for a mean across prompts (trials of a prompt are averaged first).",
+        "description": "95% interval for the mean across prompts (trials of a prompt are averaged first).\n\n``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average\nshown beside it when prompts have different numbers of matched trials.",
         "properties": {
           "high": {
             "title": "High",
@@ -2659,17 +2814,44 @@
             "title": "Low",
             "type": "number"
           },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
           "prompts": {
             "title": "Prompts",
             "type": "integer"
           }
         },
         "required": [
+          "mean",
           "low",
           "high",
           "prompts"
         ],
         "title": "Interval",
+        "type": "object"
+      },
+      "JsonSchemaCheck": {
+        "additionalProperties": false,
+        "description": "The answer (optionally inside one ``` fence) is JSON that matches the schema.",
+        "properties": {
+          "kind": {
+            "const": "json_schema",
+            "title": "Kind",
+            "type": "string"
+          },
+          "schema": {
+            "additionalProperties": true,
+            "title": "Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind",
+          "schema"
+        ],
+        "title": "JsonSchemaCheck",
         "type": "object"
       },
       "JudgePreview": {
@@ -3447,17 +3629,134 @@
             "title": "Low",
             "type": "string"
           },
+          "mean": {
+            "title": "Mean",
+            "type": "string"
+          },
           "prompts": {
             "title": "Prompts",
             "type": "integer"
           }
         },
         "required": [
+          "mean",
           "low",
           "high",
           "prompts"
         ],
         "title": "MoneyInterval",
+        "type": "object"
+      },
+      "NotContainsCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "not_contains",
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "NotContainsCheck",
+        "type": "object"
+      },
+      "NumberCheck-Input": {
+        "additionalProperties": false,
+        "description": "A number in the answer (the last one, or any) is within ``tolerance`` of ``value``.",
+        "properties": {
+          "kind": {
+            "const": "number",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tolerance": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "default": "0",
+            "title": "Tolerance"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Value"
+          },
+          "which": {
+            "default": "last",
+            "enum": [
+              "last",
+              "any"
+            ],
+            "title": "Which",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "NumberCheck",
+        "type": "object"
+      },
+      "NumberCheck-Output": {
+        "additionalProperties": false,
+        "description": "A number in the answer (the last one, or any) is within ``tolerance`` of ``value``.",
+        "properties": {
+          "kind": {
+            "const": "number",
+            "title": "Kind",
+            "type": "string"
+          },
+          "tolerance": {
+            "default": "0",
+            "title": "Tolerance",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          },
+          "which": {
+            "default": "last",
+            "enum": [
+              "last",
+              "any"
+            ],
+            "title": "Which",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "NumberCheck",
         "type": "object"
       },
       "OrderEntry": {
@@ -3976,6 +4275,50 @@
       "PromptSpec": {
         "additionalProperties": false,
         "properties": {
+          "checks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "contains": "#/components/schemas/ContainsCheck",
+                  "exact": "#/components/schemas/ExactCheck",
+                  "json_schema": "#/components/schemas/JsonSchemaCheck",
+                  "not_contains": "#/components/schemas/NotContainsCheck",
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NotContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberCheck-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonSchemaCheck"
+                }
+              ]
+            },
+            "maxItems": 10,
+            "title": "Checks",
+            "type": "array"
+          },
+          "reference": {
+            "default": "",
+            "maxLength": 200000,
+            "title": "Reference",
+            "type": "string"
+          },
           "suite_prompt_id": {
             "anyOf": [
               {
@@ -4668,6 +5011,33 @@
         "title": "RefreshOut",
         "type": "object"
       },
+      "RegexCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "regex",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pattern": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Pattern",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "pattern"
+        ],
+        "title": "RegexCheck",
+        "type": "object"
+      },
       "RetryOut": {
         "properties": {
           "attempt_ids": {
@@ -5060,6 +5430,13 @@
             "title": "Candidates",
             "type": "array"
           },
+          "check_results": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CheckOutcome"
+            },
+            "title": "Check Results",
+            "type": "object"
+          },
           "combined_cost": {
             "$ref": "#/components/schemas/CostTotal"
           },
@@ -5184,6 +5561,43 @@
       },
       "RunPrompt": {
         "properties": {
+          "checks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "contains": "#/components/schemas/ContainsCheck",
+                  "exact": "#/components/schemas/ExactCheck",
+                  "json_schema": "#/components/schemas/JsonSchemaCheck",
+                  "not_contains": "#/components/schemas/NotContainsCheck",
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NotContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberCheck-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonSchemaCheck"
+                }
+              ]
+            },
+            "title": "Checks",
+            "type": "array"
+          },
           "content_hash": {
             "title": "Content Hash",
             "type": "string"
@@ -5195,6 +5609,11 @@
           "position": {
             "title": "Position",
             "type": "integer"
+          },
+          "reference_text": {
+            "default": "",
+            "title": "Reference Text",
+            "type": "string"
           },
           "run_id": {
             "title": "Run Id",
@@ -5823,6 +6242,43 @@
       },
       "SuitePrompt": {
         "properties": {
+          "checks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "contains": "#/components/schemas/ContainsCheck",
+                  "exact": "#/components/schemas/ExactCheck",
+                  "json_schema": "#/components/schemas/JsonSchemaCheck",
+                  "not_contains": "#/components/schemas/NotContainsCheck",
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NotContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberCheck-Output"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonSchemaCheck"
+                }
+              ]
+            },
+            "title": "Checks",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -5830,6 +6286,11 @@
           "position": {
             "title": "Position",
             "type": "integer"
+          },
+          "reference": {
+            "default": "",
+            "title": "Reference",
+            "type": "string"
           },
           "system": {
             "title": "System",
@@ -5857,6 +6318,44 @@
       "SuitePromptIn": {
         "additionalProperties": false,
         "properties": {
+          "checks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "contains": "#/components/schemas/ContainsCheck",
+                  "exact": "#/components/schemas/ExactCheck",
+                  "json_schema": "#/components/schemas/JsonSchemaCheck",
+                  "not_contains": "#/components/schemas/NotContainsCheck",
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NotContainsCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/NumberCheck-Input"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonSchemaCheck"
+                }
+              ]
+            },
+            "maxItems": 10,
+            "title": "Checks",
+            "type": "array"
+          },
           "id": {
             "anyOf": [
               {
@@ -5867,6 +6366,12 @@
               }
             ],
             "title": "Id"
+          },
+          "reference": {
+            "default": "",
+            "maxLength": 200000,
+            "title": "Reference",
+            "type": "string"
           },
           "system": {
             "default": "",

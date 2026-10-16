@@ -41,6 +41,7 @@ from ..judging.service import JudgeService, judge_scores, latest_attempts, lates
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
+from ..repos.rubrics import RubricRepository
 from ..repos.runs import Attempt, RunRepository
 from ..types import AttemptStatus
 from . import stats
@@ -54,14 +55,20 @@ _PENDING = frozenset({AttemptStatus.QUEUED, AttemptStatus.RUNNING})
 
 
 class Interval(BaseModel):
-    """95% interval for a mean across prompts (trials of a prompt are averaged first)."""
+    """95% interval for the mean across prompts (trials of a prompt are averaged first).
 
+    ``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average
+    shown beside it when prompts have different numbers of matched trials.
+    """
+
+    mean: float
     low: float
     high: float
     prompts: int
 
 
 class MoneyInterval(BaseModel):
+    mean: Money
     low: Money
     high: Money
     prompts: int
@@ -296,7 +303,7 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
 
 # Judge settings that change how answers are scored. Output limits, stop sequences, display options,
 # the seed and prompt caching do not, so re-judging with a larger max_output_tokens keeps the basis.
-_SCORING_SETTINGS = ("temperature", "top_p", "top_k", "effort", "thinking_mode", "thinking_budget_tokens")
+SCORING_SETTINGS = ("temperature", "top_p", "top_k", "effort", "thinking_mode", "thinking_budget_tokens")
 _JUDGE_IDENTITY = ("deployment", "model_name", "model_version", "api_style")
 
 
@@ -307,7 +314,7 @@ def judge_basis(evaluation: Evaluation) -> str:
     parts = [evaluation.rubric_version_id, evaluation.judge_profile_id]
     parts += [str(snapshot.get(name, "")) for name in _JUDGE_IDENTITY]
     parts.append(f"structured={evaluation.structured_output}")
-    parts += [f"{name}={settings.get(name)!r}" for name in _SCORING_SETTINGS]
+    parts += [f"{name}={settings.get(name)!r}" for name in SCORING_SETTINGS]
     return "|".join(parts)
 
 
@@ -351,16 +358,19 @@ def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[
 
 def _interval(values: dict[str, float], floor: float | None = None, ceiling: float | None = None) -> Interval | None:
     found = stats.mean_interval(list(values.values()), floor=floor, ceiling=ceiling)
-    return Interval(low=found.low, high=found.high, prompts=found.n) if found else None
+    return Interval(mean=found.mean, low=found.low, high=found.high, prompts=found.n) if found else None
 
 
-def _intervals(prompt: _PromptValues) -> dict[str, Any]:
+def _intervals(prompt: _PromptValues, judge_scale: tuple[float, float] | None) -> dict[str, Any]:
     cost = stats.decimal_mean_interval(list(prompt.cost.values()))
+    scale_floor, scale_ceiling = judge_scale if judge_scale else (None, None)
     return {
-        "cost_interval": MoneyInterval(low=cost.low, high=cost.high, prompts=cost.n) if cost else None,
+        "cost_interval": (
+            MoneyInterval(mean=cost.mean, low=cost.low, high=cost.high, prompts=cost.n) if cost else None
+        ),
         "latency_interval": _interval(prompt.latency, floor=0.0),
         "manual_interval": _interval(prompt.manual, floor=1.0, ceiling=5.0),
-        "judge_interval": _interval(prompt.judge),
+        "judge_interval": _interval(prompt.judge, floor=scale_floor, ceiling=scale_ceiling),
         "win_rate_interval": _interval(prompt.wins, floor=0.0, ceiling=1.0),
         "checks_interval": _interval(prompt.checks, floor=0.0, ceiling=1.0),
     }
@@ -393,13 +403,22 @@ class ComparisonService:
     def __init__(self, db: Database, judge: JudgeService) -> None:
         self.runs = RunRepository(db)
         self.evaluations = EvaluationRepository(db)
+        self.rubrics = RubricRepository(db)
         self.judge = judge
+
+    def _judge_scale(self, rubric_version_id: str) -> tuple[float, float] | None:
+        try:
+            definition = self.rubrics.version(rubric_version_id).definition
+        except NotFoundError:
+            return None
+        return float(definition.scale_min), float(definition.scale_max)
 
     def compare(
         self, run_ids: list[str], candidate_keys: list[str] | None, currency: str, baseline: str | None = None
     ) -> Comparison:
         notes: list[str] = []
         has_checks = False
+        basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
         evaluations: list[tuple[Cell, Evaluation, dict[str, str]]] = []
@@ -413,6 +432,7 @@ class ComparisonService:
             run_evaluations = self.evaluations.list_for_run(run_id)
             scores = judge_scores(run_evaluations)
             bases = {e.id: judge_basis(e) for e in run_evaluations}
+            basis_rubrics.update({judge_basis(e): e.rubric_version_id for e in run_evaluations})
             for (prompt_id, candidate_id, trial), attempt in latest_attempts(self.runs.attempts(run_id)).items():
                 candidate = candidates[candidate_id]
                 if candidate_keys and candidate.candidate_key not in candidate_keys:
@@ -504,6 +524,7 @@ class ComparisonService:
         checks_by_key = _common_values({k: v.checks for k, v in values.items()}, matched)
         wins = _common_values({k: v.wins for k, v in values.items()}, matched)
         prompt_values = _prompt_values(values, matched)
+        judge_scale = self._judge_scale(basis_rubrics[next(iter(judge_bases))]) if len(judge_bases) == 1 else None
         if baseline is not None and baseline not in values:
             notes.append("The selected baseline is not among the compared candidates, so no differences are shown.")
             baseline = None
@@ -556,7 +577,7 @@ class ComparisonService:
                     custom_rates=any(c.custom for c in costs[key]),
                     avg_checks_passed=_mean(checks_by_key[key]),
                     checks_cells=len(checks_by_key[key]),
-                    **_intervals(prompt_values[key]),
+                    **_intervals(prompt_values[key], judge_scale),
                     vs_baseline=(
                         _differences(prompt_values[key], prompt_values[baseline])
                         if baseline is not None and key != baseline

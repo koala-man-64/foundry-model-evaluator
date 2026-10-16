@@ -11,6 +11,9 @@ vi.mock('../../api/hooks', () => ({
 }))
 
 const base = {
+  key: 'abc123def456',
+  settings: 'default settings',
+  prompts: 6,
   judge: 'Judge',
   rubric: 'Default v1',
   scale_min: 1,
@@ -31,7 +34,7 @@ describe('CalibrationPanel', () => {
       ],
     }
     render(<CalibrationPanel runIds={['r']} />)
-    const row = screen.getByRole('row', { name: /^Judge Default/ })
+    const row = screen.getByRole('row', { name: /^Judge default settings/ })
     expect(row).toHaveTextContent('0.71 (95% 0.22 to 0.91)')
     expect(row).toHaveTextContent('75%')
     expect(row).toHaveTextContent('judge higher by 0.40')
@@ -47,7 +50,7 @@ describe('CalibrationPanel', () => {
       groups: [{ ...base, pairs: 3, spearman: null, spearman_low: null, spearman_high: null, within_one: 1, mean_bias: 0 }],
     }
     render(<CalibrationPanel runIds={['r']} />)
-    expect(screen.getByRole('row', { name: /^Judge Default/ })).toHaveTextContent('needs 5+ pairs')
+    expect(screen.getByRole('row', { name: /^Judge default settings/ })).toHaveTextContent('needs 5+ pairs')
   })
 
   it('explains what to do when nothing is scored by both', () => {
