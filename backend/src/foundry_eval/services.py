@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import httpx2
 
+from .analysis.calibration import CalibrationService
 from .analysis.comparisons import ComparisonService
 from .analysis.projections import ProjectionService
 from .config import AppConfig
@@ -72,6 +73,7 @@ class Services:
     evaluations: EvaluationRepository
     judge: JudgeService
     comparisons: ComparisonService
+    calibration: CalibrationService
     projections: ProjectionService
     action_keys: ActionKeyRepository
     credential_error: str | None = None
@@ -122,6 +124,7 @@ def build_services(
         evaluations=EvaluationRepository(db),
         judge=judge,
         comparisons=ComparisonService(db, judge),
+        calibration=CalibrationService(db),
         projections=ProjectionService(db, pricing),
         action_keys=ActionKeyRepository(db),
         credential_error=credential_error,

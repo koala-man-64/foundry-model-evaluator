@@ -19,6 +19,9 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
 - Failed attempts whose provider reported usage were billed; they are counted per candidate because
   their cost is in the run totals but, as failures, not in the averages.
 - Failures are counted over all cells, for finished attempts only.
+- Each average also gets a 95% interval across prompts (trials of a prompt are averaged first), from
+  ``stats.MIN_PROMPTS`` prompts on. With a baseline candidate, each other candidate gets the paired
+  difference to it over the prompts both have, with a verdict (higher / lower / cannot tell).
 """
 
 from __future__ import annotations
@@ -34,8 +37,10 @@ from ..judging.service import JudgeService, judge_scores, latest_attempts, lates
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
+from ..repos.rubrics import RubricRepository
 from ..repos.runs import Attempt, RunRepository
 from ..types import AttemptStatus
+from . import stats
 
 Cell = tuple[str, int]
 
@@ -43,6 +48,52 @@ _FAILED = frozenset(
     {AttemptStatus.FAILED, AttemptStatus.CANCELLED, AttemptStatus.INTERRUPTED, AttemptStatus.SKIPPED_BUDGET}
 )
 _PENDING = frozenset({AttemptStatus.QUEUED, AttemptStatus.RUNNING})
+
+
+class Interval(BaseModel):
+    """95% interval for the mean across prompts (trials of a prompt are averaged first).
+
+    ``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average
+    shown beside it when prompts have different numbers of matched trials.
+    """
+
+    mean: float
+    low: float
+    high: float
+    prompts: int
+
+
+class MoneyInterval(BaseModel):
+    mean: Money
+    low: Money
+    high: Money
+    prompts: int
+
+
+class Difference(BaseModel):
+    """Candidate minus baseline over the prompts both have. No interval below the minimum prompt count."""
+
+    mean: float
+    low: float | None
+    high: float | None
+    prompts: int
+    verdict: stats.Verdict
+
+
+class MoneyDifference(BaseModel):
+    mean: Money
+    low: Money | None
+    high: Money | None
+    prompts: int
+    verdict: stats.Verdict
+
+
+class BaselineDifferences(BaseModel):
+    cost: MoneyDifference | None
+    latency_ms: Difference | None
+    manual: Difference | None
+    judge: Difference | None
+    win_rate: Difference | None
 
 
 class ComparisonCandidate(BaseModel):
@@ -80,6 +131,13 @@ class ComparisonCandidate(BaseModel):
     win_cells: int
     win_rate: float | None
     custom_rates: bool
+    cost_interval: MoneyInterval | None = None
+    latency_interval: Interval | None = None
+    manual_interval: Interval | None = None
+    judge_interval: Interval | None = None
+    win_rate_interval: Interval | None = None
+    # Paired differences to the baseline candidate (none for the baseline itself or without one).
+    vs_baseline: BaselineDifferences | None = None
 
 
 class ComparisonCell(BaseModel):
@@ -98,6 +156,10 @@ class Comparison(BaseModel):
     # Distinct judge scoring bases (rubric version, judge, judge settings) in the matched cells.
     # More than one means the judge averages and win rates are withheld.
     judge_bases: int
+    # Distinct prompts among the matched cells, and the fewest prompts an interval needs.
+    prompts_matched: int
+    interval_min_prompts: int
+    baseline: str | None
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -228,7 +290,7 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
 
 # Judge settings that change how answers are scored. Output limits, stop sequences, display options,
 # the seed and prompt caching do not, so re-judging with a larger max_output_tokens keeps the basis.
-_SCORING_SETTINGS = ("temperature", "top_p", "top_k", "effort", "thinking_mode", "thinking_budget_tokens")
+SCORING_SETTINGS = ("temperature", "top_p", "top_k", "effort", "thinking_mode", "thinking_budget_tokens")
 _JUDGE_IDENTITY = ("deployment", "model_name", "model_version", "api_style")
 
 
@@ -239,7 +301,7 @@ def judge_basis(evaluation: Evaluation) -> str:
     parts = [evaluation.rubric_version_id, evaluation.judge_profile_id]
     parts += [str(snapshot.get(name, "")) for name in _JUDGE_IDENTITY]
     parts.append(f"structured={evaluation.structured_output}")
-    parts += [f"{name}={settings.get(name)!r}" for name in _SCORING_SETTINGS]
+    parts += [f"{name}={settings.get(name)!r}" for name in SCORING_SETTINGS]
     return "|".join(parts)
 
 
@@ -249,14 +311,95 @@ def _win_outcome(evaluation: Evaluation, mine: list[str]) -> float:
     return 1.0 if evaluation.preferred in mine else 0.0
 
 
+@dataclass
+class _PromptValues:
+    """One candidate's per-prompt means of each metric, over that metric's common cells."""
+
+    cost: dict[str, Decimal]
+    latency: dict[str, float]
+    manual: dict[str, float]
+    judge: dict[str, float]
+    wins: dict[str, float]
+
+
+def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[str, _PromptValues]:
+    cost_cells = _common_cells({k: v.cost for k, v in values.items()}, matched)
+    latency_cells = _common_cells({k: v.latency for k, v in values.items()}, matched)
+    manual_cells = _common_cells({k: v.manual for k, v in values.items()}, matched)
+    judge_cells = _common_cells({k: v.judge for k, v in values.items()}, matched)
+    win_cells = _common_cells({k: v.wins for k, v in values.items()}, matched)
+    result: dict[str, _PromptValues] = {}
+    for key, value in values.items():
+        result[key] = _PromptValues(
+            cost=stats.decimal_prompt_means(stats.by_prompt(value.cost, cost_cells, lambda c: c.mean)),
+            latency=stats.prompt_means(stats.by_prompt(value.latency, latency_cells, float)),
+            manual=stats.prompt_means(stats.by_prompt(value.manual, manual_cells, float)),
+            judge=stats.prompt_means(stats.by_prompt(value.judge, judge_cells, float)),
+            wins=stats.prompt_means(stats.by_prompt(value.wins, win_cells, lambda o: sum(o) / len(o))),
+        )
+    return result
+
+
+def _interval(values: dict[str, float], floor: float | None = None, ceiling: float | None = None) -> Interval | None:
+    found = stats.mean_interval(list(values.values()), floor=floor, ceiling=ceiling)
+    return Interval(mean=found.mean, low=found.low, high=found.high, prompts=found.n) if found else None
+
+
+def _intervals(prompt: _PromptValues, judge_scale: tuple[float, float] | None) -> dict[str, Any]:
+    cost = stats.decimal_mean_interval(list(prompt.cost.values()))
+    scale_floor, scale_ceiling = judge_scale if judge_scale else (None, None)
+    return {
+        "cost_interval": (
+            MoneyInterval(mean=cost.mean, low=cost.low, high=cost.high, prompts=cost.n) if cost else None
+        ),
+        "latency_interval": _interval(prompt.latency, floor=0.0),
+        "manual_interval": _interval(prompt.manual, floor=1.0, ceiling=5.0),
+        "judge_interval": _interval(prompt.judge, floor=scale_floor, ceiling=scale_ceiling),
+        "win_rate_interval": _interval(prompt.wins, floor=0.0, ceiling=1.0),
+    }
+
+
+def _difference(candidate: dict[str, float], baseline: dict[str, float]) -> Difference | None:
+    found = stats.paired_difference(candidate, baseline)
+    if found is None:
+        return None
+    return Difference(mean=found.mean, low=found.low, high=found.high, prompts=found.n, verdict=found.verdict)
+
+
+def _differences(candidate: _PromptValues, baseline: _PromptValues) -> BaselineDifferences:
+    cost = stats.decimal_paired_difference(candidate.cost, baseline.cost)
+    return BaselineDifferences(
+        cost=(
+            MoneyDifference(mean=cost.mean, low=cost.low, high=cost.high, prompts=cost.n, verdict=cost.verdict)
+            if cost
+            else None
+        ),
+        latency_ms=_difference(candidate.latency, baseline.latency),
+        manual=_difference(candidate.manual, baseline.manual),
+        judge=_difference(candidate.judge, baseline.judge),
+        win_rate=_difference(candidate.wins, baseline.wins),
+    )
+
+
 class ComparisonService:
     def __init__(self, db: Database, judge: JudgeService) -> None:
         self.runs = RunRepository(db)
         self.evaluations = EvaluationRepository(db)
+        self.rubrics = RubricRepository(db)
         self.judge = judge
 
-    def compare(self, run_ids: list[str], candidate_keys: list[str] | None, currency: str) -> Comparison:
+    def _judge_scale(self, rubric_version_id: str) -> tuple[float, float] | None:
+        try:
+            definition = self.rubrics.version(rubric_version_id).definition
+        except NotFoundError:
+            return None
+        return float(definition.scale_min), float(definition.scale_max)
+
+    def compare(
+        self, run_ids: list[str], candidate_keys: list[str] | None, currency: str, baseline: str | None = None
+    ) -> Comparison:
         notes: list[str] = []
+        basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
         evaluations: list[tuple[Cell, Evaluation, dict[str, str]]] = []
@@ -270,6 +413,7 @@ class ComparisonService:
             run_evaluations = self.evaluations.list_for_run(run_id)
             scores = judge_scores(run_evaluations)
             bases = {e.id: judge_basis(e) for e in run_evaluations}
+            basis_rubrics.update({judge_basis(e): e.rubric_version_id for e in run_evaluations})
             for (prompt_id, candidate_id, trial), attempt in latest_attempts(self.runs.attempts(run_id)).items():
                 candidate = candidates[candidate_id]
                 if candidate_keys and candidate.candidate_key not in candidate_keys:
@@ -353,6 +497,11 @@ class ComparisonService:
         manual_scores = _common_values({k: v.manual for k, v in values.items()}, matched)
         judge_scores_by_key = _common_values({k: v.judge for k, v in values.items()}, matched)
         wins = _common_values({k: v.wins for k, v in values.items()}, matched)
+        prompt_values = _prompt_values(values, matched)
+        judge_scale = self._judge_scale(basis_rubrics[next(iter(judge_bases))]) if len(judge_bases) == 1 else None
+        if baseline is not None and baseline not in values:
+            notes.append("The selected baseline is not among the compared candidates, so no differences are shown.")
+            baseline = None
         other_currency = sum(v.cost_other_currency for v in values.values())
         if other_currency:
             notes.append(
@@ -400,6 +549,12 @@ class ComparisonService:
                     win_cells=len(win_means),
                     win_rate=judge_wins / len(win_means) if win_means else None,
                     custom_rates=any(c.custom for c in costs[key]),
+                    **_intervals(prompt_values[key], judge_scale),
+                    vs_baseline=(
+                        _differences(prompt_values[key], prompt_values[baseline])
+                        if baseline is not None and key != baseline
+                        else None
+                    ),
                 )
             )
         cell_rows = [
@@ -418,6 +573,9 @@ class ComparisonService:
             cells_total=len(cells),
             cells_matched=len(matched),
             judge_bases=len(judge_bases),
+            prompts_matched=len({cell[0] for cell in matched}),
+            interval_min_prompts=stats.MIN_PROMPTS,
+            baseline=baseline,
             candidates=results,
             cells=cell_rows,
             notes=notes,
