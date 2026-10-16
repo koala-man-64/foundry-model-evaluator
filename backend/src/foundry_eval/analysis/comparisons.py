@@ -18,7 +18,11 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
   are withheld (with a note) instead of averaging different scales or judges together.
 - Checks: the share of answers that pass every deterministic check of their prompt, averaged per cell
   like the scores, over the matched cells whose prompts have checks. It is a separate score source,
-  never blended with manual or judge scores.
+  never blended with manual or judge scores. An answer a check could not be evaluated on counts as
+  unknown, not as a fail.
+- A cell repeated across runs must have been graded the same way: a cell whose runs used different
+  checks is left out of the checks metric, and one whose runs gave the judge different reference
+  answers is left out of the judge metrics, each with a note.
 - Failed attempts whose provider reported usage were billed; they are counted per candidate because
   their cost is in the run totals but, as failures, not in the averages.
 - Failures are counted over all cells, for finished attempts only.
@@ -29,6 +33,7 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -36,7 +41,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..grading.checks import run_checks
+from ..grading.checks import checks_json, run_checks
 from ..judging.service import JudgeService, judge_scores, latest_attempts, latest_evaluations
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
@@ -183,7 +188,9 @@ class _Observation:
     manual: int | None
     judge: float | None
     judge_basis: str | None = None
-    checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None without checks
+    checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None if unknown
+    checks_fp: str | None = None  # which checks graded it (None: its prompt has no checks)
+    reference_fp: str = ""  # which reference answer the judge saw for its prompt ("" for none)
 
 
 @dataclass
@@ -318,6 +325,14 @@ def judge_basis(evaluation: Evaluation) -> str:
     return "|".join(parts)
 
 
+def _fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16] if text else ""
+
+
+def _checks_value(passed: bool | None) -> float | None:
+    return None if passed is None else float(passed)
+
+
 def _win_outcome(evaluation: Evaluation, mine: list[str]) -> float:
     if evaluation.preferred == "tie":
         return len(mine) / len(evaluation.candidates)
@@ -421,7 +436,7 @@ class ComparisonService:
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
-        evaluations: list[tuple[Cell, Evaluation, dict[str, str]]] = []
+        evaluations: list[tuple[Cell, Evaluation, dict[str, str], str]] = []
         order: list[str] = []
         for run_id in dict.fromkeys(run_ids):
             run = self.runs.get(run_id)
@@ -461,10 +476,12 @@ class ComparisonService:
                     judge=judged.weighted_overall if judged else None,
                     judge_basis=bases.get(judged.evaluation_id) if judged else None,
                     checks=(
-                        float(run_checks(prompt.checks, attempt.output_text or "").passed)
+                        _checks_value(run_checks(prompt.checks, attempt.output_text or "").passed)
                         if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
                         else None
                     ),
+                    checks_fp=_fingerprint(checks_json(prompt.checks)) if prompt.checks else None,
+                    reference_fp=_fingerprint(prompt.reference_text),
                 )
                 has_checks = has_checks or bool(prompt.checks)
                 item.slots.append(observation)
@@ -473,7 +490,8 @@ class ComparisonService:
             for evaluation in latest_evaluations(run_evaluations).values():
                 prompt = prompts[evaluation.prompt_id]
                 labels = {c.label: key_by_candidate[c.candidate_id] for c in evaluation.candidates}
-                evaluations.append(((prompt.content_hash, evaluation.trial_index), evaluation, labels))
+                cell_key = (prompt.content_hash, evaluation.trial_index)
+                evaluations.append((cell_key, evaluation, labels, _fingerprint(prompt.reference_text)))
 
         if not data:
             raise NotFoundError("No attempts found for the selected runs and candidates.")
@@ -488,8 +506,41 @@ class ComparisonService:
                 observations = [o for o in data[key].by_cell[cell] if o.attempt.status is AttemptStatus.SUCCEEDED]
                 _cell_values(observations, currency, values[key], cell)
         matched_set = set(matched)
-        for cell, evaluation, labels in evaluations:
-            if cell not in matched_set or len(evaluation.candidates) < 2 or evaluation.preferred is None:
+        # A cell repeated across runs must have been graded the same way (see the module docstring).
+        check_fps: dict[Cell, set[str | None]] = {}
+        reference_fps: dict[Cell, set[str]] = {}
+        for key in order:
+            for cell in matched:
+                for o in data[key].by_cell[cell]:
+                    if o.attempt.status is AttemptStatus.SUCCEEDED and o.checks_fp is not None:
+                        check_fps.setdefault(cell, set()).add(o.checks_fp)
+                    if o.judge is not None:
+                        reference_fps.setdefault(cell, set()).add(o.reference_fp)
+        for cell, _evaluation, _labels, reference_fp in evaluations:
+            if cell in matched_set:
+                reference_fps.setdefault(cell, set()).add(reference_fp)
+        mixed_checks = {cell for cell, fps in check_fps.items() if len(fps) > 1}
+        mixed_references = {cell for cell, fps in reference_fps.items() if len(fps) > 1}
+        for value in values.values():
+            for cell in mixed_checks:
+                value.checks.pop(cell, None)
+            for cell in mixed_references:
+                value.judge.pop(cell, None)
+                value.judge_bases.pop(cell, None)
+        if mixed_checks:
+            notes.append(
+                f"{len(mixed_checks)} cell{'s' if len(mixed_checks) != 1 else ''} used different checks in different "
+                "runs and are left out of the checks pass rate."
+            )
+        if mixed_references:
+            notes.append(
+                f"{len(mixed_references)} cell{'s' if len(mixed_references) != 1 else ''} were judged with different "
+                "reference answers in different runs and are left out of the judge scores and win rates."
+            )
+        for cell, evaluation, labels, _reference_fp in evaluations:
+            if cell not in matched_set or cell in mixed_references:
+                continue
+            if len(evaluation.candidates) < 2 or evaluation.preferred is None:
                 continue
             for key in dict.fromkeys(labels.values()):
                 if key in values:

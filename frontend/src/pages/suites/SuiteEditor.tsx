@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 
 import { post, put } from '../../api/client'
 import { useProfiles, useRubrics } from '../../api/hooks'
@@ -22,6 +22,21 @@ interface PromptDraft {
 
 function blankPrompt(): PromptDraft {
   return { key: nextKey(), id: null, title: '', system: '', user: '', reference: '', checks: [] }
+}
+
+function isBlank(prompt: PromptDraft): boolean {
+  return !prompt.id && !prompt.title && !prompt.system && !prompt.user.trim() && !prompt.reference && !prompt.checks.length
+}
+
+/** A details panel that starts open when it has content and then stays as the user leaves it. */
+function Disclosure({ initiallyOpen, summary, children }: { initiallyOpen: boolean; summary: ReactNode; children: ReactNode }) {
+  const [open, setOpen] = useState(initiallyOpen)
+  return (
+    <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="small">{summary}</summary>
+      {children}
+    </details>
+  )
 }
 
 interface CandidateDraft {
@@ -109,10 +124,12 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
-    const onlyBlank = prompts.length === 1 && !prompts[0].user.trim() && !prompts[0].id
-    const result = importPrompts(file.name, await file.text(), onlyBlank ? 0 : prompts.length)
+    // Trailing prompts with nothing typed in them are replaced, not kept in front of the imported ones.
+    const kept = [...prompts]
+    while (kept.length && isBlank(kept[kept.length - 1])) kept.pop()
+    const result = importPrompts(file.name, await file.text(), kept.length)
     const added = result.prompts.map((p) => ({ ...blankPrompt(), ...p, checks: p.checks.map(checkToDraft) }))
-    if (added.length) setPrompts((list) => (onlyBlank ? added : [...list, ...added]))
+    if (added.length) setPrompts([...kept, ...added])
     setImportNote([`Imported ${added.length} prompt${added.length === 1 ? '' : 's'} from ${file.name}.`, ...result.errors])
   }
   const [candidates, setCandidates] = useState<CandidateDraft[]>(
@@ -268,11 +285,12 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
             <Field label={`Prompt ${index + 1} user prompt`}>
               <textarea rows={3} value={prompt.user} onChange={(e) => updatePrompt(prompt.key, { user: e.target.value })} />
             </Field>
-            <details open={Boolean(prompt.reference || prompt.checks.length)}>
-              <summary className="small">
-                Reference answer and checks
-                {prompt.checks.length > 0 ? ` (${prompt.checks.length} check${prompt.checks.length === 1 ? '' : 's'})` : ''}
-              </summary>
+            <Disclosure
+              initiallyOpen={Boolean(prompt.reference || prompt.checks.length)}
+              summary={`Reference answer and checks${
+                prompt.checks.length > 0 ? ` (${prompt.checks.length} check${prompt.checks.length === 1 ? '' : 's'})` : ''
+              }`}
+            >
               <div className="stack-sm">
                 <Field
                   label={`Prompt ${index + 1} reference answer (optional)`}
@@ -294,7 +312,7 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
                   onChange={(checks) => updatePrompt(prompt.key, { checks })}
                 />
               </div>
-            </details>
+            </Disclosure>
           </div>
         ))}
       </section>

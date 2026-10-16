@@ -4,28 +4,39 @@ A prompt can carry up to ``MAX_CHECKS`` checks. An answer *passes* when every ch
 nothing and run locally on the stored answer text, every time results are shown, so they always agree
 with the checks frozen into the run.
 
-Nothing is silently ignored: a check that cannot be evaluated as written is rejected when it is saved
-(an invalid regular expression, a JSON-schema keyword this checker does not implement), never skipped
-when it runs.
+Nothing is silently ignored or guessed:
+
+- A check that cannot run as written is refused when it is saved (a JSON-schema keyword this checker does
+  not implement, a keyword value of the wrong type, a number given as a float).
+- A check that still cannot be evaluated on a particular answer reports ``passed = None``, "could not be
+  evaluated". That is unknown, not a fail and not a pass, and it never raises.
+
+There is deliberately no regular-expression check: Python's ``re`` has no time limit and holds the
+interpreter lock, so a single slow pattern on one answer would freeze the app on every read of a run
+whose checks are frozen. Adding one needs a regex engine with a time budget (a new dependency).
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
-from decimal import Decimal, InvalidOperation
+import unicodedata
+from decimal import Decimal, DecimalException
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 MAX_CHECKS = 10
-MAX_PATTERN = 500
 MAX_SCHEMA_DEPTH = 20
+# Numbers whose exponent is further from zero than this are not read: they cannot be a plausible answer
+# and exact arithmetic on them is expensive or overflows.
+MAX_EXPONENT = 1000
 
-# A quantified group that itself contains a quantifier, such as (a+)+ or (\w*)*: the classic shape of
-# catastrophic backtracking. Patterns run in-process on model output, so they are refused up front.
-_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[*+}](?:[^()\\]|\\.)*\)\s*(?:[*+]|\{\d*,?\d*\})")
-_NUMBER = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
+# A sign belongs to a number only when it does not follow a word character or a dot, so "10-20" reads
+# as 10 and 20, not 10 and -20. Decimals may start with a dot (".5"). U+2212 is normalised to "-".
+_NUMBER = re.compile(r"(?<![\w.])[-+]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?")
+_UNICODE_MINUS = chr(0x2212)
 _FENCE = re.compile(r"^```[a-zA-Z0-9_-]*\s*\n(?P<body>.*)\n```\s*$", re.DOTALL)
 
 
@@ -53,23 +64,6 @@ class ExactCheck(_Check):
     case_sensitive: bool = False
 
 
-class RegexCheck(_Check):
-    kind: Literal["regex"]
-    pattern: str = Field(min_length=1, max_length=MAX_PATTERN)
-    case_sensitive: bool = False
-
-    @field_validator("pattern")
-    @classmethod
-    def _compiles_safely(cls, value: str) -> str:
-        if _NESTED_QUANTIFIER.search(value):
-            raise ValueError("nested quantifiers such as (a+)+ can take very long to run; simplify the pattern")
-        try:
-            re.compile(value)
-        except re.error as exc:
-            raise ValueError(f"invalid regular expression: {exc}") from exc
-        return value
-
-
 class NumberCheck(_Check):
     """A number in the answer (the last one, or any) is within ``tolerance`` of ``value``."""
 
@@ -81,8 +75,15 @@ class NumberCheck(_Check):
     @field_validator("value", "tolerance", mode="before")
     @classmethod
     def _no_floats(cls, value: Any) -> Any:
-        if isinstance(value, float):
+        if isinstance(value, float | bool):
             raise ValueError("give numbers as strings or integers, not floats, so they are exact")
+        return value
+
+    @field_validator("value", "tolerance")
+    @classmethod
+    def _plausible(cls, value: Decimal) -> Decimal:
+        if not value.is_finite() or abs(value.adjusted()) > MAX_EXPONENT:
+            raise ValueError("the number must be finite and of a plausible size")
         return value
 
 
@@ -102,53 +103,71 @@ class JsonSchemaCheck(_Check):
 
 
 Check = Annotated[
-    ContainsCheck | NotContainsCheck | ExactCheck | RegexCheck | NumberCheck | JsonSchemaCheck,
+    ContainsCheck | NotContainsCheck | ExactCheck | NumberCheck | JsonSchemaCheck,
     Field(discriminator="kind"),
 ]
 
 
 class CheckResult(BaseModel):
     kind: str
-    passed: bool
+    # None: the check could not be evaluated on this answer (unknown, neither pass nor fail).
+    passed: bool | None
     detail: str
 
 
 class CheckOutcome(BaseModel):
-    passed: bool
+    # False when any check failed; None when none failed but some could not be evaluated; else True.
+    passed: bool | None
     results: list[CheckResult]
 
 
 # --- JSON schema subset ------------------------------------------------------------------------------
 _TYPES = {"object", "array", "string", "number", "integer", "boolean", "null"}
-_KEYWORDS = {
-    "type", "properties", "required", "additionalProperties", "items", "enum", "const",
-    "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum",
-}  # fmt: skip
+_COUNTS = {"minItems", "maxItems", "minLength", "maxLength"}
+_BOUNDS = {"minimum", "maximum"}
+_KEYWORDS = {"type", "properties", "required", "additionalProperties", "items", "enum", "const"} | _COUNTS | _BOUNDS
 _ANNOTATIONS = {"$schema", "title", "description", "examples", "default", "$comment"}
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float | Decimal) and not isinstance(value, bool)
+
+
 def _check_schema(schema: Any, path: str, depth: int) -> None:
+    """Refuse at save time anything the validator below could not apply exactly as written."""
     if depth > MAX_SCHEMA_DEPTH:
         raise ValueError(f"{path}: the schema is nested too deeply")
     if not isinstance(schema, dict):
         raise ValueError(f"{path}: a schema must be an object")
     unknown = set(schema) - _KEYWORDS - _ANNOTATIONS
     if unknown:
-        raise ValueError(
-            f"{path}: unsupported keyword(s) {', '.join(sorted(unknown))}; supported: {', '.join(sorted(_KEYWORDS))}"
-        )
-    kinds = schema.get("type")
-    for kind in kinds if isinstance(kinds, list) else [kinds] if kinds is not None else []:
-        if kind not in _TYPES:
-            raise ValueError(f"{path}: unknown type {kind!r}")
+        supported = ", ".join(sorted(_KEYWORDS))
+        raise ValueError(f"{path}: unsupported keyword(s) {', '.join(sorted(unknown))}; supported: {supported}")
+    if "type" in schema:
+        kinds = schema["type"]
+        options = kinds if isinstance(kinds, list) else [kinds]
+        if not options or not all(isinstance(k, str) and k in _TYPES for k in options):
+            raise ValueError(f"{path}: type must be one of {', '.join(sorted(_TYPES))}, or a list of them")
+    for name in sorted(_COUNTS & set(schema)):
+        if not isinstance(schema[name], int) or isinstance(schema[name], bool) or schema[name] < 0:
+            raise ValueError(f"{path}: {name} must be a whole number of at least 0")
+    for name in sorted(_BOUNDS & set(schema)):
+        value = schema[name]
+        if not _is_number(value) or (isinstance(value, float) and not math.isfinite(value)):
+            raise ValueError(f"{path}: {name} must be a finite number")
+    if "enum" in schema and (not isinstance(schema["enum"], list) or not schema["enum"]):
+        raise ValueError(f"{path}: enum must be a non-empty list")
     if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
         raise ValueError(f"{path}: additionalProperties must be true or false here")
     if "required" in schema and not (
         isinstance(schema["required"], list) and all(isinstance(r, str) for r in schema["required"])
     ):
         raise ValueError(f"{path}: required must be a list of property names")
-    for name, sub in (schema.get("properties") or {}).items():
-        _check_schema(sub, f"{path}.properties.{name}", depth + 1)
+    if "properties" in schema:
+        if not isinstance(schema["properties"], dict):
+            raise ValueError(f"{path}: properties must be an object")
+        for name, sub in schema["properties"].items():
+            _check_schema(sub, f"{path}.properties.{name}", depth + 1)
     if "items" in schema:
         _check_schema(schema["items"], f"{path}.items", depth + 1)
 
@@ -164,11 +183,33 @@ def _type_ok(value: Any, kind: str) -> bool:
         return isinstance(value, bool)
     if kind == "null":
         return value is None
-    if isinstance(value, bool):
-        return False
     if kind == "integer":
-        return isinstance(value, int) or (isinstance(value, Decimal) and value == value.to_integral_value())
-    return isinstance(value, (int, Decimal))  # number
+        return _is_number(value) and Decimal(value) == Decimal(value).to_integral_value()
+    return _is_number(value)  # number
+
+
+def _plain(value: Any) -> Any:
+    """Schema literals compared like the parsed answer: floats as Decimal, at every level."""
+    if isinstance(value, float):
+        return Decimal(str(value))
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    return value
+
+
+def json_equal(a: Any, b: Any) -> bool:
+    """JSON equality: true is not 1 and false is not 0 (Python's == says they are)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a is b
+    if _is_number(a) and _is_number(b):
+        return bool(Decimal(a) == Decimal(b))
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(json_equal(x, y) for x, y in zip(a, b, strict=True))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(json_equal(a[k], b[k]) for k in a)
+    return type(a) is type(b) and bool(a == b)
 
 
 def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | None:
@@ -178,19 +219,19 @@ def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | N
         options = kinds if isinstance(kinds, list) else [kinds]
         if not any(_type_ok(value, k) for k in options):
             return f"{path} should be {' or '.join(options)}"
-    if "const" in schema and value != _plain(schema["const"]):
+    if "const" in schema and not json_equal(value, _plain(schema["const"])):
         return f"{path} should equal {schema['const']!r}"
-    if "enum" in schema and value not in [_plain(v) for v in schema["enum"]]:
+    if "enum" in schema and not any(json_equal(value, _plain(v)) for v in schema["enum"]):
         return f"{path} should be one of {schema['enum']!r}"
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
             return f"{path} is shorter than {schema['minLength']}"
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             return f"{path} is longer than {schema['maxLength']}"
-    if isinstance(value, (int, Decimal)) and not isinstance(value, bool):
-        if "minimum" in schema and value < _plain(schema["minimum"]):
+    if _is_number(value):
+        if "minimum" in schema and Decimal(value) < _plain(schema["minimum"]):
             return f"{path} is below {schema['minimum']}"
-        if "maximum" in schema and value > _plain(schema["maximum"]):
+        if "maximum" in schema and Decimal(value) > _plain(schema["maximum"]):
             return f"{path} is above {schema['maximum']}"
     if isinstance(value, list):
         if "minItems" in schema and len(value) < schema["minItems"]:
@@ -216,26 +257,32 @@ def schema_error(value: Any, schema: dict[str, Any], path: str = "$") -> str | N
     return None
 
 
-def _plain(value: Any) -> Any:
-    """Schema numbers compared as Decimal, like the parsed answer."""
-    if isinstance(value, float):
-        return Decimal(str(value))
-    return value
-
-
 # --- evaluation --------------------------------------------------------------------------------------
 def _fold(text: str, case_sensitive: bool) -> str:
-    return text if case_sensitive else text.casefold()
+    """Unicode-normalised (so composed and decomposed accents compare equal), case-folded unless asked."""
+    normal = unicodedata.normalize("NFC", text)
+    return normal if case_sensitive else normal.casefold()
 
 
-def _numbers(text: str) -> list[Decimal]:
+def numbers_in(text: str) -> list[Decimal]:
+    """The numbers in a text, in order. Implausibly large or small ones are skipped, not misread."""
     found: list[Decimal] = []
-    for match in _NUMBER.finditer(text):
+    for match in _NUMBER.finditer(text.replace(_UNICODE_MINUS, "-")):
         try:
-            found.append(Decimal(match.group().replace(",", "")))
-        except InvalidOperation:  # pragma: no cover - the pattern only matches valid numbers
+            number = Decimal(match.group().replace(",", ""))
+        except DecimalException:  # pragma: no cover - the pattern only matches valid numbers
             continue
+        if abs(number.adjusted()) <= MAX_EXPONENT:
+            found.append(number)
     return found
+
+
+class _NotJson(ValueError):
+    """NaN, Infinity and -Infinity: accepted by Python's parser, but not JSON."""
+
+
+def _no_constants(name: str) -> Any:
+    raise _NotJson(f"{name} is not valid JSON")
 
 
 def _json_answer(text: str) -> Any:
@@ -243,10 +290,10 @@ def _json_answer(text: str) -> Any:
     fenced = _FENCE.match(body)
     if fenced:
         body = fenced.group("body")
-    return json.loads(body, parse_float=Decimal)
+    return json.loads(body, parse_float=Decimal, parse_constant=_no_constants)
 
 
-def run_check(check: Check, text: str) -> CheckResult:
+def _evaluate(check: Check, text: str) -> CheckResult:
     if isinstance(check, ContainsCheck | NotContainsCheck):
         present = _fold(check.value, check.case_sensitive) in _fold(text, check.case_sensitive)
         passed = present if isinstance(check, ContainsCheck) else not present
@@ -256,12 +303,8 @@ def run_check(check: Check, text: str) -> CheckResult:
         normalized = " ".join(text.split())
         passed = _fold(normalized, check.case_sensitive) == _fold(" ".join(check.value.split()), check.case_sensitive)
         return CheckResult(kind=check.kind, passed=passed, detail="matches exactly" if passed else "differs")
-    if isinstance(check, RegexCheck):
-        flags = 0 if check.case_sensitive else re.IGNORECASE
-        passed = re.search(check.pattern, text, flags) is not None
-        return CheckResult(kind=check.kind, passed=passed, detail="pattern found" if passed else "pattern not found")
     if isinstance(check, NumberCheck):
-        numbers = _numbers(text)
+        numbers = numbers_in(text)
         if not numbers:
             return CheckResult(kind=check.kind, passed=False, detail="no number in the answer")
         pool = numbers[-1:] if check.which == "last" else numbers
@@ -271,10 +314,20 @@ def run_check(check: Check, text: str) -> CheckResult:
         return CheckResult(kind=check.kind, passed=hit is not None, detail=detail)
     try:
         value = _json_answer(text)
-    except (json.JSONDecodeError, RecursionError) as exc:
+    except (json.JSONDecodeError, _NotJson) as exc:
         return CheckResult(kind=check.kind, passed=False, detail=f"not valid JSON: {str(exc)[:200]}")
+    # Valid JSON the parser still refuses (an integer of thousands of digits) is "could not be evaluated".
     error = schema_error(value, check.json_schema)
     return CheckResult(kind=check.kind, passed=error is None, detail=error or "matches the schema")
+
+
+def run_check(check: Check, text: str) -> CheckResult:
+    """Evaluate one check. Never raises: an answer it cannot be evaluated on gives ``passed = None``."""
+    try:
+        return _evaluate(check, text)
+    except (RecursionError, ArithmeticError, ValueError, TypeError) as exc:
+        detail = f"could not be evaluated on this answer ({type(exc).__name__})"
+        return CheckResult(kind=check.kind, passed=None, detail=detail)
 
 
 CHECKS = TypeAdapter(list[Check])
@@ -290,4 +343,10 @@ def load_checks(raw: str | None) -> list[Check]:
 
 def run_checks(checks: list[Check], text: str) -> CheckOutcome:
     results = [run_check(check, text) for check in checks]
-    return CheckOutcome(passed=all(r.passed for r in results), results=results)
+    if any(r.passed is False for r in results):
+        passed: bool | None = False
+    elif any(r.passed is None for r in results):
+        passed = None
+    else:
+        passed = True
+    return CheckOutcome(passed=passed, results=results)

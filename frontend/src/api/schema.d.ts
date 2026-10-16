@@ -1054,7 +1054,7 @@ export interface components {
         /** CheckOutcome */
         CheckOutcome: {
             /** Passed */
-            passed: boolean;
+            passed: boolean | null;
             /** Results */
             results: components["schemas"]["CheckResult"][];
         };
@@ -1065,7 +1065,7 @@ export interface components {
             /** Kind */
             kind: string;
             /** Passed */
-            passed: boolean;
+            passed: boolean | null;
         };
         /** Comparison */
         Comparison: {
@@ -2190,7 +2190,7 @@ export interface components {
         /** PromptSpec */
         PromptSpec: {
             /** Checks */
-            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["RegexCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
             /**
              * Reference
              * @default
@@ -2403,21 +2403,6 @@ export interface components {
             /** Warnings */
             warnings: string[];
         };
-        /** RegexCheck */
-        RegexCheck: {
-            /**
-             * Case Sensitive
-             * @default false
-             */
-            case_sensitive: boolean;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "regex";
-            /** Pattern */
-            pattern: string;
-        };
         /** RetryOut */
         RetryOut: {
             /** Attempt Ids */
@@ -2597,7 +2582,7 @@ export interface components {
         /** RunPrompt */
         RunPrompt: {
             /** Checks */
-            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["RegexCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Content Hash */
             content_hash: string;
             /** Id */
@@ -2823,7 +2808,7 @@ export interface components {
         /** SuitePrompt */
         SuitePrompt: {
             /** Checks */
-            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["RegexCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Id */
             id: string;
             /** Position */
@@ -2843,7 +2828,7 @@ export interface components {
         /** SuitePromptIn */
         SuitePromptIn: {
             /** Checks */
-            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["RegexCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Id */
             id?: string | null;
             /**

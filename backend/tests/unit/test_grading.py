@@ -26,13 +26,17 @@ def check(**data):
         ({"kind": "exact", "value": "Paris"}, "  paris \n", True),
         ({"kind": "exact", "value": "New  York"}, "new york", True),
         ({"kind": "exact", "value": "Paris"}, "Paris, France", False),
-        ({"kind": "regex", "pattern": r"^\d{4}-\d{2}-\d{2}$"}, "2026-10-16", True),
-        ({"kind": "regex", "pattern": r"\bERROR\b", "case_sensitive": True}, "error", False),
+        ({"kind": "contains", "value": "café"}, "Le café est ouvert", True),  # composed vs decomposed
         ({"kind": "number", "value": "42"}, "Steps: 6 x 7 = 42", True),
         ({"kind": "number", "value": "42"}, "It is 42, not 41.", False),  # the last number counts
         ({"kind": "number", "value": "42", "which": "any"}, "It is 42, not 41.", True),
         ({"kind": "number", "value": "1234.5", "tolerance": "0.1"}, "Total: 1,234.56", True),
         ({"kind": "number", "value": "3"}, "three", False),
+        ({"kind": "number", "value": "20"}, "The range is 10-20", True),  # not -20
+        ({"kind": "number", "value": "5"}, "The answer is .5", False),  # .5 is not 5
+        ({"kind": "number", "value": "0.5"}, "The answer is .5", True),
+        ({"kind": "number", "value": "-3"}, "It is " + chr(0x2212) + "3", True),  # Unicode minus
+        ({"kind": "number", "value": "7"}, "7 then 1e1000000", True),  # implausible numbers are skipped
     ],
 )
 def test_check_kinds(definition, answer, passed):
@@ -70,6 +74,7 @@ SCHEMA = {
         ('{"name": "Ada", "age": 1, "tags": ["a", "b", "c"]}', "more than 2 items"),
         ('{"name": "Ada", "age": 1, "kind": "c"}', "should be one of"),
         ("Sure! Here is the JSON: {}", "not valid JSON"),
+        ('{"name": "Ada", "age": NaN}', "not valid JSON"),
     ],
 )
 def test_json_schema_check(answer, error):
@@ -87,9 +92,16 @@ def test_json_schema_check_round_trips_with_its_alias():
 @pytest.mark.parametrize(
     "definition",
     [
-        {"kind": "regex", "pattern": "("},
-        {"kind": "regex", "pattern": r"(a+)+$"},
-        {"kind": "regex", "pattern": r"(\w*)*"},
+        {"kind": "regex", "pattern": "x"},  # no regex check: Python's re has no time limit
+        {"kind": "number", "value": "1e999999"},
+        {"kind": "json_schema", "schema": {"minItems": "a"}},
+        {"kind": "json_schema", "schema": {"minimum": "5"}},
+        {"kind": "json_schema", "schema": {"maximum": True}},
+        {"kind": "json_schema", "schema": {"enum": 5}},
+        {"kind": "json_schema", "schema": {"enum": []}},
+        {"kind": "json_schema", "schema": {"properties": []}},
+        {"kind": "json_schema", "schema": {"type": [["a"]]}},
+        {"kind": "json_schema", "schema": {"type": {"a": 1}}},
         {"kind": "number", "value": 0.1},
         {"kind": "number", "value": "1", "tolerance": "-1"},
         {"kind": "json_schema", "schema": {"type": "object", "patternProperties": {}}},
@@ -110,6 +122,23 @@ def test_an_answer_passes_only_when_every_check_passes():
     outcome = run_checks(checks, "Paris, not London")
     assert not outcome.passed and [r.passed for r in outcome.results] == [True, False]
     assert run_checks(checks, "Paris").passed
+
+
+def test_const_and_enum_keep_json_types_apart():
+    assert schema_error(True, {"const": 1}) is not None
+    assert schema_error(False, {"enum": [0, 1]}) is not None
+    assert schema_error(1, {"enum": [True]}) is not None
+    assert schema_error([1, {"a": Decimal("0.5")}], {"const": [1, {"a": 0.5}]}) is None
+
+
+def test_a_check_that_cannot_be_evaluated_is_unknown_not_a_failure_or_an_error():
+    huge = '{"n": ' + "9" * 5000 + "}"  # valid JSON, but past Python's integer-digits limit
+    result = run_check(check(kind="json_schema", schema={"type": "object"}), huge)
+    assert result.passed is None and "could not be evaluated" in result.detail
+    outcome = run_checks([check(kind="contains", value="9"), check(kind="json_schema", schema={})], huge)
+    assert outcome.passed is None
+    failing = run_checks([check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge)
+    assert failing.passed is False  # a known failure wins over an unknown
 
 
 def test_schema_numbers_compare_exactly():

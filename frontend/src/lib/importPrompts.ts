@@ -21,6 +21,26 @@ export interface ImportResult {
 }
 
 const MAX_PROMPTS = 500
+const KNOWN_FIELDS = new Set(['title', 'system', 'user', 'prompt', 'reference', 'expected', 'checks'])
+const CHECK_KINDS = new Set(['contains', 'not_contains', 'exact', 'number', 'json_schema'])
+
+/** Why a check from a file cannot be used as written, or null. Nothing is coerced into another check. */
+export function checkProblem(check: unknown): string | null {
+  if (!check || typeof check !== 'object' || Array.isArray(check)) return 'a check must be an object'
+  const c = check as Record<string, unknown>
+  if (typeof c.kind !== 'string' || !CHECK_KINDS.has(c.kind))
+    return `unknown check kind ${JSON.stringify(c.kind)} (use ${[...CHECK_KINDS].join(', ')})`
+  if ('case_sensitive' in c && typeof c.case_sensitive !== 'boolean') return 'case_sensitive must be true or false'
+  if (c.kind === 'json_schema') {
+    if (!c.schema || typeof c.schema !== 'object' || Array.isArray(c.schema)) return 'a json_schema check needs a schema object'
+  } else if (c.kind === 'number') {
+    if (typeof c.value !== 'string' && !(typeof c.value === 'number' && Number.isSafeInteger(c.value)))
+      return 'give a number check value as a string (or a whole number), so it stays exact'
+  } else if (typeof c.value !== 'string' || !c.value) {
+    return `a ${c.kind} check needs a text value`
+  }
+  return null
+}
 
 /** RFC 4180 CSV: quoted fields may contain commas, quotes ("") and line breaks. */
 export function parseCsv(text: string): string[][] {
@@ -66,6 +86,7 @@ function fromCsv(text: string): ImportResult {
   if (rows.length === 0) return { prompts: [], errors: ['The file is empty.'] }
   const header = rows[0].map((h) => h.trim().toLowerCase())
   const column = (name: string) => header.indexOf(name)
+  const unknown = header.filter((h) => h && !['title', 'system', 'user', 'reference'].includes(h))
   const user = column('user')
   if (user < 0) return { prompts: [], errors: ['The first row must name the columns, including "user".'] }
   const prompts: ImportedPrompt[] = []
@@ -76,21 +97,28 @@ function fromCsv(text: string): ImportResult {
       return at >= 0 ? (row[at] ?? '') : ''
     }
     if (!(row[user] ?? '').trim()) {
-      errors.push(`Row ${index + 2}: the user prompt is empty.`)
+      errors.push(`Record ${index + 1} after the header: the user prompt is empty.`)
       return
     }
     prompts.push({ title: cell('title'), system: cell('system'), user: row[user], reference: cell('reference'), checks: [] })
   })
+  if (unknown.length) errors.push(`Ignored columns: ${unknown.join(', ')}.`)
   return { prompts, errors }
 }
 
-function text(value: unknown): string {
-  return typeof value === 'string' ? value : ''
+/** Text fields accept strings, and numbers or booleans (written as text); anything else is reported. */
+function text(value: unknown, field: string, problems: string[]): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  problems.push(`"${field}" must be text`)
+  return ''
 }
 
 function fromJsonl(content: string): ImportResult {
   const prompts: ImportedPrompt[] = []
   const errors: string[] = []
+  const ignored = new Set<string>()
   content.split(/\r?\n/).forEach((line, index) => {
     if (!line.trim()) return
     let item: unknown
@@ -105,23 +133,28 @@ function fromJsonl(content: string): ImportResult {
       return
     }
     const record = item as Record<string, unknown>
-    const user = text(record.user) || text(record.prompt)
-    if (!user.trim()) {
-      errors.push(`Line ${index + 1}: "user" is missing or empty.`)
-      return
-    }
-    if (record.checks !== undefined && !Array.isArray(record.checks)) {
-      errors.push(`Line ${index + 1}: "checks" must be a list.`)
-      return
-    }
-    prompts.push({
-      title: text(record.title),
-      system: text(record.system),
-      user,
-      reference: text(record.reference) || text(record.expected),
-      checks: (record.checks as unknown[] | undefined) ?? [],
+    const problems: string[] = []
+    const user = text(record.user, 'user', problems) || text(record.prompt, 'prompt', problems)
+    if (!user.trim()) problems.push('"user" is missing or empty')
+    if (record.checks !== undefined && !Array.isArray(record.checks)) problems.push('"checks" must be a list')
+    const checks = Array.isArray(record.checks) ? record.checks : []
+    checks.forEach((check, at) => {
+      const problem = checkProblem(check)
+      if (problem) problems.push(`check ${at + 1}: ${problem}`)
     })
+    const fields = {
+      title: text(record.title, 'title', problems),
+      system: text(record.system, 'system', problems),
+      reference: text(record.reference, 'reference', problems) || text(record.expected, 'expected', problems),
+    }
+    for (const key of Object.keys(record)) if (!KNOWN_FIELDS.has(key)) ignored.add(key)
+    if (problems.length) {
+      errors.push(`Line ${index + 1}: ${problems.join('; ')}.`)
+      return
+    }
+    prompts.push({ ...fields, user, checks })
   })
+  if (ignored.size) errors.push(`Ignored fields: ${[...ignored].sort().join(', ')}.`)
   return { prompts, errors }
 }
 

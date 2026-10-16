@@ -26,7 +26,6 @@ const CHECK_LABELS: Record<string, string> = {
   contains: 'contains',
   not_contains: 'does not contain',
   exact: 'equals',
-  regex: 'pattern',
   number: 'number',
   json_schema: 'JSON schema',
 }
@@ -37,7 +36,10 @@ export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
   return (
     <details className="small" data-testid="check-results">
       <summary>
-        Checks <Badge tone={outcome.passed ? 'ok' : 'warn'}>{outcome.passed ? 'passed' : 'failed'}</Badge>{' '}
+        Checks{' '}
+        <Badge tone={outcome.passed === true ? 'ok' : outcome.passed === false ? 'warn' : 'neutral'}>
+          {outcome.passed === true ? 'passed' : outcome.passed === false ? 'failed' : 'could not check'}
+        </Badge>{' '}
         <span className="muted">
           {passed} of {outcome.results.length}
         </span>
@@ -45,7 +47,8 @@ export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
       <ul>
         {outcome.results.map((result, index) => (
           <li key={index}>
-            {result.passed ? '✓' : '✗'} {CHECK_LABELS[result.kind] ?? result.kind}: {result.detail}
+            {result.passed === true ? '✓' : result.passed === false ? '✗' : '?'} {CHECK_LABELS[result.kind] ?? result.kind}:{' '}
+            {result.detail}
           </li>
         ))}
       </ul>

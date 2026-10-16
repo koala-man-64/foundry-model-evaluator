@@ -1,10 +1,11 @@
+import { useId } from 'react'
+
 import type { CheckIn } from '../api/types'
 
 export const CHECK_KINDS: { value: CheckDraft['kind']; label: string; hint: string }[] = [
   { value: 'contains', label: 'Contains', hint: 'The answer contains this text.' },
   { value: 'not_contains', label: 'Does not contain', hint: 'The answer does not contain this text.' },
   { value: 'exact', label: 'Equals', hint: 'The whole answer equals this text, ignoring extra spaces.' },
-  { value: 'regex', label: 'Matches pattern', hint: 'A regular expression is found in the answer.' },
   { value: 'number', label: 'Number', hint: 'A number in the answer is within the tolerance of the value.' },
   { value: 'json_schema', label: 'JSON schema', hint: 'The answer is JSON that matches the schema.' },
 ]
@@ -13,7 +14,7 @@ export const MAX_CHECKS = 10
 
 /** Editable form of a check; text fields stay strings until the suite is saved. */
 export interface CheckDraft {
-  kind: 'contains' | 'not_contains' | 'exact' | 'regex' | 'number' | 'json_schema'
+  kind: 'contains' | 'not_contains' | 'exact' | 'number' | 'json_schema'
   text: string // value, pattern, number or JSON schema, depending on the kind
   caseSensitive: boolean
   tolerance: string
@@ -30,8 +31,7 @@ export function checkToDraft(check: unknown): CheckDraft {
   const draft = emptyCheck()
   draft.kind = kind
   draft.caseSensitive = Boolean(c.case_sensitive)
-  if (kind === 'regex') draft.text = String(c.pattern ?? '')
-  else if (kind === 'json_schema') draft.text = JSON.stringify(c.schema ?? {}, null, 2)
+  if (kind === 'json_schema') draft.text = JSON.stringify(c.schema ?? {}, null, 2)
   else draft.text = String(c.value ?? '')
   if (kind === 'number') {
     draft.tolerance = String(c.tolerance ?? '0')
@@ -51,9 +51,6 @@ export function draftToCheck(draft: CheckDraft): CheckIn | string {
     case 'exact':
       if (!text) return 'enter the text to look for'
       return { kind: draft.kind, value: text, case_sensitive: draft.caseSensitive }
-    case 'regex':
-      if (!text) return 'enter a pattern'
-      return { kind: 'regex', pattern: text, case_sensitive: draft.caseSensitive }
     case 'number':
       if (!NUMBER.test(text.trim())) return 'enter a number such as 42 or 3.14'
       if (!NUMBER.test(draft.tolerance.trim()) || draft.tolerance.trim().startsWith('-'))
@@ -81,6 +78,7 @@ export function ChecksEditor({
   checks: CheckDraft[]
   onChange: (checks: CheckDraft[]) => void
 }) {
+  const problemId = useId()
   const update = (index: number, patch: Partial<CheckDraft>) =>
     onChange(checks.map((c, i) => (i === index ? { ...c, ...patch } : c)))
   return (
@@ -113,9 +111,11 @@ export function ChecksEditor({
               />
             ) : (
               <input
-                aria-label={`${label} ${index + 1} ${check.kind === 'regex' ? 'pattern' : 'value'}`}
+                aria-label={`${label} ${index + 1} value`}
+                aria-invalid={typeof problem === 'string' && check.text !== ''}
+                aria-describedby={typeof problem === 'string' && check.text !== '' ? `${problemId}-${index}` : undefined}
                 value={check.text}
-                placeholder={check.kind === 'number' ? '42' : check.kind === 'regex' ? '^\\d{4}-\\d{2}-\\d{2}$' : 'Paris'}
+                placeholder={check.kind === 'number' ? '42' : 'Paris'}
                 onChange={(e) => update(index, { text: e.target.value })}
               />
             )}
@@ -140,10 +140,11 @@ export function ChecksEditor({
                 </select>
               </>
             )}
-            {['contains', 'not_contains', 'exact', 'regex'].includes(check.kind) && (
+            {['contains', 'not_contains', 'exact'].includes(check.kind) && (
               <label className="row small">
                 <input
                   type="checkbox"
+                  aria-label={`${label} ${index + 1} case-sensitive`}
                   checked={check.caseSensitive}
                   onChange={(e) => update(index, { caseSensitive: e.target.checked })}
                 />
@@ -153,16 +154,22 @@ export function ChecksEditor({
             <button type="button" className="ghost small" onClick={() => onChange(checks.filter((_, i) => i !== index))}>
               Remove
             </button>
-            {typeof problem === 'string' && check.text !== '' && <span className="small warn-text">{problem}</span>}
+            {typeof problem === 'string' && check.text !== '' && (
+              <span id={`${problemId}-${index}`} className="small warn-text" role="status">
+                {problem}
+              </span>
+            )}
           </div>
         )
       })}
-      {checks.length < MAX_CHECKS && (
+      {checks.length < MAX_CHECKS ? (
         <div>
           <button type="button" className="small" onClick={() => onChange([...checks, emptyCheck()])}>
             Add check
           </button>
         </div>
+      ) : (
+        <p className="small muted">A prompt can have at most {MAX_CHECKS} checks.</p>
       )}
     </div>
   )

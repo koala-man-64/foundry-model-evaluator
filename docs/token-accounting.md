@@ -185,22 +185,35 @@ shown, so they cost nothing and always agree with the checks frozen into the run
 |---|---|
 | Contains / Does not contain | the answer contains (or does not contain) the text, case-insensitive unless set |
 | Equals | the whole answer equals the text, ignoring leading, trailing and repeated whitespace |
-| Matches pattern | the regular expression is found in the answer |
 | Number | the last number in the answer (or any number) is within the tolerance of the value; `1,234.5` reads as 1234.5 |
 | JSON schema | the answer, optionally inside one ``` fence, is JSON that matches the schema |
 
 - An answer **passes** when every check of its prompt passes. Comparisons show the share of answers that pass, per
   cell and then over the common cells, with the same 95% range and baseline difference as the other metrics. It is a
   separate score: it is never blended with manual or judge scores.
-- Checks that could not run as written are refused when the suite is saved, never skipped later: an invalid regular
-  expression, a pattern with nested quantifiers such as `(a+)+` (which can take very long on long answers), a JSON
-  schema keyword this checker does not implement (it supports `type`, `properties`, `required`,
-  `additionalProperties: false`, `items`, `enum`, `const`, `minItems`/`maxItems`, `minLength`/`maxLength` and
-  `minimum`/`maximum`), or a number given as a float.
+- A check that cannot be evaluated on a particular answer (for example JSON containing an integer of thousands of
+  digits, which the parser refuses) shows **could not check**. That is unknown: it is neither a pass nor a fail, and
+  the answer is left out of the pass rate.
+- Numbers: a sign counts only when it does not follow a letter, digit or dot, so `10-20` reads as 10 and 20, and a
+  date such as `2024-01-05` reads as 2024, 1 and 5. `.5` reads as 0.5, and the Unicode minus sign is understood.
+  Numbers with an exponent beyond ±1000 are skipped. Text comparisons normalise Unicode, so a composed and a
+  decomposed accent compare equal.
+- In JSON schemas, `true` is not equal to `1` and `false` is not equal to `0` in `const` and `enum`, and `NaN` or
+  `Infinity` in an answer is not valid JSON.
+- Checks that could not run as written are refused when the suite is saved, never skipped later: a JSON schema
+  keyword this checker does not implement (it supports `type`, `properties`, `required`, `additionalProperties: false`,
+  `items`, `enum`, `const`, `minItems`/`maxItems`, `minLength`/`maxLength` and `minimum`/`maximum`), a keyword value of
+  the wrong type (such as `"minimum": "5"`), or a number given as a float.
+- There is **no regular-expression check**. Python's regular expressions have no time limit and block the whole app
+  while they run, so one slow pattern on one answer would freeze every view of a run whose checks are frozen. A
+  pattern check needs a regex engine with a time budget, which is a new dependency.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was
   created with.
+- A cell repeated across runs must have been graded the same way. A cell whose runs used different checks is left
+  out of the checks pass rate, and one whose runs gave the judge different reference answers is left out of the judge
+  scores and win rates. A note says how many cells were left out.
 
 ### Uncertainty
 

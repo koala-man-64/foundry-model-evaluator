@@ -11,7 +11,6 @@ describe('check drafts', () => {
       { kind: 'contains', value: 'Paris', case_sensitive: true },
       { kind: 'not_contains', value: 'as an AI', case_sensitive: false },
       { kind: 'exact', value: '42', case_sensitive: false },
-      { kind: 'regex', pattern: '^\\d+$', case_sensitive: false },
       { kind: 'number', value: '3.14', tolerance: '0.01', which: 'any' },
       { kind: 'json_schema', schema: { type: 'object', required: ['answer'] } },
     ]

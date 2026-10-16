@@ -37,7 +37,7 @@ def suite_payload(profile_ids: list[str], reference: str = "Paris") -> dict:
                 # the answer style the mock picks per deployment.
                 "checks": [
                     {"kind": "contains", "value": "You asked"},
-                    {"kind": "regex", "pattern": r"\bconcise\b"},
+                    {"kind": "contains", "value": "concise answer"},
                 ],
             }
             for i, text in enumerate(PROMPTS)
@@ -61,7 +61,7 @@ def test_checks_and_references_flow_through_runs_and_comparisons(client):
     assert created.status_code == 201, created.text
     suite = created.json()
     assert suite["prompts"][0]["reference"] == "Paris"
-    assert suite["prompts"][0]["checks"][1] == {"kind": "regex", "pattern": r"\bconcise\b", "case_sensitive": False}
+    assert suite["prompts"][0]["checks"][1] == {"kind": "contains", "value": "concise answer", "case_sensitive": False}
 
     detail = run_suite(client, suite["id"], "idem-gt-run-1")
     prompts = {p["id"]: p for p in detail["prompts"]}
@@ -140,6 +140,7 @@ def test_the_judge_sees_the_reference_and_cells_ignore_reference_edits(client):
     "check",
     [
         {"kind": "regex", "pattern": "(a+)+$"},
+        {"kind": "json_schema", "schema": {"minimum": "5"}},
         {"kind": "json_schema", "schema": {"type": "object", "oneOf": []}},
         {"kind": "number", "value": 0.5},
         {"kind": "unknown"},
@@ -165,3 +166,48 @@ def test_ad_hoc_runs_accept_references_and_checks(client):
     detail = wait_for_run(client, response.json()["run_id"])
     [attempt] = detail["attempts"]
     assert detail["check_results"][attempt["id"]]["passed"] is True
+
+
+def test_cells_graded_differently_across_runs_are_left_out(client):
+    endpoint = create_endpoint(client)
+    first = chat_profile(client, endpoint["id"], "deepseek-north")
+    second = chat_profile(client, endpoint["id"], "deepseek-south")
+    judge = create_profile(
+        client,
+        endpoint["id"],
+        preset="openai-standard",
+        api_style=ApiStyle.OPENAI_RESPONSES,
+        deployment="gpt-4.1-judge",
+        model_name="gpt-4.1",
+        context_window=100_000,
+        name="Judge",
+    )
+    suite = client.post("/api/suites", json=suite_payload([first["id"], second["id"]])).json()
+    one = run_suite(client, suite["id"], "idem-gt-mixed-1")
+    # The second run uses stricter checks and another reference on the first prompt only.
+    updated = suite_payload([first["id"], second["id"]], reference="Paris, the capital")
+    updated["prompts"] = [{**p, "id": s["id"]} for p, s in zip(updated["prompts"], suite["prompts"], strict=True)]
+    updated["prompts"][0]["checks"] = [{"kind": "contains", "value": "Paris"}]
+    assert client.put(f"/api/suites/{suite['id']}", json=updated).status_code == 200
+    two = run_suite(client, suite["id"], "idem-gt-mixed-2")
+    for index, detail in enumerate((one, two)):
+        run_id = detail["run"]["id"]
+        response = client.post(
+            f"/api/runs/{run_id}/evaluations",
+            json={"judge_profile_id": judge["id"]},
+            headers={"Idempotency-Key": f"idem-gt-mixed-j{index}"},
+        )
+        assert response.status_code == 201, response.text
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            found = client.get(f"/api/runs/{run_id}/evaluations").json()
+            if found and all(e["status"] not in ("queued", "running") for e in found):
+                break
+            time.sleep(0.05)
+
+    comparison = client.get("/api/comparisons", params={"run_id": [one["run"]["id"], two["run"]["id"]]}).json()
+    assert comparison["cells_matched"] == 3
+    notes = " ".join(comparison["notes"])
+    assert "1 cell used different checks" in notes and "1 cell were judged with different reference" in notes
+    for candidate in comparison["candidates"]:
+        assert candidate["checks_cells"] == 2 and candidate["judge_scored"] == 2

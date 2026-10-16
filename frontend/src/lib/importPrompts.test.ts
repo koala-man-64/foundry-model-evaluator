@@ -20,7 +20,30 @@ describe('importPrompts', () => {
     expect(result.prompts).toEqual([
       { title: 'Capital', system: 'Be brief', user: 'What is the capital of France?', reference: 'Paris', checks: [] },
     ])
-    expect(result.errors).toEqual(['Row 3: the user prompt is empty.'])
+    expect(result.errors).toEqual(['Record 2 after the header: the user prompt is empty.'])
+  })
+
+  it('lists CSV columns it does not use', () => {
+    expect(importPrompts('p.csv', ['user,answer', 'q,a', ''].join('\n')).errors).toEqual(['Ignored columns: answer.'])
+  })
+
+  it('refuses checks it would otherwise have to guess at, and keeps numeric references', () => {
+    const jsonl = [
+      '{"user": "6*3?", "reference": 18, "answer": "18"}',
+      '{"user": "a", "checks": [{"kind": "equals", "value": "x"}]}',
+      '{"user": "b", "checks": [{"kind": "contains", "value": "x", "case_sensitive": "false"}]}',
+      '{"user": "c", "checks": [{"kind": "number", "value": 0.1}]}',
+      '{"user": "d", "title": {"x": 1}}',
+    ].join('\n')
+    const result = importPrompts('set.jsonl', jsonl)
+    expect(result.prompts).toEqual([{ title: '', system: '', user: '6*3?', reference: '18', checks: [] }])
+    expect(result.errors).toEqual([
+      'Line 2: check 1: unknown check kind "equals" (use contains, not_contains, exact, number, json_schema).',
+      'Line 3: check 1: case_sensitive must be true or false.',
+      'Line 4: check 1: give a number check value as a string (or a whole number), so it stays exact.',
+      'Line 5: "title" must be text.',
+      'Ignored fields: answer.',
+    ])
   })
 
   it('needs a user column in CSV', () => {

@@ -53,7 +53,9 @@ function scoreCells(candidate: ComparisonCandidate, kind: ScoreKind): number {
 /** Quality against estimated token cost per task, with the Pareto frontier and the most attractive quadrant. */
 export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
   const hasJudge = comparison.candidates.some((c) => c.avg_judge_score !== null && c.avg_judge_score !== undefined)
-  const [kind, setKind] = useState<ScoreKind>(hasJudge ? 'judge' : 'manual')
+  const [chosen, setKind] = useState<ScoreKind>(hasJudge ? 'judge' : 'manual')
+  // A "checks" choice from an earlier comparison does not apply when these runs have no checks.
+  const kind: ScoreKind = chosen === 'checks' && !comparison.has_checks ? (hasJudge ? 'judge' : 'manual') : chosen
   const { container, tooltip, markProps } = useTooltip()
   const currency = comparison.currency
 
@@ -83,7 +85,11 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
   const xs = data.map((d) => d.x)
   const ys = data.map((d) => d.y)
   const xDomain: [number, number] = xs.length ? [Math.min(...xs) / 1.6, Math.max(...xs) * 1.6] : [0.0001, 1]
-  const yDomain = ys.length ? niceDomain(Math.min(...ys) - 0.25, Math.max(...ys) + 0.25) : ([1, 5] as [number, number])
+  const padded: [number, number] = ys.length
+    ? niceDomain(Math.min(...ys) - (kind === 'checks' ? 5 : 0.25), Math.max(...ys) + (kind === 'checks' ? 5 : 0.25))
+    : [1, 5]
+  // Pass rates are percentages: the axis never runs below 0% or above 100%.
+  const yDomain: [number, number] = kind === 'checks' ? [Math.max(0, padded[0]), Math.min(100, padded[1])] : padded
   const x = scaleLog(xDomain, [PLOT.x, PLOT.x + PLOT.width])
   const y = scaleLinear(yDomain, [PLOT.y + PLOT.height, PLOT.y])
   const xTicks = logTicks(xDomain[0], xDomain[1])
