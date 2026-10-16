@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 
 import { del, get, newIdempotencyKey, post, put } from '../api/client'
 import { keys } from '../api/hooks'
-import type { Attempt, CandidateOut, JudgeScore, ManualScore, RawOut } from '../api/types'
+import type { Attempt, CandidateOut, CheckOutcome, JudgeScore, ManualScore, RawOut } from '../api/types'
 import { FINISH_LABELS } from '../lib/format'
 import { CostDetails, CostValue } from './cost'
 import { MarkdownView } from './MarkdownView'
@@ -18,7 +18,42 @@ interface Props {
   candidate: CandidateOut | undefined
   manualScore?: ManualScore
   judgeScore?: JudgeScore
+  checks?: CheckOutcome
   retried: boolean
+}
+
+const CHECK_LABELS: Record<string, string> = {
+  contains: 'contains',
+  not_contains: 'does not contain',
+  exact: 'equals',
+  number: 'number',
+  json_schema: 'JSON schema',
+}
+
+/** The deterministic checks of an answer: passed or not, with what each check found. */
+export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
+  const passed = outcome.results.filter((r) => r.passed).length
+  return (
+    <details className="small" data-testid="check-results">
+      <summary>
+        Checks{' '}
+        <Badge tone={outcome.passed === true ? 'ok' : outcome.passed === false ? 'warn' : 'neutral'}>
+          {outcome.passed === true ? 'passed' : outcome.passed === false ? 'failed' : 'could not check'}
+        </Badge>{' '}
+        <span className="muted">
+          {passed} of {outcome.results.length}
+        </span>
+      </summary>
+      <ul>
+        {outcome.results.map((result, index) => (
+          <li key={index}>
+            {result.passed === true ? '✓' : result.passed === false ? '✗' : '?'} {CHECK_LABELS[result.kind] ?? result.kind}:{' '}
+            {result.detail}
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 /** The latest judge result for a response (separate from the manual score). */
@@ -91,7 +126,7 @@ export function ManualScoreControl({ runId, attemptId, score }: { runId: string;
   )
 }
 
-export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScore, retried }: Props) {
+export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScore, checks, retried }: Props) {
   const queryClient = useQueryClient()
   const [markdown, setMarkdown] = useState(false)
   const [showRequest, setShowRequest] = useState(false)
@@ -186,6 +221,7 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScor
         <div className="section stack-sm">
           <ManualScoreControl runId={runId} attemptId={attempt.id} score={manualScore} />
           {judgeScore && <JudgeScoreLine score={judgeScore} />}
+          {checks && <CheckResultsLine outcome={checks} />}
         </div>
       )}
       <div className="row section">

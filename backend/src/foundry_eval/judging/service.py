@@ -278,13 +278,15 @@ class JudgeService:
             entries = assign_labels(group.responses, self.rng)
         else:  # preview: the order does not change the size
             entries = assign_labels(group.responses, random.Random(0))  # noqa: S311 - not security relevant
-        nonce = new_nonce([group.prompt.system_text, group.prompt.user_text, *(e.text for e in entries)])
+        texts = [group.prompt.system_text, group.prompt.user_text, group.prompt.reference_text]
+        nonce = new_nonce([*texts, *(e.text for e in entries)])
         prompt = build_judge_prompt(
             system_text=group.prompt.system_text,
             user_text=group.prompt.user_text,
             entries=entries,
             rubric=setup.rubric.definition,
             nonce=nonce,
+            reference_text=group.prompt.reference_text,
         )
         return entries, prompt, nonce
 

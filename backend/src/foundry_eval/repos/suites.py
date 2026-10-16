@@ -8,6 +8,7 @@ import sqlite3
 from ..db.database import Database
 from ..domain.generation import GenerationSettings
 from ..domain.suites import Suite, SuiteCandidate, SuiteIn, SuiteJudge, SuitePrompt
+from ..grading.checks import checks_json, load_checks
 from ..timeutil import iso_now, new_id
 from .endpoints import NotFoundError
 
@@ -33,7 +34,13 @@ class SuiteRepository:
             archived=bool(row["archived"]),
             prompts=[
                 SuitePrompt(
-                    id=p["id"], position=p["position"], title=p["title"], system=p["system_text"], user=p["user_text"]
+                    id=p["id"],
+                    position=p["position"],
+                    title=p["title"],
+                    system=p["system_text"],
+                    user=p["user_text"],
+                    reference=p["reference_text"],
+                    checks=load_checks(p["checks_json"]),
                 )
                 for p in prompts
             ],
@@ -104,15 +111,33 @@ class SuiteRepository:
         for position, prompt in enumerate(payload.prompts):
             if prompt.id and prompt.id in existing_prompts and prompt.id not in kept_prompts:
                 conn.execute(
-                    "UPDATE suite_prompts SET position = ?, title = ?, system_text = ?, user_text = ? WHERE id = ?",
-                    (position, prompt.title, prompt.system, prompt.user, prompt.id),
+                    "UPDATE suite_prompts SET position = ?, title = ?, system_text = ?, user_text = ?,"
+                    " reference_text = ?, checks_json = ? WHERE id = ?",
+                    (
+                        position,
+                        prompt.title,
+                        prompt.system,
+                        prompt.user,
+                        prompt.reference,
+                        checks_json(prompt.checks),
+                        prompt.id,
+                    ),
                 )
                 kept_prompts.add(prompt.id)
             else:
                 conn.execute(
-                    "INSERT INTO suite_prompts (id, suite_id, position, title, system_text, user_text)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
-                    (new_id(), suite_id, position, prompt.title, prompt.system, prompt.user),
+                    "INSERT INTO suite_prompts (id, suite_id, position, title, system_text, user_text, reference_text,"
+                    " checks_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id(),
+                        suite_id,
+                        position,
+                        prompt.title,
+                        prompt.system,
+                        prompt.user,
+                        prompt.reference,
+                        checks_json(prompt.checks),
+                    ),
                 )
         for stale in existing_prompts - kept_prompts:
             conn.execute("DELETE FROM suite_prompts WHERE id = ?", (stale,))

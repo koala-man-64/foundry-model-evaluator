@@ -8,7 +8,11 @@ quality, token usage, latency and **estimated token cost**.
 - **Suites and history.** Save prompts, models and settings as a suite and run it with repeated trials. You get average
   cost, latency, scores and failure counts over matching prompts and trials, and the coverage is always shown. Each
   average has a 95% range across prompts, and against a baseline candidate each difference says whether it is
-  higher, lower, or too close to call.
+  higher, lower, or too close to call. Prompts can be imported from a CSV or JSON-lines file.
+- **Reference answers and checks.** Give a prompt a reference answer, which the judge uses to grade correctness, and
+  free deterministic checks (contains, does not contain, equals, number within a tolerance, JSON schema).
+  Checks run on every answer at no cost, and the pass rate sits next to cost in comparisons and on the quality-vs-cost
+  chart, separate from manual and judge scores.
 - **Charts.** Runs and suite comparisons are charted: quality against estimated cost per task (log scale, with the
   Pareto frontier and the most attractive quadrant), output tokens split into answer and reasoning, and latency. Every
   chart has a table view.
@@ -107,6 +111,10 @@ the price snapshots frozen with the run, so it never makes a call to a model.
   columns.
 - **Costs** are exact decimal strings. An empty cell or `null` means *not reported*, and `cost_status` says why
   (`complete`, `incomplete` with a lower bound, `not_sent`, or `pending`). An unknown cost is never written as 0.
+- **Checks.** Each attempt carries its check outcome (`checks_passed` in the CSV: `true`, `false`, `unknown` when a
+  check could not be evaluated, or empty when the prompt has no checks). Each prompt says whether it has a reference
+  answer and how many checks; the reference text, the check definitions and the per-check details (which can quote
+  the answer) come only with the text included.
 - **Retries.** Every attempt is listed. `superseded` is true for an attempt that a later retry replaced
   (`retry_of` names it); only attempts that are not superseded count for their cell.
 - **Left out by default:** prompt text, answers, reasoning summaries, provider error messages, stop strings,

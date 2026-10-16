@@ -4,13 +4,13 @@ import { formatMs } from '../../lib/format'
 import { formatMoney } from '../../lib/money'
 
 /** What a metric measures, which decides formatting and which direction is better. */
-export type MetricKind = 'cost' | 'latency' | 'score' | 'rate'
+export type MetricKind = 'cost' | 'latency' | 'score' | 'rate' | 'pass'
 
 function value(kind: MetricKind, v: number | string, currency: string): string {
   if (kind === 'cost') return formatMoney(String(v), currency)
   const n = Number(v)
   if (kind === 'latency') return formatMs(Math.round(n))
-  if (kind === 'rate') return `${Math.round(n * 100)}%`
+  if (kind === 'rate' || kind === 'pass') return `${Math.round(n * 100)}%`
   return n.toFixed(2)
 }
 
@@ -18,7 +18,7 @@ function signed(kind: MetricKind, v: number | string, currency: string): string 
   const n = Number(v)
   const sign = n > 0 ? '+' : n < 0 ? '−' : '±'
   const magnitude = kind === 'cost' ? String(v).replace(/^-/, '') : Math.abs(n)
-  if (kind === 'rate') return `${sign}${Math.round(Math.abs(n) * 100)} pts`
+  if (kind === 'rate' || kind === 'pass') return `${sign}${Math.round(Math.abs(n) * 100)} pts`
   return `${sign}${value(kind, magnitude, currency)}`
 }
 
@@ -51,6 +51,7 @@ const VERDICTS: Record<MetricKind, Record<string, string>> = {
   latency: { higher: 'slower', lower: 'faster' },
   score: { higher: 'higher', lower: 'lower' },
   rate: { higher: 'wins more', lower: 'wins less' },
+  pass: { higher: 'passes more', lower: 'passes less' },
 }
 
 /** A paired difference to the baseline with its verdict; better and worse are coloured. */
