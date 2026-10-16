@@ -402,6 +402,69 @@
         "title": "AttemptStatus",
         "type": "string"
       },
+      "BaselineDifferences": {
+        "properties": {
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoneyDifference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "cost",
+          "latency_ms",
+          "manual",
+          "judge",
+          "win_rate"
+        ],
+        "title": "BaselineDifferences",
+        "type": "object"
+      },
       "BudgetOut": {
         "properties": {
           "committed": {
@@ -418,6 +481,151 @@
           "committed"
         ],
         "title": "BudgetOut",
+        "type": "object"
+      },
+      "Calibration": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "min_pairs": {
+            "title": "Min Pairs",
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Run Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_ids",
+          "groups",
+          "min_pairs",
+          "notes"
+        ],
+        "title": "Calibration",
+        "type": "object"
+      },
+      "CalibrationGroup": {
+        "properties": {
+          "judge": {
+            "title": "Judge",
+            "type": "string"
+          },
+          "mean_bias": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Bias"
+          },
+          "pairs": {
+            "title": "Pairs",
+            "type": "integer"
+          },
+          "participant_pairs_excluded": {
+            "title": "Participant Pairs Excluded",
+            "type": "integer"
+          },
+          "rubric": {
+            "title": "Rubric",
+            "type": "string"
+          },
+          "scale_max": {
+            "title": "Scale Max",
+            "type": "integer"
+          },
+          "scale_min": {
+            "title": "Scale Min",
+            "type": "integer"
+          },
+          "spearman": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spearman"
+          },
+          "spearman_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spearman High"
+          },
+          "spearman_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spearman Low"
+          },
+          "top_pick_agree": {
+            "title": "Top Pick Agree",
+            "type": "integer"
+          },
+          "top_pick_total": {
+            "title": "Top Pick Total",
+            "type": "integer"
+          },
+          "within_one": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Within One"
+          }
+        },
+        "required": [
+          "judge",
+          "rubric",
+          "scale_min",
+          "scale_max",
+          "pairs",
+          "spearman",
+          "spearman_low",
+          "spearman_high",
+          "within_one",
+          "mean_bias",
+          "top_pick_agree",
+          "top_pick_total",
+          "participant_pairs_excluded"
+        ],
+        "title": "CalibrationGroup",
         "type": "object"
       },
       "CandidatePreview": {
@@ -805,6 +1013,17 @@
       },
       "Comparison": {
         "properties": {
+          "baseline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline"
+          },
           "candidates": {
             "items": {
               "$ref": "#/components/schemas/ComparisonCandidate"
@@ -831,6 +1050,10 @@
             "title": "Currency",
             "type": "string"
           },
+          "interval_min_prompts": {
+            "title": "Interval Min Prompts",
+            "type": "integer"
+          },
           "judge_bases": {
             "title": "Judge Bases",
             "type": "integer"
@@ -841,6 +1064,10 @@
             },
             "title": "Notes",
             "type": "array"
+          },
+          "prompts_matched": {
+            "title": "Prompts Matched",
+            "type": "integer"
           },
           "run_ids": {
             "items": {
@@ -856,6 +1083,9 @@
           "cells_total",
           "cells_matched",
           "judge_bases",
+          "prompts_matched",
+          "interval_min_prompts",
+          "baseline",
           "candidates",
           "cells",
           "notes"
@@ -962,6 +1192,16 @@
             "title": "Cost Excluded",
             "type": "integer"
           },
+          "cost_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoneyInterval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cost_other_currency": {
             "title": "Cost Other Currency",
             "type": "integer"
@@ -986,6 +1226,16 @@
             "title": "Judge Comparisons",
             "type": "integer"
           },
+          "judge_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "judge_scored": {
             "title": "Judge Scored",
             "type": "integer"
@@ -1001,6 +1251,26 @@
           "latency_cells": {
             "title": "Latency Cells",
             "type": "integer"
+          },
+          "latency_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manual_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "manual_scored": {
             "title": "Manual Scored",
@@ -1034,6 +1304,16 @@
             "title": "Token Cells",
             "type": "integer"
           },
+          "vs_baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BaselineDifferences"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "win_cells": {
             "title": "Win Cells",
             "type": "integer"
@@ -1048,6 +1328,16 @@
               }
             ],
             "title": "Win Rate"
+          },
+          "win_rate_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Interval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1465,6 +1755,60 @@
           "explanation"
         ],
         "title": "CriterionScore",
+        "type": "object"
+      },
+      "Difference": {
+        "description": "Candidate minus baseline over the prompts both have. No interval below the minimum prompt count.",
+        "properties": {
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          },
+          "verdict": {
+            "enum": [
+              "higher",
+              "lower",
+              "cannot_tell",
+              "insufficient_data"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mean",
+          "low",
+          "high",
+          "prompts",
+          "verdict"
+        ],
+        "title": "Difference",
         "type": "object"
       },
       "EndpointIn": {
@@ -2304,6 +2648,30 @@
         "title": "Health",
         "type": "object"
       },
+      "Interval": {
+        "description": "95% interval for a mean across prompts (trials of a prompt are averaged first).",
+        "properties": {
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "low",
+          "high",
+          "prompts"
+        ],
+        "title": "Interval",
+        "type": "object"
+      },
       "JudgePreview": {
         "properties": {
           "calls": {
@@ -3014,6 +3382,82 @@
           "updated_at"
         ],
         "title": "ModelProfile",
+        "type": "object"
+      },
+      "MoneyDifference": {
+        "properties": {
+          "high": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "string"
+          },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          },
+          "verdict": {
+            "enum": [
+              "higher",
+              "lower",
+              "cannot_tell",
+              "insufficient_data"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mean",
+          "low",
+          "high",
+          "prompts",
+          "verdict"
+        ],
+        "title": "MoneyDifference",
+        "type": "object"
+      },
+      "MoneyInterval": {
+        "properties": {
+          "high": {
+            "title": "High",
+            "type": "string"
+          },
+          "low": {
+            "title": "Low",
+            "type": "string"
+          },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "low",
+          "high",
+          "prompts"
+        ],
+        "title": "MoneyInterval",
         "type": "object"
       },
       "OrderEntry": {
@@ -5882,6 +6326,54 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/analysis/calibration": {
+      "get": {
+        "description": "How well the judge agrees with your manual scores on these runs (reads stored scores only).",
+        "operationId": "judge_calibration_api_analysis_calibration_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50,
+              "minItems": 1,
+              "title": "Run Id",
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Calibration"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Judge Calibration",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
     "/api/attempts/{attempt_id}/manual-score": {
       "delete": {
         "operationId": "delete_manual_score_api_attempts__attempt_id__manual_score_delete",
@@ -6124,6 +6616,23 @@
                 }
               ],
               "title": "Candidate Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "baseline",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Baseline"
             }
           }
         ],

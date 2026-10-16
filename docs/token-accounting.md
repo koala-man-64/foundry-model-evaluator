@@ -176,6 +176,36 @@ as *matched* when every candidate has a succeeded answer in it, and the page sho
   **Retry failed** leaves them out because the same request would most likely repeat; retry one explicitly instead.
 - **Failures** count finished attempts that did not succeed. Attempts that have not finished are shown separately.
 
+### Uncertainty
+
+A small difference in an average can be noise, so every average also shows a **95% range across prompts**:
+
+- **Prompts are the unit of evidence.** The trials of a prompt are averaged first, because they repeat the same task;
+  counting ten trials of three prompts as thirty samples would make the range look far tighter than the evidence is.
+- The range is a Student-t interval of the mean of the per-prompt values over the metric's common cells. It needs at
+  least **3 prompts**, and it is wide with few prompts: that is the honest answer, not a defect. Cost ranges are
+  computed in exact decimals and never go below zero; win-rate ranges stay between 0 and 100%.
+- **Baseline.** Pick a candidate as the baseline and every other candidate shows its paired difference to it (the
+  difference per prompt, then the same interval). The verdict is *higher* or *lower* only when the whole interval is
+  on one side of zero; otherwise it is *cannot tell*. Below 3 shared prompts it says *too few prompts*.
+- The ranges are not corrected for comparing many candidates at once, so with many candidates expect the occasional
+  "difference" by chance.
+
+### Judge vs. your scores
+
+The Scoring page shows how closely the judge agrees with your manual scores on the same answers, per judge basis
+(rubric version, judge and scoring settings). It reads stored scores only and costs nothing.
+
+- Judge scores are rescaled from the rubric's scale to 1–5 before they are compared with yours.
+- **Rank agreement** is Spearman's correlation (ties share their average rank), with an approximate 95% interval. It
+  is shown from 5 answers scored by both.
+- **Within 1 point** is the share of answers where the judge is within one point of you; **average difference** is
+  judge minus you, so a positive value means the judge scores higher.
+- **Same top pick** counts evaluations where the judge preferred the answer you scored highest (only when exactly
+  one answer had your top score).
+- Evaluations in which the judge also produced one of the answers are left out and counted.
+- Your scores are one person's view, not ground truth: the panel tells you whether the judge agrees with *you*.
+
 ## Projections
 
 Projections price **each measured request on its own** under the scenario, then average the costs. They never apply

@@ -55,6 +55,9 @@ function comparison(judgeBases: number, candidates: ComparisonCandidate[]): Comp
     cells_total: 1,
     cells_matched: 1,
     judge_bases: judgeBases,
+    prompts_matched: 1,
+    interval_min_prompts: 3,
+    baseline: null,
     candidates,
     cells: [],
     notes: [],
@@ -68,6 +71,37 @@ describe('ComparisonTable', () => {
     const row = screen.getByRole('row', { name: /^A/ })
     expect(within(row).getAllByText('withheld')).toHaveLength(2)
     expect(within(row).queryByText(/judged/)).not.toBeInTheDocument()
+  })
+
+  it('shows 95% ranges and the paired difference to the baseline with a verdict', () => {
+    state.data = {
+      ...comparison(1, [
+        candidate('Base'),
+        candidate('Better', {
+          avg_manual_score: 4.75,
+          manual_scored: 4,
+          manual_interval: { low: 4.2, high: 5, prompts: 4 },
+          cost_interval: { low: '0.0015', high: '0.0025', prompts: 4 },
+          vs_baseline: {
+            cost: { mean: '0.0005', low: '-0.0001', high: '0.0011', prompts: 4, verdict: 'cannot_tell' },
+            latency_ms: null,
+            manual: { mean: 2.5, low: 1.58, high: 3.42, prompts: 4, verdict: 'higher' },
+            judge: null,
+            win_rate: null,
+          },
+        }),
+      ]),
+      baseline: 'Base',
+      prompts_matched: 4,
+    }
+    render(<ComparisonTable runIds={['r1']} charts={false} />)
+    const row = screen.getByRole('row', { name: /^Better/ })
+    expect(row).toHaveTextContent('95% 4.20–5.00')
+    expect(row).toHaveTextContent('vs baseline +2.50')
+    expect(within(row).getByText('higher')).toBeInTheDocument()
+    expect(within(row).getByText('cannot tell')).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /^Base/ })).toHaveTextContent('baseline')
+    expect(screen.getByTestId('interval-note')).toHaveTextContent('4 matched prompts')
   })
 
   it('shows judge scores and the billed failures otherwise', () => {

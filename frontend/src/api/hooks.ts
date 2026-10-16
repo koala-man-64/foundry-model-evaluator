@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { get } from './client'
 import type {
+  Calibration,
   Comparison,
   EndpointOut,
   EvaluationOut,
@@ -113,12 +114,25 @@ export function useEvaluations(runId: string | undefined) {
 }
 
 
+function runParams(runIds: string[]): string {
+  return runIds.map((id) => `run_id=${encodeURIComponent(id)}`).join('&')
+}
+
 /** A comparison of runs on matching prompt x trial cells (shared by the charts and the table). */
-export function useComparison(runIds: string[], enabled = true) {
-  const params = runIds.map((id) => `run_id=${encodeURIComponent(id)}`).join('&')
+export function useComparison(runIds: string[], enabled = true, baseline = '') {
+  const params = runParams(runIds) + (baseline ? `&baseline=${encodeURIComponent(baseline)}` : '')
   return useQuery({
-    queryKey: ['comparison', ...runIds],
+    queryKey: ['comparison', baseline, ...runIds],
     queryFn: () => get<Comparison>(`/api/comparisons?${params}`),
     enabled: enabled && runIds.length > 0,
+  })
+}
+
+/** How well the judge agrees with the manual scores on these runs (free: reads stored scores). */
+export function useCalibration(runIds: string[]) {
+  return useQuery({
+    queryKey: ['calibration', ...runIds],
+    queryFn: () => get<Calibration>(`/api/analysis/calibration?${runParams(runIds)}`),
+    enabled: runIds.length > 0,
   })
 }

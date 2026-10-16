@@ -38,13 +38,19 @@ export function JudgeScoreLine({ score }: { score: JudgeScore }) {
 export function ManualScoreControl({ runId, attemptId, score }: { runId: string; attemptId: string; score?: ManualScore }) {
   const queryClient = useQueryClient()
   const [notes, setNotes] = useState(score?.notes ?? '')
+  // Manual scores feed the run view and the judge calibration.
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
+      queryClient.invalidateQueries({ queryKey: ['calibration'] }),
+    ])
   const save = useMutation({
     mutationFn: (value: number) => put<ManualScore>(`/api/attempts/${attemptId}/manual-score`, { score: value, notes }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
+    onSuccess: () => refresh(),
   })
   const clear = useMutation({
     mutationFn: () => del(`/api/attempts/${attemptId}/manual-score`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.run(runId) }),
+    onSuccess: () => refresh(),
   })
   return (
     <div className="stack-sm">
