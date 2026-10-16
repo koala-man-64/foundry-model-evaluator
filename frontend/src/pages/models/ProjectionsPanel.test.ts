@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { percentToFraction } from './ProjectionsPanel'
+import { percentToFraction, validRatio } from './ProjectionsPanel'
 
 describe('percentToFraction', () => {
   it('converts percentages exactly with decimal strings', () => {
@@ -15,5 +15,15 @@ describe('percentToFraction', () => {
     expect(percentToFraction('-5')).toBeNull()
     expect(percentToFraction('abc')).toBeNull()
     expect(percentToFraction('')).toBeNull()
+  })
+})
+
+describe('validRatio', () => {
+  it('accepts a batch price ratio greater than 0 and at most 1', () => {
+    for (const text of ['0.5', '1', '1.000', '0.0001', ' .25 ']) expect(validRatio(text)).toBe(true)
+  })
+
+  it('rejects zero, negatives, ratios above 1 and invalid input', () => {
+    for (const text of ['0', '0.000', '-0.5', '1.0001', '2', 'half', '']) expect(validRatio(text)).toBe(false)
   })
 })

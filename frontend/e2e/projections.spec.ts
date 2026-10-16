@@ -46,6 +46,32 @@ test('projections re-price measured usage under what-if assumptions and either p
   expect(per1k).toBeCloseTo(perRequest * 1000, 2)
   await expect(projection.getByText('Per month (50,000 requests)')).toBeVisible()
 
+  // The spread across requests: nearest-rank percentiles, and monthly figures "if every request cost" one of them.
+  const spread = projection.getByTestId('projection-spread-row').filter({ hasText: name })
+  const spreadCells = spread.getByRole('cell')
+  const [p50, p90, p95, max] = await Promise.all([1, 2, 3, 4].map(async (i) => dollars(await spreadCells.nth(i).textContent())))
+  expect(p50).toBeLessThanOrEqual(p90)
+  expect(p90).toBeLessThanOrEqual(p95)
+  expect(p95).toBeLessThanOrEqual(max)
+  await expect(projection.getByText('Per month if every request cost the p95', { exact: true })).toBeVisible()
+  expect(dollars(await spreadCells.nth(6).textContent())).toBeCloseTo(p95 * 50000, 1)
+  await expect(spread).toContainText('nearest-rank over 2 requests with complete estimates (none excluded)')
+  await expect(spread).toContainText('Only 2 requests priced: percentiles from fewer than 30 are rough.')
+
+  // Batch needs both values; half the requests at half the price is three quarters of the cost per request.
+  await page.getByLabel('Batch share of requests (%)').fill('50')
+  await expect(page.getByText('Enter both the batch share and the batch price ratio, or neither.')).toBeVisible()
+  await expect(projection).toBeHidden()
+  await page.getByLabel('Batch price ratio').fill('0.5')
+  await expect(projection).toContainText('batch: 50% of requests at x0.5 the cost (entered ratio, not a published batch price)')
+  await expect.poll(async () => dollars(await row.getByRole('cell').nth(2).textContent())).toBeCloseTo(perRequest * 0.75, 5)
+  await page.getByLabel('Batch price ratio').fill('1.5')
+  await expect(page.getByText('The batch price ratio must be greater than 0 and at most 1.')).toBeVisible()
+  await page.getByLabel('Batch share of requests (%)').fill('')
+  await page.getByLabel('Batch price ratio').fill('')
+  await expect(projection).not.toContainText('batch:')
+  await expect.poll(async () => dollars(await row.getByRole('cell').nth(2).textContent())).toBeCloseTo(perRequest, 6)
+
   await page.getByLabel('Output length multiplier').fill('3')
   await expect(projection).toContainText('output length x3')
   await expect.poll(async () => dollars(await row.getByRole('cell').nth(2).textContent())).toBeGreaterThan(perRequest)

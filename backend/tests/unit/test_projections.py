@@ -5,7 +5,15 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from foundry_eval.analysis.projections import ScenarioUsage, WhatIf, _split, _stable_reason, scenario_usage
+from foundry_eval.analysis.projections import (
+    SPREAD_MIN_REQUESTS,
+    ScenarioUsage,
+    WhatIf,
+    _split,
+    _stable_reason,
+    cost_spread,
+    scenario_usage,
+)
 from foundry_eval.pricing.calculator import CostContext, estimate_cost
 from foundry_eval.pricing.ratecard import Category, RateTier
 from foundry_eval.types import ApiStyle
@@ -263,3 +271,86 @@ def test_a_share_with_no_measured_rest_gives_the_rest_to_uncached_input():
     assert scenario is not None
     assert (scenario.cache_read, scenario.cache_write, scenario.input_uncached) == (500, 0, 500)
     assert assumptions == []
+
+
+# --- batch what-if ---------------------------------------------------------------------------------
+def test_batch_share_and_ratio_go_together_and_are_bounded():
+    with pytest.raises(ValidationError, match="given together"):
+        WhatIf(batch_share="0.5")
+    with pytest.raises(ValidationError, match="given together"):
+        WhatIf(batch_rate_ratio="0.5")
+    with pytest.raises(ValidationError, match="batch share must be between 0 and 1"):
+        WhatIf(batch_share="1.5", batch_rate_ratio="0.5")
+    with pytest.raises(ValidationError, match="batch share must be between 0 and 1"):
+        WhatIf(batch_share="-0.1", batch_rate_ratio="0.5")
+    for ratio in ("0", "1.01", "-0.5"):
+        with pytest.raises(ValidationError, match="greater than 0 and at most 1"):
+            WhatIf(batch_share="0.5", batch_rate_ratio=ratio)
+    with pytest.raises(ValidationError):
+        WhatIf(batch_share=0.5, batch_rate_ratio="0.5")  # floats are rejected: send decimal strings
+    assert WhatIf(batch_share="0", batch_rate_ratio="1").batch_share == 0
+    assert WhatIf(batch_share="1", batch_rate_ratio="0.5").batch_rate_ratio == Decimal("0.5")
+
+
+def test_batch_is_labelled_as_an_entered_assumption():
+    labels = WhatIf(output_multiplier="2", batch_share="0.40", batch_rate_ratio="0.50").labels()
+    assert labels == [
+        "output length x2",
+        "batch: 40% of requests at x0.5 the cost (entered ratio, not a published batch price)",
+    ]
+    # A zero share is still the user's assumption, so it is still shown.
+    assert WhatIf(batch_share="0", batch_rate_ratio="0.5").labels() == [
+        "batch: 0% of requests at x0.5 the cost (entered ratio, not a published batch price)"
+    ]
+    assert WhatIf().labels() == []
+
+
+def test_batch_cost_blends_the_share_at_the_ratio_exactly():
+    cost = Decimal("0.0012345")
+    assert WhatIf().batch_cost(cost) == cost
+    # 60% at the full cost and 40% at half of it: 0.8 of the cost, with no rounding.
+    assert WhatIf(batch_share="0.4", batch_rate_ratio="0.5").batch_cost(cost) == Decimal("0.0009876")
+    assert WhatIf(batch_share="1", batch_rate_ratio="0.5").batch_cost(cost) == Decimal("0.00061725")
+    assert WhatIf(batch_share="0", batch_rate_ratio="0.5").batch_cost(cost) == cost
+    assert WhatIf(batch_share="0.3", batch_rate_ratio="1").batch_cost(cost) == cost
+    third = WhatIf(batch_share="0.333333333333333333", batch_rate_ratio="0.123456789").batch_cost(Decimal("7"))
+    assert third == Decimal(7) * (1 - Decimal("0.333333333333333333") * (1 - Decimal("0.123456789")))
+
+
+# --- cost spread -----------------------------------------------------------------------------------
+def test_cost_spread_of_no_priced_request_is_unknown_not_zero():
+    assert cost_spread([], 10_000, excluded=4) is None
+
+
+def test_cost_spread_percentiles_and_monthly_figures():
+    costs = [Decimal(n) / 1000 for n in range(10, 0, -1)]  # 0.010 down to 0.001
+    spread = cost_spread(costs, 50_000, excluded=3)
+    assert spread is not None
+    assert (spread.p50, spread.p90, spread.p95, spread.max) == (
+        Decimal("0.005"),
+        Decimal("0.009"),
+        Decimal("0.010"),
+        Decimal("0.010"),
+    )
+    assert spread.month_if_every_request_p50 == Decimal("250.000")
+    assert spread.month_if_every_request_p95 == Decimal("500.000")
+    assert spread.basis == "nearest-rank over 10 requests with complete estimates (3 excluded)"
+    assert (
+        spread.sample_warning
+        == f"Only 10 requests priced: percentiles from fewer than {SPREAD_MIN_REQUESTS} are rough."
+    )
+    # Money is serialized as exact decimal strings.
+    dumped = spread.model_dump(mode="json")
+    assert dumped["p50"] == "0.005" and dumped["month_if_every_request_p95"] == "500"
+
+
+def test_cost_spread_warns_only_below_the_minimum_sample():
+    single = cost_spread([Decimal("0.02")], 0, excluded=0)
+    assert single is not None and single.p50 == single.p95 == single.max == Decimal("0.02")
+    assert single.month_if_every_request_p50 == 0  # zero requests a month, not an unknown cost
+    assert single.basis == "nearest-rank over 1 request with complete estimates (none excluded)"
+    assert single.sample_warning == "Only 1 request priced: percentiles from fewer than 30 are rough."
+    just_below = cost_spread([Decimal(1)] * (SPREAD_MIN_REQUESTS - 1), 1, excluded=0)
+    assert just_below is not None and just_below.sample_warning is not None
+    enough = cost_spread([Decimal(1)] * SPREAD_MIN_REQUESTS, 1, excluded=0)
+    assert enough is not None and enough.sample_warning is None

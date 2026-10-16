@@ -8,6 +8,10 @@ whose scenario estimate is complete are used, and the number excluded is reporte
 Scenario input: the measured total is scaled and rounded once. A cache share fixes its category's
 part of that total; the rest keeps the measured mix of the other categories. The parts are rounded
 with the largest-remainder method, so they always add up to the scenario total.
+
+A batch what-if (a share of requests at an entered price ratio) is then applied to each request's
+cost. The spread of the per-request costs is given as nearest-rank percentiles of the same costs the
+mean is taken over; a monthly figure at a percentile is the cost if every request cost that much.
 """
 
 from __future__ import annotations
@@ -31,12 +35,15 @@ from ..repos.profiles import ProfileRepository
 from ..repos.runs import RunCandidate, RunRepository
 from ..types import ApiStyle, AttemptStatus
 from ..usage.facts import UsageFacts
+from .stats import nearest_rank
 
 _ONE = Decimal(1)
 PRICE_BASIS_LABELS = {
     "original": "prices: the price snapshot each run was created with",
     "current": "prices: current rates",
 }
+# Below this many priced requests the percentiles are shown with a warning: the tails rest on a few requests.
+SPREAD_MIN_REQUESTS = 30
 
 
 class WhatIf(BaseModel):
@@ -51,6 +58,10 @@ class WhatIf(BaseModel):
     # Claude: the cache TTL assumed for scenario cache writes when neither the measured usage (TTL
     # split) nor the request (cache TTL setting) says which one applies.
     cache_write_ttl: Literal["5m", "1h"] = "5m"
+    # Batch: the share of requests sent as batch jobs, and the batch price as a fraction of the price
+    # used here. Both are entered by the user (batch meters are never matched) and go together.
+    batch_share: MoneyInput | None = None
+    batch_rate_ratio: MoneyInput | None = None
 
     @model_validator(mode="after")
     def _check(self) -> WhatIf:
@@ -58,14 +69,24 @@ class WhatIf(BaseModel):
             value = getattr(self, name)
             if not Decimal(0) < value <= Decimal(100):
                 raise ValueError(f"{name.replace('_', ' ')} must be greater than 0 and at most 100")
-        for name in ("cache_read_share", "cache_write_share"):
+        for name in ("cache_read_share", "cache_write_share", "batch_share"):
             value = getattr(self, name)
             if value is not None and not Decimal(0) <= value <= _ONE:
                 raise ValueError(f"{name.replace('_', ' ')} must be between 0 and 1")
         shares = (self.cache_read_share or Decimal(0)) + (self.cache_write_share or Decimal(0))
         if shares > _ONE:
             raise ValueError("cache read and cache write shares together cannot exceed 1")
+        if (self.batch_share is None) != (self.batch_rate_ratio is None):
+            raise ValueError("batch share and batch rate ratio must be given together")
+        if self.batch_rate_ratio is not None and not Decimal(0) < self.batch_rate_ratio <= _ONE:
+            raise ValueError("batch rate ratio must be greater than 0 and at most 1")
         return self
+
+    def batch_cost(self, cost: Decimal) -> Decimal:
+        """A request's cost with the batch share at the batch rate ratio and the rest at the full cost."""
+        if self.batch_share is None or self.batch_rate_ratio is None:
+            return cost
+        return add(mul(cost, _ONE - self.batch_share), mul(cost, self.batch_share, self.batch_rate_ratio))
 
     def labels(self) -> list[str]:
         labels: list[str] = []
@@ -77,6 +98,11 @@ class WhatIf(BaseModel):
             labels.append(f"cache reads {(self.cache_read_share * 100).normalize():f}% of input")
         if self.cache_write_share is not None:
             labels.append(f"cache writes {(self.cache_write_share * 100).normalize():f}% of input")
+        if self.batch_share is not None and self.batch_rate_ratio is not None:
+            labels.append(
+                f"batch: {(self.batch_share * 100).normalize():f}% of requests at "
+                f"x{self.batch_rate_ratio.normalize():f} the cost (entered ratio, not a published batch price)"
+            )
         return labels
 
 
@@ -90,6 +116,43 @@ class ProjectionRequest(BaseModel):
     what_if: WhatIf = Field(default_factory=WhatIf)
 
 
+class CostSpread(BaseModel):
+    """Nearest-rank percentiles of the cost per request, over the requests with complete estimates only."""
+
+    p50: Money
+    p90: Money
+    p95: Money
+    max: Money
+    # What a month would cost if every request cost the p50 (or the p95). These are not a forecast range.
+    month_if_every_request_p50: Money
+    month_if_every_request_p95: Money
+    basis: str  # what the percentiles are over, with the number of excluded requests
+    sample_warning: str | None  # set below SPREAD_MIN_REQUESTS priced requests
+
+
+def cost_spread(costs: list[Decimal], monthly_requests: int, excluded: int) -> CostSpread | None:
+    """The spread of the per-request costs, or None when no request was priced completely."""
+    if not costs:
+        return None
+    n = len(costs)
+    p50, p95 = nearest_rank(costs, 50), nearest_rank(costs, 95)
+    requests = f"{n} request{'' if n == 1 else 's'}"
+    return CostSpread(
+        p50=p50,
+        p90=nearest_rank(costs, 90),
+        p95=p95,
+        max=max(costs),
+        month_if_every_request_p50=mul(p50, Decimal(monthly_requests)),
+        month_if_every_request_p95=mul(p95, Decimal(monthly_requests)),
+        basis=f"nearest-rank over {requests} with complete estimates ({excluded or 'none'} excluded)",
+        sample_warning=(
+            f"Only {requests} priced: percentiles from fewer than {SPREAD_MIN_REQUESTS} are rough."
+            if n < SPREAD_MIN_REQUESTS
+            else None
+        ),
+    )
+
+
 class CandidateProjection(BaseModel):
     candidate_key: str
     label: str
@@ -100,6 +163,7 @@ class CandidateProjection(BaseModel):
     cost_per_request: Money | None
     cost_per_1k_requests: Money | None
     cost_per_month: Money | None
+    cost_spread: CostSpread | None
     status: Literal["complete", "unavailable"]
     assumptions: list[str]
     warnings: list[str]
@@ -339,8 +403,17 @@ class ProjectionService:
         results = [self._project_candidate(key, labels[key], groups[key], request, currency) for key in order]
         notes = [
             "Estimated token costs for generation only (judging is excluded), from measured usage of succeeded "
-            "requests. Each request is priced on its own, then averaged."
+            "requests. Each request is priced on its own, then averaged.",
+            "p50, p90 and p95 are nearest-rank percentiles of the cost per request over the same requests as the "
+            "average. A month at the p50 or p95 is what it would cost if every request cost that much; it is not "
+            "a forecast range.",
         ]
+        if what_if.batch_share is not None:
+            notes.append(
+                "Batch is blended into every request's cost: the batch share at the entered ratio, the rest at the "
+                "full cost, so the percentiles are of that blended cost. Batch turnaround, quotas and caching rules "
+                "are not modelled; check the ratio against your model's batch price."
+            )
         return ProjectionResult(
             currency=currency,
             price_basis=request.price_basis,
@@ -405,7 +478,7 @@ class ProjectionService:
                     first = _stable_reason(estimate.reasons[0]) if estimate.reasons else "estimate incomplete"
                     reasons[first] = reasons.get(first, 0) + 1
                     continue
-                costs.append(estimate.total)
+                costs.append(request.what_if.batch_cost(estimate.total))
                 custom = custom or any(line.custom_rate for line in estimate.lines)
                 for item in [*scenario.assumptions, *estimate.assumptions]:
                     if item not in assumptions:
@@ -425,6 +498,7 @@ class ProjectionService:
             cost_per_request=mean,
             cost_per_1k_requests=mul(mean, Decimal(1000)) if mean is not None else None,
             cost_per_month=mul(mean, Decimal(request.monthly_requests)) if mean is not None else None,
+            cost_spread=cost_spread(costs, request.monthly_requests, excluded),
             status="complete" if mean is not None else "unavailable",
             assumptions=assumptions,
             warnings=list(dict.fromkeys(warnings)),
