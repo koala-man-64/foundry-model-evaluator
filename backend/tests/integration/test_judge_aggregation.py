@@ -504,6 +504,26 @@ def test_swap_pairs_of_answers_retried_since_are_left_out(client):
     assert all(g["swap_pairs"] == 0 for g in groups)
 
 
+def test_a_run_wide_pass_swaps_a_prompt_whose_only_swap_is_of_retried_answers(client):
+    endpoint = create_endpoint(client)
+    candidate = terra(client, endpoint["id"])
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    run_id = effort_run(client, candidate["id"], ["One"])
+    [old] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-redo-src")
+    swap(client, run_id, {"evaluation_id": old}, "idem-redo-swap")
+    attempt_id = client.get(f"/api/runs/{run_id}").json()["attempts"][0]["id"]
+    retried = client.post(f"/api/attempts/{attempt_id}/retry", json={}, headers={"Idempotency-Key": "idem-redo-retry"})
+    assert retried.status_code == 200, retried.text
+    wait_for_run(client, run_id)
+    [new] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-redo-src-2")
+    preview = client.post(
+        f"/api/runs/{run_id}/evaluations/swap/preview", json={"evaluation_id": new, "scope": "run"}
+    ).json()
+    assert preview["ok"], preview["errors"]
+    assert [g["swap_of"] for g in preview["groups"]] == [new]
+    assert any("1 because an answer it judged was retried since" in w for w in preview["warnings"]), preview["warnings"]
+
+
 class FailsOnce:
     """Chat Completions stand-in whose first call for one deployment fails; every other call succeeds."""
 

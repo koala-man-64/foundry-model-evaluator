@@ -644,11 +644,16 @@ class JudgeService:
             ]
         with self.db.connect() as conn:
             swapped = EvaluationRepository.swapped(conn, [e.id for e in sources])
-        # A run-wide pass swaps each (prompt, trial) once: one that already has a swap on this basis is done.
-        done = {(e.prompt_id, e.trial_index) for e in sources if e.id in swapped} if swap.scope == "run" else set()
+        current_ids = set(current)
+        # A run-wide pass swaps each (prompt, trial) once: one that already has a swap of its current answers
+        # on this basis is done (a swap of answers retried since does not count).
+        done = (
+            {(e.prompt_id, e.trial_index) for e in sources if e.id in swapped and is_current(e, current_ids)}
+            if swap.scope == "run"
+            else set()
+        )
         reasons = {"swap": 0, "single": 0, "retried": 0, "swapped": 0, "done": 0, "older": 0}
         chosen: dict[tuple[str, int], Evaluation] = {}
-        current_ids = set(current)
         for source in sources:
             if source.swap_of is not None:
                 reasons["swap"] += 1

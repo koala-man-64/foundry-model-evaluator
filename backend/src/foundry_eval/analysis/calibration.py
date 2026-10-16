@@ -237,7 +237,10 @@ class CalibrationService:
                     group = groups.get(basis)
                     if group is None:
                         group = groups[basis] = self._group(basis_items[0])
-                    answers, _basis = choose_group(basis_items)
+                    # The answer set is chosen among the evaluations that can count (the judge did not take part).
+                    answers, _basis = choose_group(
+                        [e for e in basis_items if not e.judge_is_participant] or basis_items
+                    )
                     same = [e for e in basis_items if answers_judged(e) == answers]
                     _add_slot(group, same, manual, hashes.get(prompt_id, prompt_id))
             self._add_swaps(groups, [e for e in succeeded if is_current(e, current) and not e.judge_is_participant])
