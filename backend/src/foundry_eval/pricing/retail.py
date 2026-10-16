@@ -196,5 +196,5 @@ class RetailPricesClient:
                 except (httpx2.HTTPError, RetailPricesError, ValueError) as exc:
                     failures.append(f"Filter {clause!r} failed: {exc}")
         if failures:
-            raise RetailPricesError("; ".join(failures) + ". The cached catalog was kept unchanged.")
+            raise RetailPricesError("; ".join(failures))
         return list(items.values()), warnings

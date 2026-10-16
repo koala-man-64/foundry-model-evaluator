@@ -7,6 +7,7 @@ import pytest
 
 from foundry_eval.config import AppConfig
 from foundry_eval.instance_lock import InstanceLockError
+from foundry_eval.pricing.retail import RetailPricesClient
 from foundry_eval.types import ApiStyle
 from tests.api_support import (
     CANARY,
@@ -399,3 +400,36 @@ def test_tool_calls_and_empty_answers_are_billed_failures_not_answers(client, st
     for attempt in (tool, empty):
         assert attempt["usage"] is not None and attempt["cost"]["status"] == "complete"
     assert detail["run"]["status"] == "completed_with_errors"
+    run_id = detail["run"]["id"]
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    by_profile = {c["profile_name"]: c for c in comparison["candidates"]}
+    assert by_profile["chat-tool-call"]["failures"] == 1 and by_profile["chat-tool-call"]["failures_billed"] == 1
+    assert by_profile["chat-ok"]["failures_billed"] == 0
+    # A billed non-answer would most likely repeat, so only an explicit single retry re-sends it.
+    key = f"idem-no-answer-retry-{int(streaming)}"
+    retry = client.post(f"/api/runs/{run_id}/retry-failed", headers={"Idempotency-Key": key})
+    assert retry.status_code == 200 and retry.json()["attempt_ids"] == []
+
+
+def test_rates_show_the_prices_in_use_and_a_later_failed_refresh(client):
+    endpoint = create_endpoint(client)
+    gpt = create_profile(
+        client,
+        endpoint["id"],
+        preset="openai-reasoning-cache-write",
+        api_style=ApiStyle.OPENAI_RESPONSES,
+        deployment="gpt-5.6-terra",
+        meter_terms="5.6 terra",
+    )
+    assert client.post("/api/pricing/refresh", json={}).json()[0]["status"] == "succeeded"
+    before = client.get(f"/api/profiles/{gpt['id']}/rates").json()
+    assert before["catalog"]["status"] == "succeeded" and before["last_refresh_error"] is None
+
+    services = client.app.state.services
+    services.pricing.retail = RetailPricesClient(transport=httpx2.MockTransport(lambda r: httpx2.Response(503)))
+    failed = client.post("/api/pricing/refresh", json={}).json()[0]
+    assert failed["status"] == "failed" and "cached prices were kept unchanged" in failed["error"]
+    after = client.get(f"/api/profiles/{gpt['id']}/rates").json()
+    assert after["catalog"] == before["catalog"]
+    assert after["last_refresh_error"]["status"] == "failed"
+    assert after["card"]["tiers"][0]["categories"]["output"]["rate"]["price"] == "15"

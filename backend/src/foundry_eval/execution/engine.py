@@ -402,7 +402,9 @@ class Engine:
         facts = normalize_usage(profile.api_style, result.raw_usage, service_tier=result.service_tier)
         if facts is None:
             reason = "usage not reported by the provider"
-            if not result.ok:
+            if result.error_type == "no_answer":
+                reason = "the provider completed the call but reported no usage; it may still be billed"
+            elif not result.ok:
                 reason += f" (request failed: {result.error_type or 'error'}); no usage was reported"
             cost = CostEstimate.usage_missing(currency, reason, self.runs.attempt(attempt_id).budget_reserved)
         else:

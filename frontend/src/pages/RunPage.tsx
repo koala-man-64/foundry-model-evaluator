@@ -117,7 +117,8 @@ export function RunPage() {
 
   const prompt = detail.prompts[Math.min(promptIndex, detail.prompts.length - 1)]
   const candidates = [...detail.candidates].sort((a, b) => a.position - b.position)
-  const canRetry = [...latest.values()].some((a) => RETRYABLE.has(a.status))
+  // Billed responses that were not answers would most likely repeat; they are retried one at a time.
+  const canRetry = [...latest.values()].some((a) => RETRYABLE.has(a.status) && a.error_type !== 'no_answer')
 
   return (
     <div className="stack">

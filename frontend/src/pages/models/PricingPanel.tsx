@@ -361,8 +361,15 @@ export function PricingPanel() {
             <div className="small muted">
               Region {data.region || '—'} · {data.currency} ·{' '}
               {data.catalog
-                ? `Azure prices ${data.catalog.status}${data.catalog.finished_at ? ` ${formatDate(data.catalog.finished_at)}` : ''} (${data.catalog.item_count ?? 0} items)`
+                ? `Azure prices from ${data.catalog.finished_at ? formatDate(data.catalog.finished_at) : 'an earlier refresh'} (${data.catalog.item_count ?? 0} items)`
                 : 'Azure prices not fetched yet'}
+              {data.last_refresh_error && (
+                <div className="warn-text" data-testid="last-refresh-error">
+                  Last refresh failed
+                  {data.last_refresh_error.finished_at ? ` ${formatDate(data.last_refresh_error.finished_at)}` : ''}:{' '}
+                  {data.last_refresh_error.error}
+                </div>
+              )}
             </div>
           </div>
           {match && (

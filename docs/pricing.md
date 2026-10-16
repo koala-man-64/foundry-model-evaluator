@@ -29,8 +29,9 @@ You can change them under **Settings**.
 
 The download is cached in the local database with its retrieval time. The network is used only when you choose
 Refresh or run `pricing-check`. A refresh replaces a region's cached prices only when every product filter
-downloaded completely. If any filter fails, the refresh is reported as failed and the cached prices, and the rates
-matched to them, stay as they were. For each meter, the latest price whose effective date has already passed is used, so a
+downloaded completely. If any filter fails, or a region that had prices comes back empty, the refresh is reported
+as failed and the cached prices, and the rates matched to them, stay as they were. The rates view shows when the
+prices in use were downloaded and, separately, a later refresh that failed. For each meter, the latest price whose effective date has already passed is used, so a
 price change scheduled for the future does not apply yet.
 
 ### Units

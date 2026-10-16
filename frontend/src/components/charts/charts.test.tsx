@@ -17,6 +17,7 @@ function candidate(partial: Partial<ComparisonCandidate>): ComparisonCandidate {
     attempts: 2,
     succeeded: 2,
     failures: 0,
+    failures_billed: 0,
     pending: 0,
     covered_cells: 2,
     avg_cost: '0.002',

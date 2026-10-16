@@ -86,7 +86,7 @@ async def test_client_fails_when_any_filter_fails():
             return httpx2.Response(400, content=b'{"Error": "bad filter"}')
         return httpx2.Response(200, content=b'{"Items": [], "NextPageLink": null}')
 
-    with pytest.raises(RetailPricesError, match=r"HTTP 400.*kept unchanged"):
+    with pytest.raises(RetailPricesError, match="HTTP 400"):
         await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch("eastus2", "USD")
 
 

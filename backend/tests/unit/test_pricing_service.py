@@ -337,7 +337,9 @@ async def test_a_partly_failed_refresh_keeps_the_cached_catalog_and_matches(db):
 
     service.retail = RetailPricesClient(transport=httpx2.MockTransport(one_filter_fails))
     results = await service.refresh()
-    assert results[0].status == "failed" and "kept unchanged" in (results[0].error or "")
+    assert results[0].status == "failed" and f"The {cached} cached prices were kept unchanged" in (
+        results[0].error or ""
+    )
     assert len(service.catalog.items("eastus2", "USD")) == cached
     output = service.resolve(profile).tiers[0].get(Category.OUTPUT)
     assert output.status is RateStatus.PRICED and output.rate.source is RateSource.AZURE_AUTO
@@ -354,3 +356,29 @@ async def test_refresh_failure_closes_fetch_record(db):
     results = await service.refresh()
     assert results[0].status == "failed"
     assert service.catalog.last_fetch("eastus2", "USD").status == "failed"
+
+
+async def test_an_empty_answer_does_not_wipe_a_cached_region(db):
+    profile, _ = make_profile(
+        db, preset="openai-reasoning-cache-write", api_style=ApiStyle.OPENAI_RESPONSES, terms="gpt-5.6-terra"
+    )
+    service = PricingService(db, RetailPricesClient(transport=retail_transport()))
+    await service.refresh()
+    cached = len(service.catalog.items("eastus2", "USD"))
+    in_use = service.catalog.last_fetch("eastus2", "USD")
+    empty = httpx2.MockTransport(lambda r: httpx2.Response(200, content=b'{"Items": [], "NextPageLink": null}'))
+    service.retail = RetailPricesClient(transport=empty)
+    results = await service.refresh()
+    assert results[0].status == "failed" and "returned no prices" in (results[0].error or "")
+    assert len(service.catalog.items("eastus2", "USD")) == cached
+    assert service.resolve(profile).tiers[0].get(Category.OUTPUT).status is RateStatus.PRICED
+    # The last successful fetch still describes the prices in use.
+    assert service.catalog.last_fetch("eastus2", "USD", status="succeeded") == in_use
+    assert service.catalog.last_fetch("eastus2", "USD").status == "failed"
+
+
+async def test_a_first_failed_refresh_does_not_claim_a_cache(db):
+    make_profile(db, preset="openai-reasoning", api_style=ApiStyle.OPENAI_RESPONSES, terms="x")
+    service = PricingService(db, RetailPricesClient(transport=httpx2.MockTransport(lambda r: httpx2.Response(503))))
+    [result] = await service.refresh()
+    assert result.status == "failed" and "kept" not in (result.error or "")

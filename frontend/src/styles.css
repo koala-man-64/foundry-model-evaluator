@@ -163,6 +163,7 @@ pre {
 .section { border-top: 1px solid var(--border); padding-top: 0.6rem; margin-top: 0.6rem; }
 .callout { border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; border: 1px solid var(--border); background: var(--surface-2); }
 .callout.warn { background: var(--warn-soft); border-color: transparent; color: var(--text); }
+.warn-text { color: var(--warn); }
 .callout.error { background: var(--error-soft); border-color: transparent; }
 .callout.ok { background: var(--ok-soft); border-color: transparent; }
 .callout ul { margin: 0.3rem 0 0; padding-left: 1.2rem; }

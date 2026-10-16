@@ -165,12 +165,13 @@ class PriceCatalog:
             if item.meter_id == meter_id and (not sku_id or item.sku_id == sku_id)
         ]
 
-    def last_fetch(self, region: str, currency: str) -> FetchInfo | None:
+    def last_fetch(self, region: str, currency: str, status: str | None = None) -> FetchInfo | None:
+        """The latest fetch for a region, or the latest one with the given status."""
         with self._db.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM price_catalog_fetches WHERE region = ? AND currency = ?"
+                "SELECT * FROM price_catalog_fetches WHERE region = ? AND currency = ? AND (? IS NULL OR status = ?)"
                 " ORDER BY started_at DESC LIMIT 1",
-                (region, currency),
+                (region, currency, status, status),
             ).fetchone()
         if row is None:
             return None

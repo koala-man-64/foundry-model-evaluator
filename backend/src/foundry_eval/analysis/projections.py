@@ -317,7 +317,9 @@ class ProjectionService:
             unusable: dict[str, dict[str, int]] = {cid: {} for cid in candidates}
             for (_prompt, candidate_id, _trial), attempt in latest_attempts(self.runs.attempts(run_id)).items():
                 reason = None
-                if attempt.status is not AttemptStatus.SUCCEEDED:
+                if attempt.status is AttemptStatus.FAILED and attempt.error_type == "no_answer":
+                    reason = "billed, but not an answer"
+                elif attempt.status is not AttemptStatus.SUCCEEDED:
                     reason = "did not succeed"
                 elif attempt.usage is None:
                     reason = "usage not reported"

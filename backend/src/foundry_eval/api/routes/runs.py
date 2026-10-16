@@ -231,10 +231,12 @@ def retry_failed(run_id: str, key: IdempotencyKey, services: ServicesDep) -> Ret
     def work(conn: sqlite3.Connection) -> list[str]:
         attempts = services.runs.attempts(run_id)
         retried = {a.retry_of for a in attempts if a.retry_of}
+        # A no-answer response (tool call, empty text) was billed and would most likely repeat with the
+        # same body, so the bulk action leaves it to an explicit single retry.
         return [
             services.run_service.create_retry(a.id, conn)
             for a in attempts
-            if a.status in retryable and a.id not in retried
+            if a.status in retryable and a.id not in retried and a.error_type != "no_answer"
         ]
 
     new_ids, created = services.action_keys.run_once(key, f"retry-failed:{run_id}", work)
