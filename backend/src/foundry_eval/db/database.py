@@ -42,10 +42,18 @@ class Database:
         if sqlite3.sqlite_version_info < MIN_SQLITE_VERSION:
             raise RuntimeError(f"SQLite {sqlite3.sqlite_version} is too old; version 3.37 or newer is required.")
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        migrations = _migrations()
+        known = migrations[-1][0] if migrations else 0
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             current = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            for version, sql in _migrations():
+            if current > known:
+                raise RuntimeError(
+                    f"The database at {self.path} uses schema version {current}, but this version of the app only "
+                    f"knows versions up to {known}. It was opened by a newer version; update the app instead of "
+                    "running an older one against it."
+                )
+            for version, sql in migrations:
                 if version <= current:
                     continue
                 conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")

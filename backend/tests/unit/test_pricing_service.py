@@ -321,6 +321,28 @@ async def test_snapshots_are_sealed_against_inserts(db):
         )
 
 
+async def test_a_partly_failed_refresh_keeps_the_cached_catalog_and_matches(db):
+    profile, _ = make_profile(
+        db, preset="openai-reasoning-cache-write", api_style=ApiStyle.OPENAI_RESPONSES, terms="gpt-5.6-terra"
+    )
+    service = PricingService(db, RetailPricesClient(transport=retail_transport()))
+    await service.refresh()
+    cached = len(service.catalog.items("eastus2", "USD"))
+    good = retail_transport()
+
+    def one_filter_fails(request: httpx2.Request) -> httpx2.Response:
+        if "Foundry" in request.url.params["$filter"]:
+            return httpx2.Response(503)
+        return good.handler(request)  # type: ignore[attr-defined]
+
+    service.retail = RetailPricesClient(transport=httpx2.MockTransport(one_filter_fails))
+    results = await service.refresh()
+    assert results[0].status == "failed" and "kept unchanged" in (results[0].error or "")
+    assert len(service.catalog.items("eastus2", "USD")) == cached
+    output = service.resolve(profile).tiers[0].get(Category.OUTPUT)
+    assert output.status is RateStatus.PRICED and output.rate.source is RateSource.AZURE_AUTO
+
+
 async def test_refresh_failure_closes_fetch_record(db):
     make_profile(db, preset="openai-reasoning", api_style=ApiStyle.OPENAI_RESPONSES, terms="x")
 

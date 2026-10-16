@@ -152,7 +152,8 @@ def _budget_profile(client) -> dict:
     return profile
 
 
-BUDGET_REQUEST = {"prompts": [{"user": "x"}], "trials": 1, "budget": "0.0019"}  # worst case per call 0.001257
+# Worst case per call: (140-byte request body + 256 framing) x $1/M + 100 x $10/M = 0.001396.
+BUDGET_REQUEST = {"prompts": [{"user": "x"}], "trials": 1, "budget": "0.0019"}
 
 
 def test_a_cancelled_sent_call_still_counts_against_the_budget(tmp_path):
@@ -169,7 +170,7 @@ def test_a_cancelled_sent_call_still_counts_against_the_budget(tmp_path):
             time.sleep(0.02)
         client.post(f"/api/runs/{run_id}/cancel")
         detail = client.get(f"/api/runs/{run_id}").json()
-        assert detail["budget"]["committed"] == "0.001257"  # the worst case, not zero
+        assert detail["budget"]["committed"] == "0.001396"  # the worst case, not zero
         slow.delay = 0
         retry = client.post(f"/api/runs/{run_id}/retry-failed", headers={"Idempotency-Key": "idem-retry-0001"}).json()
         detail = wait_for_run(client, run_id)
@@ -194,7 +195,7 @@ def test_sent_calls_without_usage_count_at_their_reservation_after_a_restart(tmp
     replay = SlowAdapter(ApiStyle.OPENAI_CHAT, delay=0)
     with make_client(data, adapters={ApiStyle.OPENAI_CHAT: replay}) as client:
         [attempt] = client.get(f"/api/runs/{run_id}").json()["attempts"]
-        assert attempt["status"] == "interrupted" and attempt["budget_reserved"] == "0.001257"
+        assert attempt["status"] == "interrupted" and attempt["budget_reserved"] == "0.001396"
         retry = client.post(f"/api/runs/{run_id}/retry-failed", headers={"Idempotency-Key": "idem-retry-0002"}).json()
         detail = wait_for_run(client, run_id)
     assert {a["id"]: a["status"] for a in detail["attempts"]}[retry["attempt_ids"][0]] == "skipped_budget"

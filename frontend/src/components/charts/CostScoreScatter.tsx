@@ -52,6 +52,7 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
   const { container, tooltip, markProps } = useTooltip()
   const currency = comparison.currency
 
+  const judgeGap = comparison.judge_bases > 1 ? 'judge scores use different rubrics or judges' : 'not judged'
   const { data, unplotted } = useMemo(() => {
     const plotted: Datum[] = []
     const missing: { label: string; reason: string }[] = []
@@ -60,11 +61,11 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
       const y = score(candidate, kind)
       if (cost === null) missing.push({ label: candidate.label, reason: 'no complete cost estimate' })
       else if (cost <= 0) missing.push({ label: candidate.label, reason: 'cost $0' })
-      else if (y === null) missing.push({ label: candidate.label, reason: kind === 'judge' ? 'not judged' : 'not scored by hand' })
+      else if (y === null) missing.push({ label: candidate.label, reason: kind === 'judge' ? judgeGap : 'not scored by hand' })
       else plotted.push({ key: candidate.candidate_key, x: cost, y, candidate })
     }
     return { data: plotted, unplotted: missing }
-  }, [comparison.candidates, kind])
+  }, [comparison.candidates, kind, judgeGap])
 
   const frontier = useMemo(() => paretoFrontier(data), [data])
   const frontierKeys = new Set(frontier.map((d) => d.key))

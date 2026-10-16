@@ -23,7 +23,7 @@ from ..providers.request_builder import SettingsValidationError, build_body
 from ..repos.endpoints import ConflictError, EndpointRepository, NotFoundError
 from ..repos.profiles import ProfileRepository
 from ..repos.runs import RunRepository
-from .budget import input_token_upper_bound, worst_case_cost
+from .budget import body_input_upper_bound, input_token_upper_bound, worst_case_cost
 
 
 class PromptSpec(BaseModel):
@@ -160,7 +160,7 @@ class RunService:
                 errors.append(f"Model profile {spec.profile_id} does not exist.")
         labels = candidate_labels(request.candidates, profiles)
         calls_per_candidate = len(request.prompts) * request.trials
-        input_upper = max(input_token_upper_bound(p.system, p.user) for p in request.prompts)
+        text_upper = max(input_token_upper_bound(p.system, p.user) for p in request.prompts)
         previews: list[CandidatePreview] = []
         worst_total: Decimal | None = Decimal(0)
         for index, spec in enumerate(request.candidates):
@@ -171,9 +171,13 @@ class RunService:
             issues: list[SettingIssue] = []
             if profile.archived:
                 errors.append(f"{labels[index]}: the model profile is archived.")
+            # The engine reserves against each stored request body, so the preview bounds the same bodies.
+            input_upper = text_upper
             try:
-                first = request.prompts[0]
-                build_body(profile, spec.settings, Prompt(user=first.user, system=first.system))
+                input_upper = max(
+                    body_input_upper_bound(build_body(profile, spec.settings, Prompt(user=p.user, system=p.system)))
+                    for p in request.prompts
+                )
             except SettingsValidationError as exc:
                 issues = exc.issues
                 errors.extend(f"{labels[index]}: {issue.message}" for issue in issues)

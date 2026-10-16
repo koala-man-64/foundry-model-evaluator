@@ -28,7 +28,9 @@ USD, from `https://prices.azure.com/api/retail/prices`. The default product filt
 You can change them under **Settings**.
 
 The download is cached in the local database with its retrieval time. The network is used only when you choose
-Refresh or run `pricing-check`. For each meter, the latest price whose effective date has already passed is used, so a
+Refresh or run `pricing-check`. A refresh replaces a region's cached prices only when every product filter
+downloaded completely. If any filter fails, the refresh is reported as failed and the cached prices, and the rates
+matched to them, stay as they were. For each meter, the latest price whose effective date has already passed is used, so a
 price change scheduled for the future does not apply yet.
 
 ### Units

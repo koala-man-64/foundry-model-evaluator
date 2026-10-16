@@ -988,6 +988,8 @@ export interface components {
             cells_total: number;
             /** Currency */
             currency: string;
+            /** Judge Bases */
+            judge_bases: number;
             /** Notes */
             notes: string[];
             /** Run Ids */

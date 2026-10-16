@@ -96,10 +96,13 @@ def parse_responses_object(obj: dict[str, Any]) -> dict[str, Any]:
     text_parts: list[str] = []
     summaries: list[str] = []
     refusal = False
+    tool_call = False
     for item in obj.get("output") or []:
         if not isinstance(item, dict):
             continue
-        if item.get("type") == "message":
+        if item.get("type") in _CLIENT_TOOL_CALLS:
+            tool_call = True
+        elif item.get("type") == "message":
             for part in item.get("content") or []:
                 if isinstance(part, dict) and part.get("type") == "output_text":
                     text_parts.append(str(part.get("text") or ""))
@@ -115,6 +118,8 @@ def parse_responses_object(obj: dict[str, Any]) -> dict[str, Any]:
     reason = details.get("reason") if isinstance(details, dict) else None
     if refusal:
         finish = FinishReason.REFUSAL
+    elif status == "completed" and tool_call:
+        finish = FinishReason.TOOL_CALL
     elif status == "completed":
         finish = FinishReason.COMPLETED
     elif status == "incomplete" and reason == "max_output_tokens":
@@ -140,7 +145,11 @@ _CHAT_FINISH = {
     "stop": FinishReason.COMPLETED,
     "length": FinishReason.MAX_TOKENS,
     "content_filter": FinishReason.CONTENT_FILTER,
+    "tool_calls": FinishReason.TOOL_CALL,
+    "function_call": FinishReason.TOOL_CALL,
 }
+# Responses output items that ask the caller to run a tool (server-side tools run inside the call).
+_CLIENT_TOOL_CALLS = frozenset({"function_call", "custom_tool_call"})
 
 
 def parse_chat_object(obj: dict[str, Any]) -> dict[str, Any]:

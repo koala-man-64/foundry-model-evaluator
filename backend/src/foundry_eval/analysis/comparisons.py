@@ -12,6 +12,9 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
 - Costs use complete estimates in the requested currency only; the others are counted as excluded.
 - The judge win rate is averaged per cell in the same way. A tie gives each of the n judged answers
   1/n, so the shares of one evaluation always sum to 1.
+- Judge scores and wins are comparable only when they share a scoring basis: the same rubric version,
+  judge profile and deployment, and judge settings. If the matched cells mix bases, judge averages and
+  win rates are withheld (with a note) instead of averaging different scales or judges together.
 - Failures are counted over all cells, for finished attempts only.
 """
 
@@ -87,6 +90,9 @@ class Comparison(BaseModel):
     currency: str
     cells_total: int
     cells_matched: int
+    # Distinct judge scoring bases (rubric version, judge, judge settings) in the matched cells.
+    # More than one means the judge averages and win rates are withheld.
+    judge_bases: int
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -99,6 +105,7 @@ class _Observation:
     label: str
     manual: int | None
     judge: float | None
+    judge_basis: str | None = None
 
 
 @dataclass
@@ -204,6 +211,13 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
             target[cell] = mean
 
 
+def judge_basis(evaluation: Evaluation) -> str:
+    """What must match for two judge scores to be comparable: rubric version, judge and its settings."""
+    deployment = str(evaluation.judge_profile_snapshot.get("deployment", ""))
+    parts = (evaluation.rubric_version_id, evaluation.judge_profile_id, deployment)
+    return "|".join((*parts, evaluation.judge_settings.canonical_json()))
+
+
 def _win_outcome(evaluation: Evaluation, mine: list[str]) -> float:
     if evaluation.preferred == "tie":
         return len(mine) / len(evaluation.candidates)
@@ -228,6 +242,8 @@ class ComparisonService:
             candidates = {c.id: c for c in self.runs.candidates(run_id)}
             manual = self.runs.manual_scores(run_id)
             judge_scores = self.judge.scores_for_run(run_id)
+            run_evaluations = self.evaluations.list_for_run(run_id)
+            bases = {e.id: judge_basis(e) for e in run_evaluations}
             for (prompt_id, candidate_id, trial), attempt in latest_attempts(self.runs.attempts(run_id)).items():
                 candidate = candidates[candidate_id]
                 if candidate_keys and candidate.candidate_key not in candidate_keys:
@@ -254,12 +270,13 @@ class ComparisonService:
                     label=candidate.label,
                     manual=score.score if score else None,
                     judge=judged.weighted_overall if judged else None,
+                    judge_basis=bases.get(judged.evaluation_id) if judged else None,
                 )
                 item.slots.append(observation)
                 item.by_cell.setdefault(cell, []).append(observation)
             key_by_candidate = {c.id: c.candidate_key for c in candidates.values()}
             latest_eval: dict[tuple[str, int], Evaluation] = {}
-            for evaluation in self.evaluations.list_for_run(run_id):
+            for evaluation in run_evaluations:
                 if evaluation.status == "succeeded":
                     slot = (evaluation.prompt_id, evaluation.trial_index)
                     if slot not in latest_eval or evaluation.created_at >= latest_eval[slot].created_at:
@@ -282,13 +299,31 @@ class ComparisonService:
                 observations = [o for o in data[key].by_cell[cell] if o.attempt.status is AttemptStatus.SUCCEEDED]
                 _cell_values(observations, currency, values[key], cell)
         matched_set = set(matched)
+        judge_bases = {
+            o.judge_basis
+            for key in order
+            for cell in matched
+            for o in data[key].by_cell[cell]
+            if o.attempt.status is AttemptStatus.SUCCEEDED and o.judge is not None and o.judge_basis is not None
+        }
         for cell, evaluation, labels in evaluations:
             if cell not in matched_set or len(evaluation.candidates) < 2 or evaluation.preferred is None:
                 continue
+            judge_bases.add(judge_basis(evaluation))
             for key in dict.fromkeys(labels.values()):
                 if key in values:
                     mine = [label for label, candidate_key in labels.items() if candidate_key == key]
                     values[key].wins.setdefault(cell, []).append(_win_outcome(evaluation, mine))
+        if len(judge_bases) > 1:
+            for value in values.values():
+                value.judge.clear()
+                value.wins.clear()
+            notes.append(
+                f"Judge scores in these cells come from {len(judge_bases)} different combinations of rubric "
+                "version, judge and judge settings, so they are not comparable. Judge averages and win rates "
+                "are not shown; compare runs judged the same way, or re-judge them with one rubric version "
+                "and judge."
+            )
         costs = _common_values({k: v.cost for k, v in values.items()}, matched)
         latency = _common_values({k: v.latency for k, v in values.items()}, matched)
         tokens = _common_values({k: v.tokens for k, v in values.items()}, matched)
@@ -357,6 +392,7 @@ class ComparisonService:
             currency=currency,
             cells_total=len(cells),
             cells_matched=len(matched),
+            judge_bases=len(judge_bases),
             candidates=results,
             cells=cell_rows,
             notes=notes,

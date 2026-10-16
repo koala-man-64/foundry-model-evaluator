@@ -43,8 +43,17 @@ function candidate(partial: Partial<ComparisonCandidate>): ComparisonCandidate {
   }
 }
 
-function comparison(candidates: ComparisonCandidate[]): Comparison {
-  return { run_ids: ['r'], currency: 'USD', cells_total: 2, cells_matched: 2, candidates, cells: [], notes: [] }
+function comparison(candidates: ComparisonCandidate[], judgeBases = 1): Comparison {
+  return {
+    run_ids: ['r'],
+    currency: 'USD',
+    cells_total: 2,
+    cells_matched: 2,
+    judge_bases: judgeBases,
+    candidates,
+    cells: [],
+    notes: [],
+  }
 }
 
 const DATA = comparison([
@@ -73,6 +82,16 @@ describe('CostScoreScatter', () => {
     const table = screen.getByRole('table')
     expect(table).toHaveTextContent('Balanced')
     expect(screen.getAllByRole('row').filter((row) => row.textContent?.includes('yes'))).toHaveLength(2)
+  })
+
+  it('says why judge scores are missing when they mix rubrics or judges', async () => {
+    const mixed = comparison(
+      [candidate({ label: 'A', avg_judge_score: null, judge_scored: 0, avg_manual_score: 4, manual_scored: 2 })],
+      2,
+    )
+    render(<CostScoreScatter comparison={mixed} />)
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Score' }), 'judge')
+    expect(screen.getByTestId('scatter-unplotted')).toHaveTextContent('A (judge scores use different rubrics or judges)')
   })
 
   it('shows the details of a point on hover', async () => {

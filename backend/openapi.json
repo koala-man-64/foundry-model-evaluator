@@ -831,6 +831,10 @@
             "title": "Currency",
             "type": "string"
           },
+          "judge_bases": {
+            "title": "Judge Bases",
+            "type": "integer"
+          },
           "notes": {
             "items": {
               "type": "string"
@@ -851,6 +855,7 @@
           "currency",
           "cells_total",
           "cells_matched",
+          "judge_bases",
           "candidates",
           "cells",
           "notes"
