@@ -21,8 +21,10 @@ without an explicit action.
   exported through an allow-list. In CSV files, text that could run as a spreadsheet formula is prefixed with `'`.
 
 **What it trusts:** other programs running as your Windows user. They can read your Credential Manager entries and the
-app's data folder, and they can call the local API (there is no per-launch token). Use the app on a machine and
-account you control. The provider's own billing and data handling are outside the app.
+app's data folder, and they can call the local API (there is no per-launch token). The `run-suite` command is such a
+program: it sends the same `Origin` and `X-FME-Client` headers as the web interface. A per-launch token, with an
+authenticated path that a client cannot imitate by sending `Sec-Fetch-Site`, would be a separate design. Use the app
+on a machine and account you control. The provider's own billing and data handling are outside the app.
 
 ## Local-only server
 

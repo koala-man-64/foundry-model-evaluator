@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...domain.generation import validate_settings
 from ...domain.suites import Suite, SuiteIn
-from ...execution.runs import CandidateSpec, PromptSpec, RunPreview, RunRequest
+from ...execution.runs import CandidateSpec, PromptSpec, RunPreview, RunRequest, candidate_labels
 from ...money import MoneyInput
 from ...repos.endpoints import NotFoundError
 from ..deps import IdempotencyKey, ServicesDep
@@ -21,6 +23,8 @@ class SuiteRunIn(BaseModel):
 
     title: str = Field(default="", max_length=200)
     budget: MoneyInput | None = None
+    # Run only these suite candidates (their ids), e.g. a new deployment against a frozen baseline run.
+    candidate_ids: list[Annotated[str, Field(max_length=64)]] | None = Field(default=None, min_length=1, max_length=16)
 
 
 class SuiteArchiveIn(BaseModel):
@@ -59,6 +63,28 @@ def _validate(services: ServicesDep, payload: SuiteIn) -> None:
         raise HTTPException(status_code=422, detail="; ".join(problems))
 
 
+def _candidate_specs(services: ServicesDep, suite: Suite, candidate_ids: list[str] | None) -> list[CandidateSpec]:
+    """The suite's candidates, or only the chosen ones in suite order."""
+    specs = [CandidateSpec(profile_id=c.profile_id, settings=c.settings, label=c.label) for c in suite.candidates]
+    if candidate_ids is None:
+        return specs
+    if len(set(candidate_ids)) != len(candidate_ids):
+        raise HTTPException(status_code=422, detail="Each candidate can be chosen only once.")
+    known = {c.id for c in suite.candidates}
+    unknown = [i for i in candidate_ids if i not in known]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Not candidates of this suite: {', '.join(unknown)}.")
+    # Keep the labels a full run gives, so a candidate reads the same in every run of the suite.
+    profiles = {p.id: p for p in services.profiles.list(include_archived=True)}
+    labels = candidate_labels(specs, profiles)
+    chosen = set(candidate_ids)
+    return [
+        spec.model_copy(update={"label": labels[index]})
+        for index, (spec, candidate) in enumerate(zip(specs, suite.candidates, strict=True))
+        if candidate.id in chosen
+    ]
+
+
 def suite_run_request(services: ServicesDep, suite: Suite, body: SuiteRunIn) -> tuple[RunRequest, list[str]]:
     errors: list[str] = []
     judge_config = None
@@ -81,9 +107,7 @@ def suite_run_request(services: ServicesDep, suite: Suite, body: SuiteRunIn) -> 
             )
             for p in suite.prompts
         ],
-        candidates=[
-            CandidateSpec(profile_id=c.profile_id, settings=c.settings, label=c.label) for c in suite.candidates
-        ],
+        candidates=_candidate_specs(services, suite, body.candidate_ids),
         trials=suite.trials,
         budget=body.budget,
         suite_id=suite.id,

@@ -85,18 +85,71 @@ folder, set `FME_DATA_DIR` to a local path outside OneDrive.
 
 ## Command line
 
-Close the app first; the commands use the same data folder.
+`pricing-check` and `smoke` use the data folder directly, so close the app first. `run-suite` is the opposite: it
+talks to the running app.
 
 ```bat
 scripts\foundry-eval.cmd pricing-check --profile "My profile"
 scripts\foundry-eval.cmd smoke --profile "Model A" --profile "Model B" --budget 0.05 --judge "Judge model"
+scripts\foundry-eval.cmd run-suite --suite "Support answers" --budget 0.50 --run-key build-1234
 ```
 
 - `pricing-check` is free. It fetches live Azure prices and shows how each profile's meters match, with the reasons.
 - `smoke` makes a few tiny paid calls within an explicit budget, optionally followed by a judge evaluation, and prints
   usage and costs. Its results appear in History.
+- `run-suite` runs a saved suite in the running app, waits for it, checks gates and prints one JSON document, so a
+  new deployment can be checked against a baseline from a script or a CI job. See below.
 
 See [docs/smoke-test.md](docs/smoke-test.md) for a step-by-step live check.
+
+### Suite runs from a script or CI
+
+```bat
+scripts\foundry-eval.cmd run-suite --suite "Support answers" --candidate "GPT-5.6 new" --budget 0.50 ^
+  --run-key %BUILD_BUILDID% --baseline-run 3f2c9a1e-... --fail-if cost-upper-above=0.40 --tolerance judge=0.25
+```
+
+- **The app must be running** (on `FME_PORT`, or pass `--port`). The command sends the same `Origin` and
+  `X-FME-Client` headers as the web interface, and is in History like any other run.
+- **Spending.** It finds the suite by id or exact name, previews the run for free, and refuses to start without
+  `--budget`. Each call reserves its worst case against the budget first, as in the app; calls that no longer fit are
+  skipped and count as failed attempts. The command warns when the worst case of the whole run exceeds the budget.
+- **`--run-key` never pays twice.** The same suite, candidates and run key always return the same run, so re-running a
+  CI job, or a command that timed out or lost its connection, follows and re-checks that run instead of starting a new
+  one. Nothing is retried automatically. `--timeout` (default 3600 seconds) only stops the waiting; the run continues.
+- **`--candidate`** (repeatable: a candidate's id, label or profile name) runs only those candidates, for example a new
+  deployment against a frozen baseline run. Labels stay as in a full run of the suite.
+- **Output.** Progress and a summary go to stderr; stdout has only the JSON document: the run, its attempts and
+  costs, and every gate with its outcome and reason.
+
+Gates (`--fail-if`, repeatable):
+
+- `failures-above=<n>`: at most *n* attempts may fail (the default is 0). An attempt retried in the app counts once,
+  through its newest retry.
+- `cost-upper-above=<amount>`: the upper bound of the run's estimated cost (answers and judging) must not exceed the
+  amount.
+- `incomplete-cost`: every cost estimate must be complete.
+
+**Against a baseline.** `--baseline-run <run id>` compares each new candidate with a candidate of that run
+(`--baseline-candidate <key or label>`, needed when it has several) on the judge score, the checks pass rate and the
+cost per answer (`--baseline-metrics judge,checks,cost` chooses). It uses the paired differences of the suite
+comparison: a metric regresses when the verdict points the bad way (lower score or pass rate, higher cost), that is the
+whole 95% interval across prompts is past zero. `--tolerance judge=0.25`, `checks=0.1` or `cost=0.0005` (per answer)
+allows that much: the metric regresses only when the end of the interval nearest zero is past the tolerance.
+*Cannot tell* passes. A metric that has data but no verdict fails as inconclusive (fewer than 3 paired prompts, values
+for only one side, or judges that are not comparable), because missing evidence is not a pass; a metric neither run
+has (no judge, no checks) does not apply. A difference that is the same on every prompt needs at least 6 prompts for a
+verdict.
+
+| Exit code | Outcome |
+|---|---|
+| 0 | Passed. |
+| 1 | Gate failed: a cost limit was exceeded, or a metric regressed or was inconclusive against the baseline. |
+| 2 | Error before a verdict: bad arguments, the app is not running, the suite was not found, the preview refused the run, or the wait timed out. |
+| 3 | Attempts failed: more than `failures-above` allows. |
+| 4 | Cost incomplete: a cost gate could not be decided because an estimate is incomplete or pending (an unknown cost is never taken as zero). |
+
+When several apply, 3 comes before 4, and 4 before 1; the JSON lists every gate.
 
 ## Export
 

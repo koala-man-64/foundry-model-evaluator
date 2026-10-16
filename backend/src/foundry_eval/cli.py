@@ -1,23 +1,30 @@
-"""Command line entry point: ``foundry-eval serve | pricing-check | smoke | export-openapi``."""
+"""Command line entry point: ``foundry-eval serve | pricing-check | smoke | run-suite | export-openapi``."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import socket
 import sys
 import threading
+import time
 import webbrowser
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from . import __version__
 from .config import AppConfig, ConfigError
 from .instance_lock import InstanceLock, InstanceLockError
 from .logging_setup import configure_logging
 from .paths import DataDirError, ensure_data_dir
+
+if TYPE_CHECKING:
+    from .app_client import AppClient
+    from .gates import Gates
 
 
 def _port_available(port: int) -> bool:
@@ -258,6 +265,294 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         lock.release()
 
 
+class RunSuiteError(Exception):
+    """Stops ``run-suite`` before a verdict (exit code 2)."""
+
+
+def suite_run_key(suite_id: str, candidate_ids: list[str] | None, run_key: str) -> str:
+    """The Idempotency-Key for ``--run-key``: the same suite, candidates and run key give the same run."""
+    selection = ",".join(sorted(candidate_ids)) if candidate_ids else "*"
+    digest = hashlib.sha256(f"run-suite\x00{suite_id}\x00{selection}\x00{run_key}".encode()).hexdigest()
+    return f"cli-suite-{digest[:48]}"
+
+
+def _app_client(config: AppConfig) -> AppClient:
+    from .app_client import AppClient
+
+    return AppClient(config.origin)
+
+
+def _path_id(value: str) -> str:
+    from urllib.parse import quote
+
+    return quote(value, safe="")
+
+
+def _resolve_suite(client: AppClient, wanted: str) -> dict[str, Any]:
+    suites: list[dict[str, Any]] = client.get("/api/suites", {"include_archived": "true"})
+    matches = [s for s in suites if s["id"] == wanted] or [s for s in suites if s["name"] == wanted]
+    if not matches:
+        raise RunSuiteError(f"No suite has the id or name {wanted!r}.")
+    if len(matches) > 1:
+        raise RunSuiteError(f"Several suites are named {wanted!r}; pass an id: {', '.join(s['id'] for s in matches)}.")
+    suite = matches[0]
+    if suite["archived"]:
+        raise RunSuiteError(f"The suite {suite['name']!r} is archived; restore it to run it.")
+    return suite
+
+
+def _resolve_candidates(client: AppClient, suite: dict[str, Any], wanted: list[str]) -> list[str]:
+    """Suite candidate ids for ``--candidate`` values: a candidate id, its label, or its profile's name."""
+    profiles = {p["id"]: p["name"] for p in client.get("/api/profiles", {"include_archived": "true"})}
+    candidates: list[dict[str, Any]] = suite["candidates"]
+    ids: list[str] = []
+    for name in wanted:
+        matches = (
+            [c for c in candidates if c["id"] == name]
+            or [c for c in candidates if c["label"] == name]
+            or [c for c in candidates if profiles.get(c["profile_id"]) == name]
+        )
+        if len(matches) != 1:
+            problem = "matches several candidates" if matches else "is not a candidate of this suite"
+            listing = "; ".join(
+                f"{c['label'] or profiles.get(c['profile_id'], c['profile_id'])} [{c['id']}]"
+                for c in (matches or candidates)
+            )
+            raise RunSuiteError(f"--candidate {name!r} {problem}. Choose by id: {listing}.")
+        if matches[0]["id"] in ids:
+            raise RunSuiteError(f"--candidate {name!r} chooses a candidate that is already chosen.")
+        ids.append(matches[0]["id"])
+    return ids
+
+
+def _resolve_baseline(client: AppClient, run_id: str, wanted: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The baseline run and the candidate to compare against, checked before anything is spent."""
+    from .app_client import ApiError
+
+    try:
+        detail: dict[str, Any] = client.get(f"/api/runs/{_path_id(run_id)}")
+    except ApiError as exc:
+        if exc.status == 404:
+            raise RunSuiteError(f"The baseline run {run_id!r} does not exist.") from exc
+        raise
+    if detail["active"]:
+        raise RunSuiteError("The baseline run is still running; wait until it has finished.")
+    candidates = {c["candidate_key"]: c for c in detail["candidates"]}
+    if wanted is None:
+        matches = list(candidates.values())
+    else:
+        matches = [c for c in candidates.values() if wanted in (c["candidate_key"], c["label"])]
+    if len(matches) != 1:
+        listing = "; ".join(f"{c['label']} [{c['candidate_key']}]" for c in candidates.values())
+        if wanted is None:
+            problem = "The baseline run has several candidates; choose one with --baseline-candidate"
+        else:
+            problem = f"--baseline-candidate {wanted!r} matches {'several' if matches else 'no'} baseline candidates"
+        raise RunSuiteError(f"{problem}: {listing}.")
+    return detail, matches[0]
+
+
+def _wait_for_run(client: AppClient, run_id: str, *, timeout: float, poll: float) -> None:
+    """Wait until the run, including automatic judging, has finished. Progress goes to stderr."""
+    deadline = time.monotonic() + timeout
+    shown = ""
+    while True:
+        progress = client.get(f"/api/runs/{_path_id(run_id)}/progress")
+        counts: dict[str, int] = progress["counts"]
+        total: int = progress["total"]
+        finished = total - counts.get("queued", 0) - counts.get("running", 0)
+        line = f"{finished}/{total} attempts finished, {counts.get('succeeded', 0)} succeeded"
+        if progress["active"] and finished == total:
+            line += "; judging"
+        if line != shown:
+            print(f"run {run_id}: {line}", file=sys.stderr)
+            shown = line
+        if not progress["active"] and progress["status"] not in ("queued", "running"):
+            return
+        if time.monotonic() >= deadline:
+            raise RunSuiteError(
+                f"The run is still going after {timeout:g} s and continues in the app. Run the same command again "
+                "(same --run-key) to keep waiting; nothing new is sent."
+            )
+        time.sleep(poll)
+
+
+def _cost_fields(total: dict[str, Any]) -> dict[str, Any]:
+    return {name: total.get(name) for name in ("status", "total", "lower", "upper", "counted", "incomplete", "pending")}
+
+
+def _has_judging(detail: dict[str, Any]) -> bool:
+    return bool(detail["run"].get("judge_config") or detail.get("evaluation_counts") or detail.get("judge_scores"))
+
+
+def _has_checks(detail: dict[str, Any]) -> bool:
+    return any(prompt.get("checks") for prompt in detail["prompts"])
+
+
+def _run_suite(
+    client: AppClient,
+    config: AppConfig,
+    args: argparse.Namespace,
+    *,
+    budget: Decimal,
+    gates: Gates,
+    metrics: tuple[str, ...],
+    tolerances: dict[str, Decimal],
+    report: dict[str, Any],
+) -> None:
+    from .app_client import ApiError
+    from .gates import EXIT_CODES, baseline_gate, counted_attempts, overall_outcome, run_gates
+    from .money import to_text
+
+    suite = _resolve_suite(client, args.suite)
+    report["suite"] = {"id": suite["id"], "name": suite["name"]}
+    candidate_ids = _resolve_candidates(client, suite, args.candidate) if args.candidate else None
+    baseline = _resolve_baseline(client, args.baseline_run, args.baseline_candidate) if args.baseline_run else None
+    title = args.title if args.title is not None else f"{suite['name']} ({args.run_key})"
+    body: dict[str, Any] = {"title": title[:200], "budget": to_text(budget)}
+    if candidate_ids is not None:
+        body["candidate_ids"] = candidate_ids
+    suite_path = f"/api/suites/{_path_id(suite['id'])}"
+
+    preview = client.post(f"{suite_path}/preview", body)
+    report["preview"] = {name: preview[name] for name in ("calls", "worst_case_total", "budget", "warnings", "errors")}
+    for warning in preview["warnings"]:
+        print(f"warning: {warning}", file=sys.stderr)
+    if not preview["ok"]:
+        raise RunSuiteError("The app refused the run: " + "; ".join(preview["errors"]))
+    worst = preview["worst_case_total"]
+    print(f"{preview['calls']} calls, worst-case cost {worst} (budget {to_text(budget)})", file=sys.stderr)
+    if worst is not None and Decimal(worst) > budget:
+        print(
+            "warning: the worst case exceeds the budget; calls that no longer fit are skipped and count as failed",
+            file=sys.stderr,
+        )
+
+    created = client.post(
+        f"{suite_path}/runs", body, idempotency_key=suite_run_key(suite["id"], candidate_ids, args.run_key)
+    )
+    run_id: str = created["run_id"]
+    report["run"] = {"id": run_id, "created": created["created"], "url": f"{config.origin}/runs/{run_id}"}
+    if not created["created"]:
+        print(f"This --run-key was used before: following run {run_id}; nothing new is sent.", file=sys.stderr)
+    _wait_for_run(client, run_id, timeout=args.timeout, poll=args.poll_interval)
+
+    detail: dict[str, Any] = client.get(f"/api/runs/{_path_id(run_id)}")
+    run = detail["run"]
+    attempts = counted_attempts(detail["attempts"])
+    statuses: dict[str, int] = {}
+    for attempt in attempts:
+        statuses[attempt["status"]] = statuses.get(attempt["status"], 0) + 1
+    report["run"].update(
+        title=run["title"],
+        status=run["status"],
+        candidates=[
+            {name: c[name] for name in ("label", "candidate_key", "profile_name", "deployment")}
+            for c in detail["candidates"]
+        ],
+        attempts={"total": len(attempts), "by_status": dict(sorted(statuses.items()))},
+        judging={"by_status": detail.get("evaluation_counts", {}), "error": run.get("judge_error")},
+    )
+    report["cost"] = {
+        "currency": detail["combined_cost"]["currency"],
+        **_cost_fields(detail["combined_cost"]),
+        "generation": _cost_fields(detail["generation_cost"]),
+        "judging": _cost_fields(detail["judging_cost"]),
+        "budget": (detail["budget"] or {}).get("limit"),
+        "budget_committed": (detail["budget"] or {}).get("committed"),
+    }
+
+    results = run_gates(gates, detail)
+    if baseline is not None:
+        baseline_detail, baseline_candidate = baseline
+        baseline_key: str = baseline_candidate["candidate_key"]
+        keys = (c["candidate_key"] for c in detail["candidates"])
+        new_keys = [key for key in dict.fromkeys(keys) if key != baseline_key]
+        params = [("run_id", baseline_detail["run"]["id"]), ("run_id", run_id)]
+        params += [("candidate_key", key) for key in [baseline_key, *new_keys]] + [("baseline", baseline_key)]
+        applies = {
+            "judge": _has_judging(baseline_detail) or _has_judging(detail),
+            "checks": _has_checks(baseline_detail) or _has_checks(detail),
+            "cost": True,
+        }
+        try:
+            comparison: dict[str, Any] = client.get("/api/comparisons", params)
+        except ApiError as exc:
+            comparison = {"candidates": [], "notes": [f"The comparison failed: {exc.detail}"], "cells_matched": 0}
+        results.append(
+            baseline_gate(
+                comparison,
+                baseline_run_id=baseline_detail["run"]["id"],
+                baseline_key=baseline_key,
+                candidate_keys=new_keys,
+                metrics=metrics,
+                tolerances=tolerances,
+                applies=applies,
+            )
+        )
+    report["gates"] = results
+    outcome = overall_outcome(results)
+    report["outcome"] = outcome
+    report["exit_code"] = EXIT_CODES[outcome]
+
+
+def _print_summary(report: dict[str, Any]) -> None:
+    for gate in report.get("gates", []):
+        print(f"{gate['gate']}: {gate['outcome']} ({gate['detail']})", file=sys.stderr)
+        for row in gate.get("candidates", []):
+            for metric, result in row["metrics"].items():
+                print(f"  {row['label']} {metric}: {result['status']} ({result['reason']})", file=sys.stderr)
+    run = report.get("run", {})
+    where = f" Run: {run['url']}" if run.get("url") else ""
+    print(f"Result: {report['outcome']} (exit code {report['exit_code']}).{where}", file=sys.stderr)
+
+
+def cmd_run_suite(args: argparse.Namespace) -> int:
+    from .app_client import ApiError, AppUnavailableError, RequestOutcomeUnknownError
+    from .gates import EXIT_ERROR, GateSpecError, parse_fail_if, parse_metrics, parse_tolerances
+    from .money import validate_money_input
+
+    report: dict[str, Any] = {"outcome": "error", "exit_code": EXIT_ERROR}
+    try:
+        try:
+            budget = validate_money_input(args.budget)
+        except ValueError as exc:
+            raise RunSuiteError("--budget must be a decimal amount such as 0.50") from exc
+        if budget <= 0:
+            raise RunSuiteError("--budget must be greater than zero")
+        if not 1 <= len(args.run_key) <= 200 or not args.run_key.strip():
+            raise RunSuiteError("--run-key must have 1 to 200 characters")
+        if args.timeout <= 0 or args.poll_interval <= 0:
+            raise RunSuiteError("--timeout and the poll interval must be greater than zero")
+        gates = parse_fail_if(args.fail_if)
+        tolerances = parse_tolerances(args.tolerance)
+        metrics = parse_metrics(args.baseline_metrics)
+        if not args.baseline_run and (args.baseline_candidate or args.baseline_metrics or args.tolerance):
+            raise RunSuiteError("--baseline-candidate, --baseline-metrics and --tolerance need --baseline-run")
+        config = AppConfig.from_env(port=args.port)
+        with _app_client(config) as client:
+            _run_suite(
+                client, config, args, budget=budget, gates=gates, metrics=metrics, tolerances=tolerances, report=report
+            )
+    except (RunSuiteError, GateSpecError, AppUnavailableError, ConfigError, DataDirError) as exc:
+        report["error"] = str(exc)
+    except RequestOutcomeUnknownError as exc:
+        report["error"] = (
+            f"{exc}. Whether the app received the request is unknown. Run the same command again (same --run-key): "
+            "a run it already created is returned instead of a new one."
+        )
+    except ApiError as exc:
+        report["error"] = f"The app answered: {exc}"
+    except KeyboardInterrupt:
+        report["error"] = "Stopped waiting. A started run continues in the app; the same --run-key follows it again."
+    if "error" in report:
+        print(f"error: {report['error']}", file=sys.stderr)
+    else:
+        _print_summary(report)
+    print(json.dumps(report, indent=2))
+    return int(report["exit_code"])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="foundry-eval", description="Foundry Model Evaluator")
     parser.add_argument("--version", action="version", version=__version__)
@@ -285,6 +580,45 @@ def main(argv: list[str] | None = None) -> int:
     smoke.add_argument("--judge", help="also judge the answers with this profile (within the same budget)")
     smoke.add_argument("--judge-max-output-tokens", type=int, default=1024)
     smoke.set_defaults(func=cmd_smoke)
+
+    suite_run = sub.add_parser(
+        "run-suite", help="run a saved suite in the running app, wait for it and check gates (paid; for CI)"
+    )
+    suite_run.add_argument("--suite", required=True, help="the suite's id or exact name")
+    suite_run.add_argument("--budget", required=True, help="maximum estimated spend for the run, e.g. 0.50")
+    suite_run.add_argument(
+        "--run-key", required=True, help="names this run, e.g. the CI build id; the same key never pays twice"
+    )
+    suite_run.add_argument(
+        "--candidate",
+        action="append",
+        default=[],
+        help="run only this suite candidate (id, label or profile name); repeatable",
+    )
+    suite_run.add_argument("--title", help="the run's title (default: the suite name and the run key)")
+    suite_run.add_argument(
+        "--fail-if",
+        action="append",
+        default=[],
+        metavar="GATE",
+        help="cost-upper-above=<amount>, failures-above=<n> (default 0) or incomplete-cost; repeatable",
+    )
+    suite_run.add_argument("--baseline-run", help="compare with this earlier run and fail on a regression")
+    suite_run.add_argument(
+        "--baseline-candidate", help="the baseline run's candidate (key or label), when it has several"
+    )
+    suite_run.add_argument("--baseline-metrics", help="comma-separated: judge, checks, cost (default: all three)")
+    suite_run.add_argument(
+        "--tolerance",
+        action="append",
+        default=[],
+        metavar="METRIC=VALUE",
+        help="allowed regression: judge=<score points>, checks=<share 0-1>, cost=<amount per answer>",
+    )
+    suite_run.add_argument("--port", type=int, default=None, help="the app's port (default: FME_PORT or 8765)")
+    suite_run.add_argument("--timeout", type=float, default=3600.0, help="seconds to wait for the run (default 3600)")
+    suite_run.add_argument("--poll-interval", type=float, default=2.0, help=argparse.SUPPRESS)
+    suite_run.set_defaults(func=cmd_run_suite)
 
     args = parser.parse_args(argv)
     if args.command is None:

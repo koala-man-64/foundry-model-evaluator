@@ -2873,6 +2873,8 @@ export interface components {
         SuiteRunIn: {
             /** Budget */
             budget?: number | string | null;
+            /** Candidate Ids */
+            candidate_ids?: string[] | null;
             /**
              * Title
              * @default
