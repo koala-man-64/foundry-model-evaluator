@@ -15,8 +15,9 @@ from fastapi.testclient import TestClient
 
 from foundry_eval.domain.profiles import ProfileFields
 from foundry_eval.judging.service import SwapRequest
+from foundry_eval.providers.base import ProviderCall, ProviderResult
 from foundry_eval.repos.endpoints import ConflictError
-from foundry_eval.types import ApiStyle
+from foundry_eval.types import ApiStyle, FinishReason
 from tests.api_support import create_endpoint, create_profile, set_manual, start_run, wait_for_run
 
 FIRST, SECOND = 4.25, 4.0  # the mock judge's weighted overall for positions A and B
@@ -233,6 +234,37 @@ def test_only_a_succeeded_comparison_of_answers_can_be_swapped(client):
     assert preview["errors"] == ["The evaluation to swap does not exist in this run."]
 
 
+def test_a_judge_profile_edited_after_the_preview_stops_the_swap(client, mock_app):
+    endpoint = create_endpoint(client)
+    candidate = terra(client, endpoint["id"])
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    run_id = effort_run(client, candidate["id"], ["One"])
+    [source_id] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-src-toctou")
+    services = client.app.state.services
+    previewed = services.judge.preview_swap
+
+    def preview_then_edit(run: str, request: SwapRequest):
+        result = previewed(run, request)
+        # Another tab edits the judge between this request's preview and its insert.
+        profile = services.profiles.get(judge_id)
+        fields = ProfileFields.model_validate(
+            {**profile.model_dump(include=set(ProfileFields.model_fields)), "deployment": "gpt-4.1-judge-3"}
+        )
+        services.profiles.update(judge_id, fields)
+        return result
+
+    services.judge.preview_swap = preview_then_edit
+    calls = mock_app.state.mock.requests["/openai/v1/responses"]
+    response = client.post(
+        f"/api/runs/{run_id}/evaluations/swap",
+        json={"evaluation_id": source_id},
+        headers={"Idempotency-Key": "idem-toctou"},
+    )
+    assert response.status_code == 422 and "changed since the preview" in response.json()["detail"]
+    assert len(client.get(f"/api/runs/{run_id}/evaluations").json()) == 1
+    assert mock_app.state.mock.requests["/openai/v1/responses"] == calls
+
+
 def test_concurrent_swap_requests_with_different_keys_create_one_swap(client):
     """The already-swapped check is repeated under the write lock, after each request's preview."""
     endpoint = create_endpoint(client)
@@ -261,8 +293,10 @@ def test_a_run_wide_swap_pass_takes_the_latest_unswapped_evaluation_per_prompt(c
     # Another rubric is another basis: a run-wide pass on the default rubric never touches it.
     judge(client, run_id, {"judge_profile_id": judge_id, "rubric_id": rubric(client, "Other")}, "idem-src-5")
     # Prompt two judged again on the default basis: one swap per prompt and trial, of the most recent.
-    prompt_two = client.get(f"/api/runs/{run_id}").json()["prompts"][1]["id"]
+    prompt_one, prompt_two = (p["id"] for p in client.get(f"/api/runs/{run_id}").json()["prompts"])
     [newer] = judge(client, run_id, {"judge_profile_id": judge_id, "prompt_id": prompt_two}, "idem-src-5b")
+    # Prompt one already has a swap: a newer evaluation there does not make the run-wide pass pay again.
+    judge(client, run_id, {"judge_profile_id": judge_id, "prompt_id": prompt_one}, "idem-src-5c")
 
     payload = {"evaluation_id": second, "scope": "run"}
     preview = client.post(f"/api/runs/{run_id}/evaluations/swap/preview", json=payload).json()
@@ -270,9 +304,14 @@ def test_a_run_wide_swap_pass_takes_the_latest_unswapped_evaluation_per_prompt(c
     assert [g["swap_of"] for g in preview["groups"]] == [newer]
     [warning] = [w for w in preview["warnings"] if "left out of this swap pass" in w]
     assert "1 because it already has a swap pass" in warning
+    assert "1 because its prompt and trial already have a swap pass on this basis" in warning
     assert "1 because a more recent evaluation of the same prompt and trial is swapped instead" in warning
     [swap_id] = swap(client, run_id, payload, "idem-swap-5")
     assert evaluation(client, swap_id)["swap_of"] == newer
+    # Every prompt and trial now has a swap: another run-wide pass has nothing to pay for.
+    again = client.post(f"/api/runs/{run_id}/evaluations/swap/preview", json=payload).json()
+    assert not again["ok"] and again["calls"] == 0
+    assert "There is nothing to swap in this scope." in again["errors"]
 
     groups = client.get("/api/analysis/calibration", params={"run_id": run_id}).json()["groups"]
     by_rubric = {g["rubric"]: g for g in groups}
@@ -446,3 +485,106 @@ def test_evaluations_of_answers_retried_since_are_left_out(client):
     assert any("retried since" in n for n in comparison["notes"]), comparison["notes"]
     preview = client.post(f"/api/runs/{run_id}/evaluations/swap/preview", json={"evaluation_id": source_id}).json()
     assert any("retried since" in e for e in preview["errors"]), preview["errors"]
+
+
+def test_swap_pairs_of_answers_retried_since_are_left_out(client):
+    endpoint = create_endpoint(client)
+    candidate = terra(client, endpoint["id"])
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    run_id = effort_run(client, candidate["id"], ["One"])
+    [source_id] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-pair-src")
+    swap(client, run_id, {"evaluation_id": source_id}, "idem-pair-swap")
+    [group] = client.get("/api/analysis/calibration", params={"run_id": run_id}).json()["groups"]
+    assert group["swap_pairs"] == 1
+    attempt_id = client.get(f"/api/runs/{run_id}").json()["attempts"][0]["id"]
+    retried = client.post(f"/api/attempts/{attempt_id}/retry", json={}, headers={"Idempotency-Key": "idem-pair-retry"})
+    assert retried.status_code == 200, retried.text
+    wait_for_run(client, run_id)
+    groups = client.get("/api/analysis/calibration", params={"run_id": run_id}).json()["groups"]
+    assert all(g["swap_pairs"] == 0 for g in groups)
+
+
+class FailsOnce:
+    """Chat Completions stand-in whose first call for one deployment fails; every other call succeeds."""
+
+    api_style = ApiStyle.OPENAI_CHAT
+
+    def __init__(self, deployment: str) -> None:
+        self.deployment = deployment
+        self.failed = False
+
+    async def execute(self, call: ProviderCall) -> ProviderResult:
+        model = call.body["model"]
+        if model == self.deployment and not self.failed:
+            self.failed = True
+            return ProviderResult(
+                ok=False,
+                request_body=call.body,
+                streamed=False,
+                latency_ms=5,
+                http_status=500,
+                error_type="http",
+                error_message="scripted failure",
+                finish_reason=FinishReason.ERROR,
+            )
+        return ProviderResult(
+            ok=True,
+            request_body=call.body,
+            streamed=False,
+            latency_ms=5,
+            raw_usage={"prompt_tokens": 10, "completion_tokens": 5},
+            output_text=f"answer from {model}",
+            finish_reason=FinishReason.COMPLETED,
+            http_status=200,
+        )
+
+
+def test_an_evaluation_from_before_a_retry_added_an_answer_is_not_mixed_in(client):
+    """The review's blocker: {a, b} judged while c had failed, then {a, b, c} after c was retried."""
+    client.app.state.services.engine.adapters[ApiStyle.OPENAI_CHAT] = FailsOnce("deepseek-c")
+    endpoint = create_endpoint(client)
+    chats = [
+        create_profile(
+            client, endpoint["id"], preset="generic-chat", api_style=ApiStyle.OPENAI_CHAT, deployment=f"deepseek-{x}"
+        )
+        for x in "abc"
+    ]
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    run_id = start_run(
+        client, {"prompts": [{"user": "Hi"}], "candidates": [{"profile_id": c["id"]} for c in chats]}, key="idem-grow"
+    )
+    detail = wait_for_run(client, run_id)
+    [failed] = [a for a in detail["attempts"] if a["status"] != "succeeded"]
+    [before] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-grow-j1")
+    swap(client, run_id, {"evaluation_id": before}, "idem-grow-swap")  # two evaluations of {a, b}
+    retried = client.post(f"/api/attempts/{failed['id']}/retry", json={}, headers={"Idempotency-Key": "idem-grow-r"})
+    assert retried.status_code == 200, retried.text
+    wait_for_run(client, run_id)
+    [after] = judge(client, run_id, {"judge_profile_id": judge_id}, "idem-grow-j2")  # one evaluation of {a, b, c}
+    assert len(evaluation(client, after)["order"]) == 3
+
+    detail = client.get(f"/api/runs/{run_id}").json()
+    assert {tuple(a["evaluation_ids"]) for a in detail["judge_aggregates"].values()} == {(after,)}
+    assert {a["left_out"] for a in detail["judge_aggregates"].values()} == {2}
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    # One matched cell, one evaluation of all three answers: the preference shares sum to exactly 1.
+    assert sum(c["judge_wins"] for c in comparison["candidates"]) == pytest.approx(1.0)
+    assert all(c["judge_comparisons"] == 1 and c["judge_evaluations"] == 1 for c in comparison["candidates"])
+    assert comparison["cells"][0]["judge_left_out"] == 2
+    assert any("judged fewer answers" in n for n in comparison["notes"]), comparison["notes"]
+
+
+def test_withheld_judge_cells_report_their_evaluations_as_left_out(client):
+    endpoint = create_endpoint(client)
+    candidate = terra(client, endpoint["id"])
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    first = effort_run(client, candidate["id"], ["Same prompt"], key="idem-withheld-1")
+    judge(client, first, {"judge_profile_id": judge_id}, "idem-withheld-j1")
+    second = effort_run(client, candidate["id"], ["Same prompt"], key="idem-withheld-2")
+    judge(
+        client, second, {"judge_profile_id": judge_id, "rubric_id": rubric(client, "Other basis")}, "idem-withheld-j2"
+    )
+    comparison = client.get("/api/comparisons", params={"run_id": [first, second]}).json()
+    assert comparison["judge_bases"] == 2
+    [cell] = comparison["cells"]
+    assert cell["judge_evaluations"] == 0 and cell["judge_left_out"] == 2 and cell["judge_spread"] is None

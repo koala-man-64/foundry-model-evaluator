@@ -190,6 +190,11 @@ prompt and trial, and silently ignored the rest. Now every succeeded evaluation 
   Evaluations on another basis are **left out, never mixed in**, and a note says how many. Re-judging once with a new
   rubric therefore still switches to it (one each, and the newer wins), but one re-judge no longer outweighs two
   evaluations on the original basis.
+- **Only the same answers are averaged together.** An evaluation made while one answer had failed judged fewer
+  answers than one made after that answer was retried; their preference shares are not comparable (each set sums to
+  1). So the evaluations used must have judged exactly the same answers, and the ones that judged the **most
+  answers** come first, before the basis rule above. That is normally every current answer, because the set only
+  grows when a failed answer is retried. Evaluations of fewer answers are left out with a note.
 - **Averages.** An answer's judge score is the mean of its weighted overall scores over that basis's evaluations. A
   candidate's win share in a cell is averaged over the evaluations of each run first, then over runs, so a run judged
   three times weighs as much as one judged once. Comparisons show how many evaluations are behind each judge average
@@ -210,14 +215,16 @@ A **swap pass** measures it:
 
 - From a succeeded evaluation, **Swap order and re-judge** sends the same answers to the same judge, rubric version
   and settings, in exactly the reverse order (label A is always the answer shown first). With the scope **every prompt
-  and trial of the run judged this way**, it swaps the most recent unswapped evaluation on that basis in each prompt
-  and trial.
+  and trial of the run judged this way**, it swaps the most recent evaluation on that basis in each prompt and trial
+  that has no swap on that basis yet, so pressing it again never pays for the same prompt and trial twice (swap
+  another evaluation on its own if you want more pairs).
 - It is a paid action like any judging: never a default, run only when you confirm its preview (calls, worst-case
   cost, budget), sent with an idempotency key, and never retried automatically. A swap that fails stays failed;
   swapping that evaluation again takes a new explicit request. An evaluation cannot be swapped when it already has a
   queued, running or succeeded swap, is a swap itself, judged fewer than two answers, or judged an answer that was
   retried since. If the judge profile's deployment, model, API style or structured output changed since, the swap is
-  refused, because it would not be like for like.
+  refused, because it would not be like for like; this is checked again when the swap is written, so an edit after
+  the preview stops it too. The confirm button only accepts a preview of exactly the scope shown.
 - A swap is on the same basis as its source, so its scores join the aggregate above and comparisons average both
   orders.
 - **Judge vs. your scores** reports, per judge basis, the swap pairs (an evaluation and its swap, both succeeded):
@@ -225,6 +232,12 @@ A **swap pass** measures it:
   the same *position* both times), and **consistent** when it kept the same answer, or a tie both times. A tie in only
   one of the two is neither. The flip share is the position-bias statistic; it is shown with its counts, because a
   handful of pairs says little.
+- Pairs follow the scores' exclusions: a pair in which the judge also produced an answer, or whose answers were
+  retried since, is left out.
+- With **three or more answers**, reversing the order moves every answer except the middle one of an odd count. A
+  pair whose first evaluation preferred that middle answer cannot tell position from content and is left out. A flip
+  then means the preference moved to another answer, which is not always the mirrored position, so the flip share is
+  clearest with two answers.
 
 ### Checks
 

@@ -54,7 +54,14 @@ export function SwapPass({ runId, evaluation, disabled }: { runId: string; evalu
       </p>
       <label className="row small">
         Scope
-        <select value={scope} onChange={(e) => setScope(e.target.value as Scope)}>
+        <select
+          value={scope}
+          onChange={(e) => {
+            // Another scope is another request: a key from an earlier attempt must not replay its result.
+            key.current = newIdempotencyKey()
+            setScope(e.target.value as Scope)
+          }}
+        >
           <option value="evaluation">This evaluation</option>
           <option value="run">Every prompt and trial of the run judged this way</option>
         </select>
@@ -90,7 +97,7 @@ export function SwapPass({ runId, evaluation, disabled }: { runId: string; evalu
         <button
           type="button"
           className="primary"
-          disabled={!data?.ok || start.isPending || disabled}
+          disabled={!data?.ok || !preview.current || start.isPending || disabled}
           onClick={() => start.mutate(request)}
         >
           {start.isPending ? 'Starting…' : 'Run swap pass'}

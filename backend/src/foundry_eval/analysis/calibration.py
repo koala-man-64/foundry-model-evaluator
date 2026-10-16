@@ -10,15 +10,20 @@ Nothing here costs anything: it only reads scores already stored.
 Every succeeded evaluation of an answer counts: within each judge basis, an answer judged several
 times is compared with you once, at its mean score, and the judge's pick for a prompt and trial is
 the answer with the highest mean preference share (no pick when they are level, for example when
-two evaluations preferred different answers). Each basis has its own row, so nothing is left out
-for using another basis here; evaluations of answers that were retried since are left out.
+two evaluations preferred different answers). As in comparisons, only evaluations of the same
+answers are averaged together (those that judged the most answers, then the most evaluations, then
+the most recent). Each basis has its own row, so nothing is left out for using another basis here;
+evaluations of answers that were retried since are left out.
 
 Position swaps: a swap pass re-judges the same answers with the presentation order reversed. For
 each pair (an evaluation and its swap, both succeeded, on the same basis) the judge either kept its
 preference (*consistent*: the same answer, or a tie both times), moved it to another answer
 (*flip*: in a two-answer comparison it preferred the same position both times), or tied only once.
 The flip share is the position-bias statistic; it is reported with its counts, since a handful of
-pairs says little.
+pairs says little. Pairs follow the same exclusions as the scores (the judge also produced an
+answer, or an answer was retried since). With an odd number of answers the middle one keeps its
+position when the order is reversed, so a pair whose first evaluation preferred it says nothing
+about position and is left out.
 
 Answers to the same prompt are related, so the interval for the rank correlation counts *prompts*,
 not answers, as its sample size, and is shown only from ``MIN_INTERVAL_PROMPTS`` prompts.
@@ -34,7 +39,15 @@ from typing import Literal
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..judging.aggregate import SCORING_SETTINGS, aggregate_answers, by_slot, is_current, judge_basis
+from ..judging.aggregate import (
+    SCORING_SETTINGS,
+    aggregate_answers,
+    answers_judged,
+    by_slot,
+    choose_group,
+    is_current,
+    judge_basis,
+)
 from ..judging.service import latest_attempts
 from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
@@ -151,13 +164,17 @@ SwapOutcome = Literal["consistent", "flip", "one_tie"]
 
 
 def swap_outcome(source: Evaluation, swap: Evaluation) -> SwapOutcome | None:
-    """How the judge's preference changed once the order was reversed; None if either has no preference.
+    """How the judge's preference changed once the order was reversed; None when the pair says nothing.
 
     consistent: the same answer, or a tie both times. flip: another answer (with two answers, the same
-    position both times). one_tie: a tie in only one of the two, which is neither.
+    position both times). one_tie: a tie in only one of the two, which is neither. None: either has no
+    preference, or the source preferred the middle answer of an odd count, which reversing never moves.
     """
     before, after = _preferred_answer(source), _preferred_answer(swap)
     if before is None or after is None:
+        return None
+    shown = [o.attempt_id for o in source.order]
+    if len(shown) % 2 == 1 and before == shown[len(shown) // 2]:
         return None
     if before == after:
         return "consistent"
@@ -186,7 +203,8 @@ def _add_slot(group: _Group, evaluations: list[Evaluation], manual: dict[str, Ma
     shares = [a.win_share for a in scored if a.win_share is not None]
     if len(top) != 1 or len(shares) < len(scored):
         return
-    picks = [a for a in scored if a.win_share == max(shares)]
+    # Shares are means of fractions such as 1/3, so "level" allows for rounding.
+    picks = [a for a in scored if a.win_share is not None and max(shares) - a.win_share < 1e-9]
     if len(picks) == 1:
         group.top_total += 1
         group.top_agree += int(picks[0].attempt_id == top[0].attempt_id)
@@ -219,8 +237,10 @@ class CalibrationService:
                     group = groups.get(basis)
                     if group is None:
                         group = groups[basis] = self._group(basis_items[0])
-                    _add_slot(group, basis_items, manual, hashes.get(prompt_id, prompt_id))
-            self._add_swaps(groups, succeeded)
+                    answers, _basis = choose_group(basis_items)
+                    same = [e for e in basis_items if answers_judged(e) == answers]
+                    _add_slot(group, same, manual, hashes.get(prompt_id, prompt_id))
+            self._add_swaps(groups, [e for e in succeeded if is_current(e, current) and not e.judge_is_participant])
         notes = [
             "Your manual scores are one person's view, not ground truth.",
             "Judge scores are rescaled from the rubric's scale to 1-5 before they are compared with yours.",
@@ -244,7 +264,7 @@ class CalibrationService:
         )
 
     def _add_swaps(self, groups: dict[str, _Group], succeeded: list[Evaluation]) -> None:
-        """Pairs of an evaluation and its swap pass, both succeeded, counted on the source's basis."""
+        """Pairs of an evaluation and its swap pass, both usable, counted on the source's basis."""
         by_id = {e.id: e for e in succeeded}
         for swap in succeeded:
             source = by_id.get(swap.swap_of or "")

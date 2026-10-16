@@ -151,7 +151,7 @@ def test_judge_run_uses_one_basis_per_slot_and_counts_what_it_leaves_out():
     assert slot.answers["x"].mean == pytest.approx(3.5)
     assert slot.answers["x"].win_share == pytest.approx((1 + 0.5) / 2)
     assert slot.spread == pytest.approx(1.0)
-    assert judged.slots[("p2", 1)].other_basis == 0 and judged.other_basis == 1
+    assert judged.slots[("p2", 1)].left_out == 0
     assert set(judged.answers()) == {"x", "y", "u", "v"}
 
 
@@ -186,3 +186,25 @@ def test_a_swap_pair_is_consistent_a_flip_or_tied_only_once():
     tied = evaluation({"x": 3.0, "y": 3.0}, preferred="tie")
     assert swap_outcome(tied, evaluation({"y": 3.0, "x": 3.0}, preferred="tie")) == "consistent"
     assert swap_outcome(source, evaluation({"y": 4.0, "x": 3.0}, preferred=None)) is None
+
+
+def test_only_evaluations_of_the_same_answers_are_averaged_together():
+    """An evaluation from before a failed answer was retried judged fewer answers: it is not mixed in."""
+    before = evaluation({"a": 4.0, "b": 2.0}, preferred="a", created_at="2026-10-16T09:00:00Z")
+    swapped = evaluation({"b": 4.0, "a": 2.0}, preferred="b", created_at="2026-10-16T09:05:00Z")
+    after = evaluation({"a": 3.0, "b": 3.0, "c": 5.0}, preferred="c", created_at="2026-10-16T10:00:00Z")
+    slot = judge_run([before, swapped, after]).slots[("p1", 1)]
+    # The most answers first, even against two evaluations of fewer answers.
+    assert [e.id for e in slot.evaluations] == [after.id]
+    assert slot.other_answers == 2 and slot.other_basis == 0 and slot.left_out == 2
+    shares = [a.win_share for a in slot.answers.values()]
+    assert sum(s for s in shares if s is not None) == pytest.approx(1.0)
+    assert slot.answers["a"].mean == pytest.approx(3.0) and slot.answers["a"].evaluation_ids == (after.id,)
+
+
+def test_a_middle_answer_that_reversing_cannot_move_says_nothing_about_position():
+    middle = evaluation({"x": 3.0, "y": 4.0, "z": 3.0}, preferred="y")
+    assert swap_outcome(middle, evaluation({"z": 3.0, "y": 4.0, "x": 3.0}, preferred="y")) is None
+    edge = evaluation({"x": 4.0, "y": 3.0, "z": 3.0}, preferred="x")
+    assert swap_outcome(edge, evaluation({"z": 3.0, "y": 3.0, "x": 4.0}, preferred="x")) == "consistent"
+    assert swap_outcome(edge, evaluation({"z": 4.0, "y": 3.0, "x": 3.0}, preferred="z")) == "flip"

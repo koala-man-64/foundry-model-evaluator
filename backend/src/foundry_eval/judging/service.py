@@ -82,8 +82,8 @@ class SwapRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evaluation_id: str
-    # evaluation: swap that evaluation only. run: swap the latest unswapped evaluation on the same
-    # basis in every (prompt, trial) of the run.
+    # evaluation: swap that evaluation only. run: in every (prompt, trial) of the run that has no swap
+    # on the same basis yet, swap the most recent evaluation on that basis.
     scope: Literal["evaluation", "run"] = "evaluation"
 
 
@@ -140,8 +140,8 @@ class JudgeAggregate(BaseModel):
     n_evaluations: int
     spread: float | None  # highest minus lowest weighted overall; None from one evaluation
     win_share: float | None  # mean preference share; None if no evaluation compared answers
-    evaluation_ids: list[str]  # the evaluations of its (prompt, trial) on the chosen basis
-    left_out: int  # succeeded evaluations of its (prompt, trial) on another basis
+    evaluation_ids: list[str]  # the evaluations of its (prompt, trial) that are averaged (same answers and basis)
+    left_out: int  # succeeded evaluations of its (prompt, trial) that are not (another basis, fewer or retried answers)
 
 
 class JudgeValidationError(ValueError):
@@ -553,11 +553,13 @@ class JudgeService:
         with self.db.transaction() as conn:
             # Checked again under the write lock: concurrent requests with one key create one batch.
             rows = conn.execute(
-                "SELECT id FROM evaluations WHERE idempotency_key = ? ORDER BY created_at", (idempotency_key,)
+                "SELECT id, swap_of FROM evaluations WHERE idempotency_key = ? ORDER BY created_at", (idempotency_key,)
             ).fetchall()
-            if rows:
-                return [row["id"] for row in rows], False
             sources = [g.swap_of for g in groups if g.swap_of is not None]
+            if rows:
+                if (rows[0]["swap_of"] is not None) != bool(sources):
+                    raise ConflictError("This Idempotency-Key was already used for a different action.")
+                return [row["id"] for row in rows], False
             if sources:
                 # A swap pass re-checks under the lock that no other request swapped its sources meanwhile.
                 swapped = EvaluationRepository.swapped(conn, sources)
@@ -642,7 +644,9 @@ class JudgeService:
             ]
         with self.db.connect() as conn:
             swapped = EvaluationRepository.swapped(conn, [e.id for e in sources])
-        reasons = {"swap": 0, "single": 0, "retried": 0, "swapped": 0, "older": 0}
+        # A run-wide pass swaps each (prompt, trial) once: one that already has a swap on this basis is done.
+        done = {(e.prompt_id, e.trial_index) for e in sources if e.id in swapped} if swap.scope == "run" else set()
+        reasons = {"swap": 0, "single": 0, "retried": 0, "swapped": 0, "done": 0, "older": 0}
         chosen: dict[tuple[str, int], Evaluation] = {}
         current_ids = set(current)
         for source in sources:
@@ -654,6 +658,8 @@ class JudgeService:
                 reasons["retried"] += 1
             elif source.id in swapped:
                 reasons["swapped"] += 1
+            elif (source.prompt_id, source.trial_index) in done:
+                reasons["done"] += 1
             else:
                 slot = (source.prompt_id, source.trial_index)
                 previous = chosen.get(slot)
@@ -666,6 +672,7 @@ class JudgeService:
             "single": "it judged fewer than two answers, so there is no order to reverse",
             "retried": "an answer it judged was retried since",
             "swapped": "it already has a swap pass (queued, running or succeeded)",
+            "done": "its prompt and trial already have a swap pass on this basis (swap it on its own if you want more)",
             "older": "a more recent evaluation of the same prompt and trial is swapped instead",
         }
         errors: list[str] = []
@@ -733,6 +740,16 @@ class JudgeService:
         plan = self._swap_plan(run_id, swap)
         assert plan.request is not None  # the preview was ok
         setup = self._setup_for_create(plan.request, preview)
+        # The evaluations are written from this setup, so its basis is the one they will have.
+        if self._planned_basis(setup, plan.request) != plan.basis:
+            raise JudgeValidationError(
+                preview.model_copy(
+                    update={
+                        "ok": False,
+                        "errors": ["The judge profile changed since the preview; preview the swap again."],
+                    }
+                )
+            )
         return self._insert(run_id, plan.request, setup, plan.groups, idempotency_key, "manual")
 
     def start(self, run_id: str, evaluation_ids: list[str]) -> None:
@@ -916,7 +933,7 @@ class JudgeService:
                 spread=answer.spread,
                 win_share=answer.win_share,
                 evaluation_ids=[e.id for e in slot.evaluations],
-                left_out=slot.other_basis,
+                left_out=slot.left_out + judged.stale.get((slot.prompt_id, slot.trial_index), 0),
             )
             for attempt_id, (answer, slot) in judged.answers().items()
         }

@@ -71,7 +71,8 @@ export function JudgePanel({ detail, promptId, trial }: Props) {
     .filter((e) => e.prompt_id === promptId && e.trial_index === trial)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
   const data = preview.data
-  const canRun = Boolean(request && data?.ok && blocking.length === 0 && !start.isPending && !detail.active)
+  // Only a preview of exactly this request may confirm the paid call.
+  const canRun = Boolean(request && data?.ok && preview.current && blocking.length === 0 && !start.isPending && !detail.active)
 
   return (
     <section className="stack" aria-label="Judge">

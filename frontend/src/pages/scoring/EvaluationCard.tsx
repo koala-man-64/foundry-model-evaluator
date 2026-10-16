@@ -9,8 +9,9 @@ import { FINISH_LABELS, formatDate, formatMs } from '../../lib/format'
 import { SwapPass, swappable } from './SwapPass'
 
 const LEFT_OUT =
-  'Not used by comparisons: its prompt and trial have more (or more recent) evaluations with another judge, rubric ' +
-  'version or settings, or an answer it judged was retried since. It stays in the history and in judging cost.'
+  'Not used by comparisons: its prompt and trial have evaluations of more answers, or more (or more recent) ' +
+  'evaluations with another judge, rubric version or settings, or an answer it judged was retried since. It stays ' +
+  'in the history and in judging cost.'
 
 interface Props {
   evaluation: EvaluationOut

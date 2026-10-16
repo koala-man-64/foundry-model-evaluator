@@ -59,8 +59,8 @@ export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
 
 /**
  * What comparisons use for an answer, when it differs from the latest evaluation alone: the mean over
- * every evaluation on its prompt and trial's judge basis, how far those scores spread, and how many
- * evaluations on another basis were left out.
+ * the evaluations of the same answers on one judge basis, how far those scores spread, and how many
+ * other evaluations (another basis, fewer answers, retried answers) were left out.
  */
 export function JudgeAggregateLine({ score, aggregate }: { score?: JudgeScore; aggregate: JudgeAggregate }) {
   const n = aggregate.n_evaluations
@@ -69,7 +69,7 @@ export function JudgeAggregateLine({ score, aggregate }: { score?: JudgeScore; a
   const parts = [
     `the mean of ${n} evaluation${n === 1 ? '' : 's'} on one judge, rubric version and settings`,
     aggregate.spread !== null && aggregate.spread !== undefined ? `range ${aggregate.spread.toFixed(2)}` : '',
-    aggregate.left_out > 0 ? `${aggregate.left_out} on another basis left out` : '',
+    aggregate.left_out > 0 ? `${aggregate.left_out} other evaluation${aggregate.left_out === 1 ? '' : 's'} left out` : '',
   ].filter(Boolean)
   return (
     <div className="small muted" data-testid="judge-aggregate">

@@ -11,9 +11,10 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
   value in any matched cell shows no average for that metric.
 - Costs use complete estimates in the requested currency only; the others are counted as excluded.
 - Judge evidence is aggregated, not "latest evaluation wins" (see ``judging.aggregate``): each
-  (prompt, trial) of a run uses the judge basis with the most succeeded evaluations, then the most
-  recent, and an answer's judge score is its mean over that basis's evaluations. Evaluations on
-  another basis, or of answers retried since, are left out with a note.
+  (prompt, trial) of a run uses the evaluations of the same answers on one judge basis (the most
+  answers, then the most evaluations, then the most recent), and an answer's judge score is its mean
+  over them. Evaluations of fewer answers, on another basis, or of answers retried since, are left
+  out with a note.
 - The judge win rate is averaged per cell in the same way: a candidate's preference share is averaged
   over the evaluations of its (prompt, trial) first, then over runs. A tie gives each of the n judged
   answers 1/n, so the shares of one evaluation always sum to 1.
@@ -174,9 +175,10 @@ class ComparisonCell(BaseModel):
     trial_index: int
     matched: bool
     missing: list[str]
-    # Judge evidence in this cell, over its runs: evaluations on each run's chosen basis, succeeded
-    # evaluations left out (another basis, or answers retried since), and the largest spread of one
-    # answer's score between evaluations (None when no answer was judged more than once).
+    # Judge evidence in this cell, over its runs: evaluations used (each run's chosen answers and basis;
+    # none where the judge values are withheld), succeeded evaluations left out (another basis, fewer
+    # answers, answers retried since, or withheld), and the largest spread of one answer's score between
+    # evaluations (None when no answer was judged more than once).
     judge_evaluations: int = 0
     judge_left_out: int = 0
     judge_spread: float | None = None
@@ -209,7 +211,7 @@ class _Observation:
     manual: int | None
     judge: float | None  # mean over the evaluations on its (prompt, trial)'s chosen basis
     judge_basis: str | None = None
-    judge_evaluations: int = 0
+    judge_evaluation_ids: tuple[str, ...] = ()
     judge_spread: float | None = None
     checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None if unknown
     checks_fp: str | None = None  # which checks graded it (None: its prompt has no checks)
@@ -334,7 +336,8 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
     if bases:
         into.judge_bases[cell] = bases
     if judged:
-        into.judge_evaluations[cell] = sum(o.judge_evaluations for o in judged)
+        # Distinct evaluations: one evaluation that judged two answers of the candidate counts once.
+        into.judge_evaluations[cell] = len({i for o in judged for i in o.judge_evaluation_ids})
     spreads = [o.judge_spread for o in judged if o.judge_spread is not None]
     if spreads:
         into.judge_spread[cell] = max(spreads)
@@ -437,12 +440,24 @@ def _differences(candidate: _PromptValues, baseline: _PromptValues) -> BaselineD
     )
 
 
-def _left_out_by_slot(judged: RunJudgements) -> dict[Slot, tuple[int, int]]:
-    """Per (prompt, trial): succeeded evaluations left out for another basis, and for retried answers."""
-    result = {slot: (judgement.other_basis, 0) for slot, judgement in judged.slots.items() if judgement.other_basis}
+_LeftOut = tuple[int, int, int]  # succeeded evaluations left out: another basis, fewer answers, retried answers
+
+
+def _left_out_by_slot(judged: RunJudgements) -> dict[Slot, _LeftOut]:
+    """Per (prompt, trial): succeeded evaluations left out, by reason."""
+    result: dict[Slot, _LeftOut] = {
+        slot: (judgement.other_basis, judgement.other_answers, 0)
+        for slot, judgement in judged.slots.items()
+        if judgement.left_out
+    }
     for slot, count in judged.stale.items():
-        result[slot] = (result.get(slot, (0, 0))[0], count)
+        other, answers, _ = result.get(slot, (0, 0, 0))
+        result[slot] = (other, answers, count)
     return result
+
+
+def _add(a: _LeftOut, b: _LeftOut) -> _LeftOut:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
 
 
 class ComparisonService:
@@ -471,7 +486,7 @@ class ComparisonService:
         # Per cell: judge evaluations used (on each run's chosen basis), left out, and the largest spread.
         cell_judging: dict[Cell, list[int]] = {}
         cell_spread: dict[Cell, float] = {}
-        left_out: dict[Cell, tuple[int, int]] = {}  # (another basis, answers retried since)
+        left_out: dict[Cell, _LeftOut] = {}
         order: list[str] = []
         for run_id in dict.fromkeys(run_ids):
             run = self.runs.get(run_id)
@@ -511,7 +526,7 @@ class ComparisonService:
                     manual=score.score if score else None,
                     judge=answer.mean if answer else None,
                     judge_basis=slot_judgement.basis if slot_judgement else None,
-                    judge_evaluations=answer.evaluations if answer else 0,
+                    judge_evaluation_ids=answer.evaluation_ids if answer else (),
                     judge_spread=answer.spread if answer else None,
                     checks=(
                         _checks_value(run_checks(prompt.checks, attempt.output_text or "").passed)
@@ -539,10 +554,9 @@ class ComparisonService:
                 cell_judging.setdefault(cell_key, []).append(len(slot.evaluations))
                 if slot.spread is not None:
                     cell_spread[cell_key] = max(slot.spread, cell_spread.get(cell_key, 0.0))
-            for (prompt_id, trial), (other, stale) in _left_out_by_slot(judged_run).items():
+            for (prompt_id, trial), counts in _left_out_by_slot(judged_run).items():
                 cell_key = (prompts[prompt_id].content_hash, trial)
-                before = left_out.get(cell_key, (0, 0))
-                left_out[cell_key] = (before[0] + other, before[1] + stale)
+                left_out[cell_key] = _add(left_out.get(cell_key, (0, 0, 0)), counts)
 
         if not data:
             raise NotFoundError("No attempts found for the selected runs and candidates.")
@@ -601,7 +615,15 @@ class ComparisonService:
                 f"and trial and {_plural(other_basis, 'is', 'are')} left out. Each prompt and trial of a run uses "
                 "the judge basis with the most evaluations (then the most recent), averaged over its evaluations."
             )
-        stale = sum(left_out[cell][1] for cell in matched if cell in left_out)
+        fewer = sum(left_out[cell][1] for cell in matched if cell in left_out)
+        if fewer:
+            notes.append(
+                f"{fewer} judge {_plural(fewer, 'evaluation', 'evaluations')} judged fewer answers than the "
+                f"evaluations used for {_plural(fewer, 'its', 'their')} prompt and trial (an answer was retried "
+                f"and added since) and {_plural(fewer, 'is', 'are')} left out: only evaluations of the same "
+                "answers are averaged together."
+            )
+        stale = sum(left_out[cell][2] for cell in matched if cell in left_out)
         if stale:
             notes.append(
                 f"{stale} judge {_plural(stale, 'evaluation', 'evaluations')} judged answers that were retried "
@@ -715,6 +737,8 @@ class ComparisonService:
                     ),
                 )
             )
+        # A cell whose judge values are withheld (mixed bases or reference answers) uses none of its evaluations.
+        withheld = set(cells) if len(judge_bases) > 1 else mixed_references
         cell_rows = [
             ComparisonCell(
                 content_hash=cell[0],
@@ -722,9 +746,10 @@ class ComparisonService:
                 trial_index=cell[1],
                 matched=cell in matched_set,
                 missing=[data[key].label for key in order if cell not in usable[key]],
-                judge_evaluations=sum(cell_judging.get(cell, [])),
-                judge_left_out=sum(left_out.get(cell, (0, 0))),
-                judge_spread=cell_spread.get(cell),
+                judge_evaluations=0 if cell in withheld else sum(cell_judging.get(cell, [])),
+                judge_left_out=sum(left_out.get(cell, (0, 0, 0)))
+                + (sum(cell_judging.get(cell, [])) if cell in withheld else 0),
+                judge_spread=None if cell in withheld else cell_spread.get(cell),
             )
             for cell in cells
         ]

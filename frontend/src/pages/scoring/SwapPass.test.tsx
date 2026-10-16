@@ -9,6 +9,7 @@ import { SwapPass, swappable } from './SwapPass'
 
 const calls: { path: string; body: unknown; key?: string }[] = []
 let previewResult: Partial<JudgePreview> = {}
+let paidFails = false
 let keys = 0
 
 vi.mock('../../api/client', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../api/client', () => ({
   post: (path: string, body: unknown, key?: string) => {
     calls.push({ path, body, key })
     if (path.endsWith('/swap/preview')) return Promise.resolve(preview(previewResult))
+    if (paidFails) return Promise.reject(new Error('connection lost'))
     return new Promise(() => {}) // the paid request stays pending, as a slow server would
   },
 }))
@@ -55,6 +57,7 @@ function wrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   calls.length = 0
   previewResult = {}
+  paidFails = false
 })
 
 describe('SwapPass', () => {
@@ -83,6 +86,40 @@ describe('SwapPass', () => {
     expect(paid[0].key).toMatch(/^key-\d+$/)
     // While it is pending the button is disabled, so a second click cannot send it again.
     expect(screen.getByRole('button', { name: 'Starting…' })).toBeDisabled()
+  })
+
+  it('never confirms the paid request with a preview of another scope', async () => {
+    const user = userEvent.setup()
+    render(<SwapPass runId="run-1" evaluation={source} />, { wrapper })
+    await user.click(screen.getByRole('button', { name: 'Swap order and re-judge…' }))
+    const run = await screen.findByRole('button', { name: 'Run swap pass' })
+    await waitFor(() => expect(run).toBeEnabled())
+    await user.selectOptions(screen.getByRole('combobox'), 'run')
+    // The one-evaluation preview is still on screen, but it cannot confirm the run-wide request.
+    expect(run).toBeDisabled()
+    await waitFor(() => expect(run).toBeEnabled())
+    await user.click(run)
+    const paid = calls.filter((c) => c.path === '/api/runs/run-1/evaluations/swap')
+    expect(paid.map((c) => c.body)).toEqual([{ evaluation_id: 'ev-1', scope: 'run' }])
+  })
+
+  it('retries with the same key, but uses a new key once the scope changes', async () => {
+    paidFails = true
+    const user = userEvent.setup()
+    render(<SwapPass runId="run-1" evaluation={source} />, { wrapper })
+    await user.click(screen.getByRole('button', { name: 'Swap order and re-judge…' }))
+    const run = await screen.findByRole('button', { name: 'Run swap pass' })
+    await waitFor(() => expect(run).toBeEnabled())
+    await user.click(run)
+    await screen.findByText('connection lost')
+    await user.click(run)
+    await user.selectOptions(screen.getByRole('combobox'), 'run')
+    await waitFor(() => expect(run).toBeEnabled())
+    await user.click(run)
+    const paid = calls.filter((c) => c.path === '/api/runs/run-1/evaluations/swap').map((c) => c.key)
+    expect(paid).toHaveLength(3)
+    expect(paid[1]).toBe(paid[0]) // a lost response retried as the same request is not paid twice
+    expect(paid[2]).not.toBe(paid[0])
   })
 
   it('cannot be run when the preview reports errors', async () => {
