@@ -845,6 +845,16 @@
             ],
             "title": "Cost Per Request"
           },
+          "cost_spread": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostSpread"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "custom_rates": {
             "title": "Custom Rates",
             "type": "boolean"
@@ -890,6 +900,7 @@
           "cost_per_request",
           "cost_per_1k_requests",
           "cost_per_month",
+          "cost_spread",
           "status",
           "assumptions",
           "warnings",
@@ -1808,6 +1819,62 @@
           "status"
         ],
         "title": "CostLine",
+        "type": "object"
+      },
+      "CostSpread": {
+        "description": "Nearest-rank percentiles of the cost per request, over the requests with complete estimates only.",
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "max": {
+            "title": "Max",
+            "type": "string"
+          },
+          "month_if_every_request_p50": {
+            "title": "Month If Every Request P50",
+            "type": "string"
+          },
+          "month_if_every_request_p95": {
+            "title": "Month If Every Request P95",
+            "type": "string"
+          },
+          "p50": {
+            "title": "P50",
+            "type": "string"
+          },
+          "p90": {
+            "title": "P90",
+            "type": "string"
+          },
+          "p95": {
+            "title": "P95",
+            "type": "string"
+          },
+          "sample_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Warning"
+          }
+        },
+        "required": [
+          "p50",
+          "p90",
+          "p95",
+          "max",
+          "month_if_every_request_p50",
+          "month_if_every_request_p95",
+          "basis",
+          "sample_warning"
+        ],
+        "title": "CostSpread",
         "type": "object"
       },
       "CostTotal": {
@@ -6868,6 +6935,34 @@
         "additionalProperties": false,
         "description": "Scenario assumptions. They are labelled as assumptions wherever results are shown.",
         "properties": {
+          "batch_rate_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Rate Ratio"
+          },
+          "batch_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Share"
+          },
           "cache_read_share": {
             "anyOf": [
               {
@@ -6937,6 +7032,28 @@
         "additionalProperties": false,
         "description": "Scenario assumptions. They are labelled as assumptions wherever results are shown.",
         "properties": {
+          "batch_rate_ratio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Rate Ratio"
+          },
+          "batch_share": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Share"
+          },
           "cache_read_share": {
             "anyOf": [
               {

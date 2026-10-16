@@ -321,6 +321,7 @@ prices to averaged token counts. The scenario can change these things:
 - cache read share
 - cache write share
 - the cache-write TTL to assume when it is unknown (Claude)
+- a batch share of requests and a batch price ratio
 - the price basis: each run's original snapshot, or current rates
 
 Each request's input is scaled and rounded once, and the context-length tier is chosen again from that total. A share
@@ -341,3 +342,38 @@ A partial TTL breakdown from the provider is never trusted, so such requests sta
 
 Requests that cannot be priced completely under the scenario are excluded. Exclusions with the same cause are counted
 together.
+
+### Batch what-if
+
+The batch share and the batch price ratio go together: one without the other is rejected. The share is from 0 to 1 and
+the ratio is above 0 and at most 1. Each request's scenario cost `c` becomes
+
+```
+(1 − share) × c + share × ratio × c
+```
+
+so 40% of requests at a ratio of 0.5 make every request cost 0.8 × `c`. The blend is applied to every request rather
+than sending some requests to batch at random, so the percentiles below are of the blended cost. That is exact for
+the average and for the "if every request cost the p50 / p95" months, which are linear in the cost. The ratio is
+entered, not matched (batch meters are always excluded from matching), and it is listed as an assumption. Batch
+turnaround, quotas and caching rules are not modelled.
+
+### Spread of the cost per request
+
+The average cost per request hides the tail: a few long requests can cost many times the typical one. Projections
+therefore also show the **p50, p90, p95 and the largest** cost per request.
+
+- They are **nearest-rank** percentiles: sort the per-request costs, and the p-th percentile is the value at rank
+  ⌈p/100 × n⌉. It is always one of the measured requests' costs, never an interpolation, so it is an exact decimal.
+  With 10 requests the p50 is the 5th, the p90 the 9th and the p95 the 10th (the largest). Below 20 requests the
+  p95 is always the largest request.
+- They cover the same requests as the average: only requests whose scenario estimate is complete. The table says how
+  many requests they are over and how many were excluded. A candidate with no complete estimate has no spread; it is
+  shown as unknown, not as zero.
+- **Below 30 priced requests** the percentiles carry a warning: the tails then rest on a handful of requests.
+  Trials of the same prompt count as separate requests, so 30 requests from three prompts describe those three
+  prompts, not your traffic.
+- The two monthly figures are the monthly volume times the p50, and times the p95. They answer "what if every
+  request cost this much", so they are labelled that way. They are **not** a forecast range or an interval for the
+  monthly bill: a month of real traffic mixes cheap and expensive requests, and its expected cost is the average
+  times the volume.
