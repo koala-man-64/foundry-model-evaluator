@@ -692,6 +692,11 @@
       },
       "CandidatePreview": {
         "properties": {
+          "candidate_key": {
+            "default": "",
+            "title": "Candidate Key",
+            "type": "string"
+          },
           "custom_rates": {
             "items": {
               "type": "string"
@@ -6616,6 +6621,23 @@
               }
             ],
             "title": "Budget"
+          },
+          "candidate_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Ids"
           },
           "title": {
             "default": "",

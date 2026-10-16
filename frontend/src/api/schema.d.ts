@@ -1009,6 +1009,11 @@ export interface components {
         };
         /** CandidatePreview */
         CandidatePreview: {
+            /**
+             * Candidate Key
+             * @default
+             */
+            candidate_key: string;
             /** Custom Rates */
             custom_rates: string[];
             /** Index */
@@ -3005,6 +3010,8 @@ export interface components {
         SuiteRunIn: {
             /** Budget */
             budget?: number | string | null;
+            /** Candidate Ids */
+            candidate_ids?: string[] | null;
             /**
              * Title
              * @default
