@@ -9,6 +9,7 @@ import { ComparisonCharts } from '../components/charts/ComparisonCharts'
 import { TotalBox } from '../components/cost'
 import { ResponseCard } from '../components/ResponseCard'
 import { Badge, Empty, ErrorMessage, Spinner, StatusBadge } from '../components/ui'
+import { exportUrl } from '../lib/exportUrl'
 import { formatDate, STATUS_LABELS } from '../lib/format'
 import { formatMoney } from '../lib/money'
 
@@ -76,6 +77,24 @@ export function RunHeader({ detail, actions }: { detail: RunDetail; actions?: Re
   )
 }
 
+function ExportLinks({ runId }: { runId: string }) {
+  const [includeText, setIncludeText] = useState(false)
+  return (
+    <div className="row" role="group" aria-label="Export">
+      <label className="row small">
+        <input type="checkbox" checked={includeText} onChange={(e) => setIncludeText(e.target.checked)} />
+        Include prompt and answer text
+      </label>
+      <a className="btn" href={exportUrl(runId, 'json', includeText)} download>
+        Download JSON
+      </a>
+      <a className="btn" href={exportUrl(runId, 'csv', includeText)} download>
+        Download CSV
+      </a>
+    </div>
+  )
+}
+
 export function RunPage() {
   const { runId = '' } = useParams()
   const query = useRun(runId)
@@ -137,6 +156,7 @@ export function RunPage() {
               </button>
             )}
             <Link to={`/scoring/${detail.run.id}`}>Score responses</Link>
+            <ExportLinks runId={detail.run.id} />
           </>
         }
       />

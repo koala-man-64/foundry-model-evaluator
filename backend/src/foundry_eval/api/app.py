@@ -23,7 +23,7 @@ from ..services import Services, build_services
 from ..types import ApiStyle
 from .errors import install_error_handlers
 from .guard import HttpGuard
-from .routes import analysis, endpoints, judging, pricing, profiles, runs, suites, system
+from .routes import analysis, endpoints, exports, judging, pricing, profiles, runs, suites, system
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def create_app(
     )
     app.state.config = config
     install_error_handlers(app)
-    for module in (system, endpoints, profiles, pricing, runs, suites, judging, analysis):
+    for module in (system, endpoints, profiles, pricing, runs, exports, suites, judging, analysis):
         app.include_router(module.router)
     _mount_frontend(app, config.static_dir)
     app.add_middleware(HttpGuard, allowed_hosts=config.allowed_hosts, allowed_origins=config.allowed_origins)

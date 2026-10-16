@@ -94,6 +94,33 @@ scripts\foundry-eval.cmd smoke --profile "Model A" --profile "Model B" --budget 
 
 See [docs/smoke-test.md](docs/smoke-test.md) for a step-by-step live check.
 
+## Export
+
+On a run's page, **Download JSON** and **Download CSV** save the run as a file. The export only reads stored data and
+the price snapshots frozen with the run, so it never makes a call to a model.
+
+- **JSON** (`fme.run.v1`) holds the run, prompts, candidates (settings, profile and the rates with their meter,
+  source and dates), every attempt (retries included, with usage, latency and cost), manual scores, judge
+  evaluations with criterion scores, the run totals, and notes on how to read the costs.
+- **CSV** has one row per attempt, with the usage, latency, cost, manual score and latest judge score in separate
+  columns.
+- **Costs** are exact decimal strings. An empty cell or `null` means *not reported*, and `cost_status` says why
+  (`complete`, `incomplete` with a lower bound, `not_sent`, or `pending`). An unknown cost is never written as 0.
+- **Retries.** Every attempt is listed. `superseded` is true for an attempt that a later retry replaced
+  (`retry_of` names it); only attempts that are not superseded count for their cell.
+- **Left out by default:** prompt text, answers, reasoning summaries, provider error messages, stop strings,
+  manual-score notes and judge explanations (error messages can quote the prompt or the answer). Tick **Include
+  prompt and answer text** to add them. Profiles are exported through an allow-list (no profile notes, meter terms,
+  custom path, API version or capabilities). Never included: API keys, the endpoint URL, request bodies and raw
+  provider responses.
+- **Spreadsheets.** In the CSV, text that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading
+  `'`, so a model's answer or a title cannot run as a formula when you open the file in Excel.
+- **Encoding.** The CSV is UTF-8 without a byte-order mark, because it is meant for tools as much as for Excel. In
+  Excel, import it (Data > From Text/CSV) and choose UTF-8 as the file origin; opening it directly can garble
+  non-ASCII characters.
+
+The same files come from `GET /api/runs/{run_id}/export?format=json|csv&include_text=false`.
+
 ## Limits of version 1
 
 - Windows, USD prices, text-only single-turn prompts with optional system instructions, and pay-as-you-go token
