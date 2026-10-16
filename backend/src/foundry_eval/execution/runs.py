@@ -14,6 +14,7 @@ from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.generation import GenerationSettings, SettingIssue
 from ..domain.profiles import Endpoint, ModelProfile
+from ..grading.checks import MAX_CHECKS, Check
 from ..money import Money, MoneyInput, add, mul, to_text
 from ..pricing.ratecard import CATEGORY_LABELS, RateStatus
 from ..pricing.service import PricingService
@@ -33,6 +34,9 @@ class PromptSpec(BaseModel):
     system: str = Field(default="", max_length=200_000)
     user: str = Field(min_length=1, max_length=400_000)
     suite_prompt_id: str | None = None
+    # Not part of the prompt's identity: cells still match across runs when these are edited.
+    reference: str = Field(default="", max_length=200_000)
+    checks: list[Check] = Field(default_factory=list, max_length=MAX_CHECKS)
 
 
 class CandidateSpec(BaseModel):
@@ -296,6 +300,8 @@ class RunService:
                     user_text=prompt_spec.user,
                     content_hash=content_hash(prompt_spec.system, prompt_spec.user),
                     suite_prompt_id=prompt_spec.suite_prompt_id,
+                    reference_text=prompt_spec.reference,
+                    checks=prompt_spec.checks,
                 )
                 prompt_ids.append((prompt_id, prompt_spec))
             snapshot_ids: dict[str, str] = {}

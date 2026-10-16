@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...domain.generation import GenerationSettings
 from ...execution.runs import RunPreview, RunRequest
 from ...execution.totals import CostTotal, combine_totals, total_costs
+from ...grading.checks import CheckOutcome, run_checks
 from ...judging.service import JudgeScore
 from ...money import Money
 from ...pricing.ratecard import RateCard
@@ -55,6 +56,8 @@ class RunDetail(BaseModel):
     budget: BudgetOut | None
     judge_scores: dict[str, JudgeScore] = Field(default_factory=dict)
     evaluation_counts: dict[str, int] = Field(default_factory=dict)
+    # Deterministic checks on each succeeded answer whose prompt has checks (computed, free).
+    check_results: dict[str, CheckOutcome] = Field(default_factory=dict)
 
 
 class RunSummary(BaseModel):
@@ -135,9 +138,16 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
     evaluation_counts: dict[str, int] = {}
     for evaluation in services.evaluations.list_for_run(run_id):
         evaluation_counts[evaluation.status] = evaluation_counts.get(evaluation.status, 0) + 1
+    prompts = services.runs.prompts(run_id)
+    checks = {p.id: p.checks for p in prompts if p.checks}
+    check_results = {
+        a.id: run_checks(checks[a.prompt_id], a.output_text or "")
+        for a in attempts
+        if a.status is AttemptStatus.SUCCEEDED and a.prompt_id in checks
+    }
     return RunDetail(
         run=run,
-        prompts=services.runs.prompts(run_id),
+        prompts=prompts,
         candidates=[_candidate_out(c) for c in services.runs.candidates(run_id)],
         attempts=attempts,
         manual_scores=services.runs.manual_scores(run_id),
@@ -148,6 +158,7 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
         budget=budget,
         judge_scores=services.judge.scores_for_run(run_id),
         evaluation_counts=evaluation_counts,
+        check_results=check_results,
     )
 
 

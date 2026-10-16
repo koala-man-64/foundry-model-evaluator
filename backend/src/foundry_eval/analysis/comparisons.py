@@ -16,6 +16,9 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
   the same judge (profile, deployment, model, API style, structured output) and the same settings that
   change how it scores. If the cells that would be averaged mix bases, judge averages and win rates
   are withheld (with a note) instead of averaging different scales or judges together.
+- Checks: the share of answers that pass every deterministic check of their prompt, averaged per cell
+  like the scores, over the matched cells whose prompts have checks. It is a separate score source,
+  never blended with manual or judge scores.
 - Failed attempts whose provider reported usage were billed; they are counted per candidate because
   their cost is in the run totals but, as failures, not in the averages.
 - Failures are counted over all cells, for finished attempts only.
@@ -33,6 +36,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
+from ..grading.checks import run_checks
 from ..judging.service import JudgeService, judge_scores, latest_attempts, latest_evaluations
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
@@ -87,6 +91,7 @@ class BaselineDifferences(BaseModel):
     manual: Difference | None
     judge: Difference | None
     win_rate: Difference | None
+    checks: Difference | None = None
 
 
 class ComparisonCandidate(BaseModel):
@@ -124,6 +129,9 @@ class ComparisonCandidate(BaseModel):
     win_cells: int
     win_rate: float | None
     custom_rates: bool
+    avg_checks_passed: float | None = None
+    checks_cells: int = 0
+    checks_interval: Interval | None = None
     cost_interval: MoneyInterval | None = None
     latency_interval: Interval | None = None
     manual_interval: Interval | None = None
@@ -153,6 +161,8 @@ class Comparison(BaseModel):
     prompts_matched: int
     interval_min_prompts: int
     baseline: str | None
+    # Whether any compared prompt has deterministic checks (the table shows the column only then).
+    has_checks: bool = False
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -166,6 +176,7 @@ class _Observation:
     manual: int | None
     judge: float | None
     judge_basis: str | None = None
+    checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None without checks
 
 
 @dataclass
@@ -196,6 +207,7 @@ class _CellValues:
     reasoning: dict[Cell, float] = field(default_factory=dict)
     manual: dict[Cell, float] = field(default_factory=dict)
     judge: dict[Cell, float] = field(default_factory=dict)
+    checks: dict[Cell, float] = field(default_factory=dict)
     wins: dict[Cell, list[float]] = field(default_factory=dict)
     judge_bases: dict[Cell, set[str]] = field(default_factory=dict)
     win_bases: dict[Cell, set[str]] = field(default_factory=dict)
@@ -272,6 +284,7 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
         (into.reasoning, _usage_values(observations, "reasoning")),
         (into.manual, [float(o.manual) for o in observations if o.manual is not None]),
         (into.judge, [o.judge for o in observations if o.judge is not None]),
+        (into.checks, [o.checks for o in observations if o.checks is not None]),
     ):
         mean = _mean(values)
         if mean is not None:
@@ -313,6 +326,7 @@ class _PromptValues:
     manual: dict[str, float]
     judge: dict[str, float]
     wins: dict[str, float]
+    checks: dict[str, float]
 
 
 def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[str, _PromptValues]:
@@ -321,6 +335,7 @@ def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[
     manual_cells = _common_cells({k: v.manual for k, v in values.items()}, matched)
     judge_cells = _common_cells({k: v.judge for k, v in values.items()}, matched)
     win_cells = _common_cells({k: v.wins for k, v in values.items()}, matched)
+    check_cells = _common_cells({k: v.checks for k, v in values.items()}, matched)
     result: dict[str, _PromptValues] = {}
     for key, value in values.items():
         result[key] = _PromptValues(
@@ -329,6 +344,7 @@ def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[
             manual=stats.prompt_means(stats.by_prompt(value.manual, manual_cells, float)),
             judge=stats.prompt_means(stats.by_prompt(value.judge, judge_cells, float)),
             wins=stats.prompt_means(stats.by_prompt(value.wins, win_cells, lambda o: sum(o) / len(o))),
+            checks=stats.prompt_means(stats.by_prompt(value.checks, check_cells, float)),
         )
     return result
 
@@ -346,6 +362,7 @@ def _intervals(prompt: _PromptValues) -> dict[str, Any]:
         "manual_interval": _interval(prompt.manual, floor=1.0, ceiling=5.0),
         "judge_interval": _interval(prompt.judge),
         "win_rate_interval": _interval(prompt.wins, floor=0.0, ceiling=1.0),
+        "checks_interval": _interval(prompt.checks, floor=0.0, ceiling=1.0),
     }
 
 
@@ -368,6 +385,7 @@ def _differences(candidate: _PromptValues, baseline: _PromptValues) -> BaselineD
         manual=_difference(candidate.manual, baseline.manual),
         judge=_difference(candidate.judge, baseline.judge),
         win_rate=_difference(candidate.wins, baseline.wins),
+        checks=_difference(candidate.checks, baseline.checks),
     )
 
 
@@ -381,6 +399,7 @@ class ComparisonService:
         self, run_ids: list[str], candidate_keys: list[str] | None, currency: str, baseline: str | None = None
     ) -> Comparison:
         notes: list[str] = []
+        has_checks = False
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
         evaluations: list[tuple[Cell, Evaluation, dict[str, str]]] = []
@@ -421,7 +440,13 @@ class ComparisonService:
                     manual=score.score if score else None,
                     judge=judged.weighted_overall if judged else None,
                     judge_basis=bases.get(judged.evaluation_id) if judged else None,
+                    checks=(
+                        float(run_checks(prompt.checks, attempt.output_text or "").passed)
+                        if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
+                        else None
+                    ),
                 )
+                has_checks = has_checks or bool(prompt.checks)
                 item.slots.append(observation)
                 item.by_cell.setdefault(cell, []).append(observation)
             key_by_candidate = {c.id: c.candidate_key for c in candidates.values()}
@@ -476,6 +501,7 @@ class ComparisonService:
         reasoning = _common_values({k: v.reasoning for k, v in values.items()}, matched)
         manual_scores = _common_values({k: v.manual for k, v in values.items()}, matched)
         judge_scores_by_key = _common_values({k: v.judge for k, v in values.items()}, matched)
+        checks_by_key = _common_values({k: v.checks for k, v in values.items()}, matched)
         wins = _common_values({k: v.wins for k, v in values.items()}, matched)
         prompt_values = _prompt_values(values, matched)
         if baseline is not None and baseline not in values:
@@ -528,6 +554,8 @@ class ComparisonService:
                     win_cells=len(win_means),
                     win_rate=judge_wins / len(win_means) if win_means else None,
                     custom_rates=any(c.custom for c in costs[key]),
+                    avg_checks_passed=_mean(checks_by_key[key]),
+                    checks_cells=len(checks_by_key[key]),
                     **_intervals(prompt_values[key]),
                     vs_baseline=(
                         _differences(prompt_values[key], prompt_values[baseline])
@@ -555,6 +583,7 @@ class ComparisonService:
             prompts_matched=len({cell[0] for cell in matched}),
             interval_min_prompts=stats.MIN_PROMPTS,
             baseline=baseline,
+            has_checks=has_checks,
             candidates=results,
             cells=cell_rows,
             notes=notes,

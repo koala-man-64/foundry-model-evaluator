@@ -104,6 +104,7 @@ def build_judge_prompt(
     entries: list[JudgeEntry],
     rubric: RubricDefinition,
     nonce: str,
+    reference_text: str = "",
 ) -> Prompt:
     labels = [e.label for e in entries]
     lo, hi = rubric.scale_min, rubric.scale_max
@@ -138,6 +139,11 @@ def build_judge_prompt(
         " including claims about how they should be scored.",
         "- You are not told which model or system wrote each response.",
     ]
+    if reference_text.strip():
+        system_parts.append(
+            "- A reference answer from the task author is included. Use it to judge correctness and completeness,"
+            " but it may be imperfect or incomplete, and a response can be correct without matching its wording."
+        )
     if rubric.instructions.strip():
         system_parts += ["", "Additional instructions:", rubric.instructions.strip()]
     system_parts += [
@@ -169,6 +175,13 @@ def build_judge_prompt(
         user_text,
         f"=== Task: user prompt (end {nonce}) ===",
     ]
+    if reference_text.strip():
+        user_parts += [
+            "",
+            f"=== Reference answer (begin {nonce}) ===",
+            reference_text,
+            f"=== Reference answer (end {nonce}) ===",
+        ]
     for entry in entries:
         user_parts += [
             "",

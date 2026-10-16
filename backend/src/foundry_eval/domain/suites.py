@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..grading.checks import MAX_CHECKS, Check
 from .generation import GenerationSettings
 
 
@@ -31,6 +32,9 @@ class SuitePromptIn(BaseModel):
     title: str = Field(default="", max_length=200)
     system: str = Field(default="", max_length=200_000)
     user: str = Field(min_length=1, max_length=400_000)
+    # An optional reference answer (shown to the judge) and free deterministic checks on the answers.
+    reference: str = Field(default="", max_length=200_000)
+    checks: list[Check] = Field(default_factory=list, max_length=MAX_CHECKS)
 
 
 class SuiteCandidateIn(BaseModel):
@@ -59,6 +63,8 @@ class SuitePrompt(BaseModel):
     title: str
     system: str
     user: str
+    reference: str = ""
+    checks: list[Check] = Field(default_factory=list)
 
 
 class SuiteCandidate(BaseModel):

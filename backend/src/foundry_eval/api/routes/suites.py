@@ -70,7 +70,17 @@ def suite_run_request(services: ServicesDep, suite: Suite, body: SuiteRunIn) -> 
     request = RunRequest(
         kind="suite",
         title=body.title.strip() or suite.name,
-        prompts=[PromptSpec(title=p.title, system=p.system, user=p.user, suite_prompt_id=p.id) for p in suite.prompts],
+        prompts=[
+            PromptSpec(
+                title=p.title,
+                system=p.system,
+                user=p.user,
+                suite_prompt_id=p.id,
+                reference=p.reference,
+                checks=p.checks,
+            )
+            for p in suite.prompts
+        ],
         candidates=[
             CandidateSpec(profile_id=c.profile_id, settings=c.settings, label=c.label) for c in suite.candidates
         ],
