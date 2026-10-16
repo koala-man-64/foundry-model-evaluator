@@ -14,12 +14,15 @@ When every value is the same (zero variance, for example three straight wins), a
 collapse to a single point and claim certainty the data cannot give. There is then no interval; a
 difference gets a direction only if an exact two-sided sign test supports it (all of at least
 ``SIGN_TEST_MIN`` prompts on the same side), and otherwise "cannot_tell".
+
+``nearest_rank`` is the percentile used for the spread of projected costs. It always returns one of
+the values it was given, so a percentile of exact decimals is itself exact.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, localcontext
 from typing import Literal
@@ -195,3 +198,18 @@ def decimal_prompt_means(grouped: Mapping[str, list[Decimal]]) -> dict[str, Deci
     with localcontext() as ctx:
         ctx.prec = 40
         return {prompt: sum(values, Decimal(0)) / Decimal(len(values)) for prompt, values in grouped.items() if values}
+
+
+def nearest_rank(values: Sequence[Decimal], percent: int) -> Decimal:
+    """The nearest-rank percentile: the smallest value with at least ``percent``% of the values at or below it.
+
+    It is one of the given values (never interpolated), so it is as exact as they are. ``percent`` is
+    a whole number from 1 to 100; 100 is the largest value.
+    """
+    if not values:
+        raise ValueError("a percentile needs at least one value")
+    if not 1 <= percent <= 100:
+        raise ValueError("percent must be from 1 to 100")
+    ordered = sorted(values)
+    rank = -(-percent * len(ordered) // 100)  # ceil(percent / 100 * n) in integers, with no rounding
+    return ordered[rank - 1]

@@ -996,6 +996,7 @@ export interface components {
             cost_per_month: string | null;
             /** Cost Per Request */
             cost_per_request: string | null;
+            cost_spread: components["schemas"]["CostSpread"] | null;
             /** Custom Rates */
             custom_rates: boolean;
             /** Exclusion Reasons */
@@ -1277,6 +1278,28 @@ export interface components {
             status: components["schemas"]["LineStatus"];
             /** Tokens */
             tokens: number | null;
+        };
+        /**
+         * CostSpread
+         * @description Nearest-rank percentiles of the cost per request, over the requests with complete estimates only.
+         */
+        CostSpread: {
+            /** Basis */
+            basis: string;
+            /** Max */
+            max: string;
+            /** Month If Every Request P50 */
+            month_if_every_request_p50: string;
+            /** Month If Every Request P95 */
+            month_if_every_request_p95: string;
+            /** P50 */
+            p50: string;
+            /** P90 */
+            p90: string;
+            /** P95 */
+            p95: string;
+            /** Sample Warning */
+            sample_warning: string | null;
         };
         /** CostTotal */
         CostTotal: {
@@ -2969,6 +2992,10 @@ export interface components {
          * @description Scenario assumptions. They are labelled as assumptions wherever results are shown.
          */
         "WhatIf-Input": {
+            /** Batch Rate Ratio */
+            batch_rate_ratio?: number | string | null;
+            /** Batch Share */
+            batch_share?: number | string | null;
             /** Cache Read Share */
             cache_read_share?: number | string | null;
             /** Cache Write Share */
@@ -2995,6 +3022,10 @@ export interface components {
          * @description Scenario assumptions. They are labelled as assumptions wherever results are shown.
          */
         "WhatIf-Output": {
+            /** Batch Rate Ratio */
+            batch_rate_ratio?: string | null;
+            /** Batch Share */
+            batch_share?: string | null;
             /** Cache Read Share */
             cache_read_share?: string | null;
             /** Cache Write Share */

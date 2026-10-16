@@ -224,6 +224,7 @@ table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 0.42rem 0.55rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { font-size: 0.82em; color: var(--text-muted); font-weight: 600; text-transform: none; white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.wrap { white-space: normal; min-width: 9rem; }
 tr:hover td { background: var(--surface-2); }
 table.compact th, table.compact td { padding: 0.25rem 0.4rem; }
 

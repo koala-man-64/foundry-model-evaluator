@@ -96,7 +96,7 @@ a past run. Judge evaluations take their own snapshot.
 
 **Models & pricing → Projections** estimates future costs from the usage measured in one or more runs. Each succeeded
 request is priced again under your assumptions, then averaged. The result shows the cost per request, per 1,000
-requests and per month for a monthly volume you enter.
+requests and per month for a monthly volume you enter, and the spread of the cost per request.
 
 - **Price basis.** *Original* uses each run's snapshot; *current* uses today's rates. The current basis warns when a
   profile's pricing identity (deployment, tier, region or endpoint) has changed since the run.
@@ -105,6 +105,14 @@ requests and per month for a monthly volume you enter.
   other categories. For Claude cache writes whose TTL neither the usage nor the request shows, you choose the TTL to
   assume (5 minutes by default). Every result lists the assumptions it used, and a share control is disabled when the
   selected models do not bill that category separately.
+- **Spread.** The p50, p90, p95 and largest cost per request show how uneven your requests are, which an average
+  hides. Two monthly figures are labelled *if every request cost the p50* and *if every request cost the p95*: they
+  show what a month would cost at those request costs, and they are not a forecast range. Below 30 priced requests the
+  percentiles carry a warning.
+- **Batch what-if.** Enter the share of requests you would send as batch jobs and the **batch price ratio** (the batch
+  price divided by the price used here, for example 0.5). Both are needed, and both are listed as assumptions. Batch
+  meters are never matched, so the ratio is yours to check against your model's batch price. It applies to the whole
+  cost of a request; batch turnaround, quotas and caching rules are not modelled.
 - **Exclusions.** Requests that failed, have no usage, have prices in another currency, or would still be incomplete
   under the scenario are excluded. The counts and reasons are shown, with the same cause counted once.
 
