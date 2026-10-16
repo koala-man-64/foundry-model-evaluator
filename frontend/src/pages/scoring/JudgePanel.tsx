@@ -61,6 +61,8 @@ export function JudgePanel({ detail, promptId, trial }: Props) {
       runKey.current = newIdempotencyKey()
       queryClient.invalidateQueries({ queryKey: keys.evaluations(detail.run.id) })
       queryClient.invalidateQueries({ queryKey: keys.run(detail.run.id) })
+      queryClient.invalidateQueries({ queryKey: ['calibration'] })
+      queryClient.invalidateQueries({ queryKey: ['comparison'] })
     },
   })
   const shown = (evaluations.data ?? [])

@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/analysis/calibration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Judge Calibration
+         * @description How well the judge agrees with your manual scores on these runs (reads stored scores only).
+         */
+        get: operations["judge_calibration_api_analysis_calibration_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/attempts/{attempt_id}/manual-score": {
         parameters: {
             query?: never;
@@ -869,12 +889,66 @@ export interface components {
          * @enum {string}
          */
         AttemptStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted" | "skipped_budget";
+        /** BaselineDifferences */
+        BaselineDifferences: {
+            cost: components["schemas"]["MoneyDifference"] | null;
+            judge: components["schemas"]["Difference"] | null;
+            latency_ms: components["schemas"]["Difference"] | null;
+            manual: components["schemas"]["Difference"] | null;
+            win_rate: components["schemas"]["Difference"] | null;
+        };
         /** BudgetOut */
         BudgetOut: {
             /** Committed */
             committed: string;
             /** Limit */
             limit: string;
+        };
+        /** Calibration */
+        Calibration: {
+            /** Groups */
+            groups: components["schemas"]["CalibrationGroup"][];
+            /** Min Pairs */
+            min_pairs: number;
+            /** Notes */
+            notes: string[];
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** CalibrationGroup */
+        CalibrationGroup: {
+            /** Judge */
+            judge: string;
+            /** Key */
+            key: string;
+            /** Mean Bias */
+            mean_bias: number | null;
+            /** Pairs */
+            pairs: number;
+            /** Participant Pairs Excluded */
+            participant_pairs_excluded: number;
+            /** Prompts */
+            prompts: number;
+            /** Rubric */
+            rubric: string;
+            /** Scale Max */
+            scale_max: number;
+            /** Scale Min */
+            scale_min: number;
+            /** Settings */
+            settings: string;
+            /** Spearman */
+            spearman: number | null;
+            /** Spearman High */
+            spearman_high: number | null;
+            /** Spearman Low */
+            spearman_low: number | null;
+            /** Top Pick Agree */
+            top_pick_agree: number;
+            /** Top Pick Total */
+            top_pick_total: number;
+            /** Within One */
+            within_one: number | null;
         };
         /** CandidatePreview */
         CandidatePreview: {
@@ -998,6 +1072,8 @@ export interface components {
         };
         /** Comparison */
         Comparison: {
+            /** Baseline */
+            baseline: string | null;
             /** Candidates */
             candidates: components["schemas"]["ComparisonCandidate"][];
             /** Cells */
@@ -1008,10 +1084,14 @@ export interface components {
             cells_total: number;
             /** Currency */
             currency: string;
+            /** Interval Min Prompts */
+            interval_min_prompts: number;
             /** Judge Bases */
             judge_bases: number;
             /** Notes */
             notes: string[];
+            /** Prompts Matched */
+            prompts_matched: number;
             /** Run Ids */
             run_ids: string[];
         };
@@ -1041,6 +1121,7 @@ export interface components {
             cost_cells: number;
             /** Cost Excluded */
             cost_excluded: number;
+            cost_interval?: components["schemas"]["MoneyInterval"] | null;
             /** Cost Other Currency */
             cost_other_currency: number;
             /** Covered Cells */
@@ -1053,6 +1134,7 @@ export interface components {
             failures_billed: number;
             /** Judge Comparisons */
             judge_comparisons: number;
+            judge_interval?: components["schemas"]["Interval"] | null;
             /** Judge Scored */
             judge_scored: number;
             /** Judge Wins */
@@ -1061,6 +1143,8 @@ export interface components {
             label: string;
             /** Latency Cells */
             latency_cells: number;
+            latency_interval?: components["schemas"]["Interval"] | null;
+            manual_interval?: components["schemas"]["Interval"] | null;
             /** Manual Scored */
             manual_scored: number;
             /** Pending */
@@ -1077,10 +1161,12 @@ export interface components {
             succeeded: number;
             /** Token Cells */
             token_cells: number;
+            vs_baseline?: components["schemas"]["BaselineDifferences"] | null;
             /** Win Cells */
             win_cells: number;
             /** Win Rate */
             win_rate: number | null;
+            win_rate_interval?: components["schemas"]["Interval"] | null;
         };
         /** ComparisonCell */
         ComparisonCell: {
@@ -1213,6 +1299,25 @@ export interface components {
             key: string;
             /** Score */
             score: number;
+        };
+        /**
+         * Difference
+         * @description Candidate minus baseline over the prompts both have. No interval below the minimum prompt count.
+         */
+        Difference: {
+            /** High */
+            high: number | null;
+            /** Low */
+            low: number | null;
+            /** Mean */
+            mean: number;
+            /** Prompts */
+            prompts: number;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "higher" | "lower" | "cannot_tell" | "insufficient_data";
         };
         /** EndpointIn */
         EndpointIn: {
@@ -1455,6 +1560,23 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /**
+         * Interval
+         * @description 95% interval for the mean across prompts (trials of a prompt are averaged first).
+         *
+         *     ``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average
+         *     shown beside it when prompts have different numbers of matched trials.
+         */
+        Interval: {
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
+            /** Mean */
+            mean: number;
+            /** Prompts */
+            prompts: number;
         };
         /** JudgePreview */
         JudgePreview: {
@@ -1709,6 +1831,33 @@ export interface components {
             timeout_total_s: number;
             /** Updated At */
             updated_at: string;
+        };
+        /** MoneyDifference */
+        MoneyDifference: {
+            /** High */
+            high: string | null;
+            /** Low */
+            low: string | null;
+            /** Mean */
+            mean: string;
+            /** Prompts */
+            prompts: number;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "higher" | "lower" | "cannot_tell" | "insufficient_data";
+        };
+        /** MoneyInterval */
+        MoneyInterval: {
+            /** High */
+            high: string;
+            /** Low */
+            low: string;
+            /** Mean */
+            mean: string;
+            /** Prompts */
+            prompts: number;
         };
         /** OrderEntry */
         OrderEntry: {
@@ -2703,6 +2852,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    judge_calibration_api_analysis_calibration_get: {
+        parameters: {
+            query: {
+                run_id: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Calibration"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     put_manual_score_api_attempts__attempt_id__manual_score_put: {
         parameters: {
             query?: never;
@@ -2856,6 +3036,7 @@ export interface operations {
             query: {
                 run_id: string[];
                 candidate_key?: string[] | null;
+                baseline?: string | null;
             };
             header?: never;
             path?: never;

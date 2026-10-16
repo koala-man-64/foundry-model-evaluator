@@ -6,12 +6,16 @@ quality, token usage, latency and **estimated token cost**.
 - **Compare.** Send one prompt to several models, or to one model with different settings (for example low vs high
   reasoning effort), and see the answers next to each other.
 - **Suites and history.** Save prompts, models and settings as a suite and run it with repeated trials. You get average
-  cost, latency, scores and failure counts over matching prompts and trials, and the coverage is always shown.
+  cost, latency, scores and failure counts over matching prompts and trials, and the coverage is always shown. Each
+  average has a 95% range across prompts, and against a baseline candidate each difference says whether it is
+  higher, lower, or too close to call.
 - **Charts.** Runs and suite comparisons are charted: quality against estimated cost per task (log scale, with the
   Pareto frontier and the most attractive quadrant), output tokens split into answer and reasoning, and latency. Every
   chart has a table view.
 - **Scoring.** Rate answers yourself on a 1–5 scale with notes, or have a Foundry model judge them anonymously against
-  a versioned rubric. Manual and judge scores are kept separate.
+  a versioned rubric. Manual and judge scores are kept separate. Blind review hides the model names, keys 1–5 score
+  the selected answer and N jumps to the next unscored one. **Judge vs. your scores** shows how closely the judge
+  agrees with you, so you know whether it can stand in for you on this kind of task.
 - **Models and pricing.** Manage endpoints and API keys, model profiles and rates. Rates come from the Azure Retail
   Prices API (applied only when the match is unambiguous), from manual entries with a source URL, or from labelled
   custom overrides. Projections estimate the cost per request, per 1,000 requests and per month.
