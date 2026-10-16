@@ -22,7 +22,8 @@ quality, token usage, latency and **estimated token cost**.
   agrees with you, so you know whether it can stand in for you on this kind of task.
 - **Models and pricing.** Manage endpoints and API keys, model profiles and rates. Rates come from the Azure Retail
   Prices API (applied only when the match is unambiguous), from manual entries with a source URL, or from labelled
-  custom overrides. Projections estimate the cost per request, per 1,000 requests and per month.
+  custom overrides. Projections estimate the cost per request, per 1,000 requests and per month, show the p50, p90
+  and p95 cost per request, and can blend in a share of batch requests at a price ratio you enter.
 
 Each response shows the total input, uncached input, cache reads and writes, output and reasoning tokens, the latency
 and the estimated token cost. A value the provider did not report shows as **not reported**. An unknown count or rate
@@ -193,8 +194,8 @@ The same files come from `GET /api/runs/{run_id}/export?format=json|csv&include_
 
 - Windows, USD prices, text-only single-turn prompts with optional system instructions, and pay-as-you-go token
   pricing.
-- Not included: provisioned throughput (PTU), batch pricing, images and audio, tool calls, importing responses from
-  elsewhere, team hosting, and reconciliation with invoices.
+- Not included: provisioned throughput (PTU), batch prices (projections take a batch price ratio you enter), images
+  and audio, tool calls, importing responses from elsewhere, team hosting, and reconciliation with invoices.
 - Costs are **estimates** from token counts and published or entered rates. They are not bills.
 - Model capabilities change, so the capability presets are starting points; edit a profile's capabilities when a
   model differs.

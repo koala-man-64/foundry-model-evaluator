@@ -114,6 +114,68 @@ def test_interval_contains_the_mean_and_ignores_order(values):
     assert again is not None and again.low == pytest.approx(interval.low) and again.high == pytest.approx(interval.high)
 
 
+# --- nearest-rank percentiles ----------------------------------------------------------------------
+costs = st.lists(
+    st.decimals(min_value=Decimal(0), max_value=Decimal(1000), places=12, allow_nan=False, allow_infinity=False),
+    min_size=1,
+    max_size=80,
+)
+percents = st.integers(min_value=1, max_value=100)
+
+
+def test_nearest_rank_picks_the_ranked_value():
+    values = [Decimal(v) for v in (7, 1, 10, 3, 5, 2, 9, 4, 8, 6)]  # 1..10, unsorted
+    assert [stats.nearest_rank(values, p) for p in (1, 10, 11, 50, 90, 95, 100)] == [1, 1, 2, 5, 9, 10, 10]
+    assert stats.nearest_rank([Decimal("0.3")], 50) == Decimal("0.3")
+
+
+def test_nearest_rank_p95_is_the_largest_value_below_twenty_values():
+    nineteen = [Decimal(v) for v in range(1, 20)]
+    assert stats.nearest_rank(nineteen, 95) == 19 == max(nineteen)
+    twenty = [Decimal(v) for v in range(1, 21)]
+    assert stats.nearest_rank(twenty, 95) == 19 < max(twenty)
+
+
+def test_nearest_rank_rejects_no_values_and_percents_out_of_range():
+    with pytest.raises(ValueError, match="at least one value"):
+        stats.nearest_rank([], 50)
+    for percent in (0, 101, -5):
+        with pytest.raises(ValueError, match="from 1 to 100"):
+            stats.nearest_rank([Decimal(1)], percent)
+
+
+@given(costs, percents, percents)
+def test_nearest_rank_is_monotone_in_the_percent(values, a, b):
+    low, high = sorted((a, b))
+    assert stats.nearest_rank(values, low) <= stats.nearest_rank(values, high)
+
+
+@given(costs, percents)
+def test_nearest_rank_is_an_exact_input_value_within_min_and_max(values, percent):
+    result = stats.nearest_rank(values, percent)
+    assert min(values) <= result <= max(values)
+    # Decimal-exact: one of the given values, digits and exponent unchanged, never interpolated.
+    assert isinstance(result, Decimal) and result.as_tuple() in {v.as_tuple() for v in values}
+    # The definition: at least percent% of the values are at or below it, fewer than percent% below it.
+    n = len(values)
+    assert 100 * sum(v <= result for v in values) >= percent * n
+    assert 100 * sum(v < result for v in values) < percent * n
+
+
+@given(costs, percents)
+def test_nearest_rank_ignores_order(values, percent):
+    assert stats.nearest_rank(values, percent) == stats.nearest_rank(list(reversed(values)), percent)
+
+
+@given(costs, percents, st.decimals(min_value=Decimal("0.000001"), max_value=Decimal(1), places=6))
+def test_scaling_every_value_scales_the_percentile_exactly(values, percent, factor):
+    # A batch what-if scales each request's cost; the percentile of the scaled costs is the scaled percentile.
+    with localcontext() as ctx:
+        ctx.prec = 40
+        scaled = [v * factor for v in values]
+        assert stats.nearest_rank(scaled, percent) == stats.nearest_rank(values, percent) * factor
+
+
 # --- calibration -----------------------------------------------------------------------------------
 def test_average_ranks_share_ties():
     assert average_ranks([3.0, 1.0, 3.0, 2.0]) == [3.5, 1.0, 3.5, 2.0]
