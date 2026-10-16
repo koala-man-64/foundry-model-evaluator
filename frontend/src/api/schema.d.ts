@@ -899,18 +899,24 @@ export interface components {
         CalibrationGroup: {
             /** Judge */
             judge: string;
+            /** Key */
+            key: string;
             /** Mean Bias */
             mean_bias: number | null;
             /** Pairs */
             pairs: number;
             /** Participant Pairs Excluded */
             participant_pairs_excluded: number;
+            /** Prompts */
+            prompts: number;
             /** Rubric */
             rubric: string;
             /** Scale Max */
             scale_max: number;
             /** Scale Min */
             scale_min: number;
+            /** Settings */
+            settings: string;
             /** Spearman */
             spearman: number | null;
             /** Spearman High */
@@ -1537,13 +1543,18 @@ export interface components {
         };
         /**
          * Interval
-         * @description 95% interval for a mean across prompts (trials of a prompt are averaged first).
+         * @description 95% interval for the mean across prompts (trials of a prompt are averaged first).
+         *
+         *     ``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average
+         *     shown beside it when prompts have different numbers of matched trials.
          */
         Interval: {
             /** High */
             high: number;
             /** Low */
             low: number;
+            /** Mean */
+            mean: number;
             /** Prompts */
             prompts: number;
         };
@@ -1823,6 +1834,8 @@ export interface components {
             high: string;
             /** Low */
             low: string;
+            /** Mean */
+            mean: string;
             /** Prompts */
             prompts: number;
         };

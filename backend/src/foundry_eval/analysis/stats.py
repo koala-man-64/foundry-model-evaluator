@@ -9,6 +9,11 @@ number that looks precise. With few prompts the intervals are wide, which is the
 The verdict of a paired difference is "higher" or "lower" only when the whole interval is on one side
 of zero; otherwise it is "cannot_tell". Intervals for several candidates are not corrected for multiple
 comparisons, which the documentation says.
+
+When every value is the same (zero variance, for example three straight wins), a t-interval would
+collapse to a single point and claim certainty the data cannot give. There is then no interval; a
+difference gets a direction only if an exact two-sided sign test supports it (all of at least
+``SIGN_TEST_MIN`` prompts on the same side), and otherwise "cannot_tell".
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ from decimal import Decimal, localcontext
 from typing import Literal
 
 MIN_PROMPTS = 3
+# With n prompts all on one side, the exact two-sided sign test gives p = 2 * 0.5**n; n >= 6 is p < 0.05.
+SIGN_TEST_MIN = 6
 
 # Two-sided 95% critical values of Student's t (0.975 quantile) by degrees of freedom. Between
 # tabulated values above 30 the next lower entry is used, which gives a slightly wider interval.
@@ -29,7 +36,6 @@ _T_975: dict[int, float] = {
     21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042,
     40: 2.021, 60: 2.000, 120: 1.980,
 }  # fmt: skip
-_Z_975 = 1.960
 
 Verdict = Literal["higher", "lower", "cannot_tell", "insufficient_data"]
 
@@ -40,7 +46,7 @@ def t_critical(df: int) -> float:
     if df in _T_975:
         return _T_975[df]
     lower = [d for d in _T_975 if d <= df]
-    return _T_975[max(lower)] if df <= 120 else _Z_975
+    return _T_975[max(lower)]  # above 120 the df=120 value (1.980), slightly wider than the limit 1.960
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,8 @@ def mean_interval(values: list[float], *, floor: float | None = None, ceiling: f
         return None
     mean = math.fsum(values) / n
     variance = math.fsum((v - mean) ** 2 for v in values) / (n - 1)
+    if variance == 0:
+        return None  # identical values: a zero-width interval would overstate the evidence
     half = t_critical(n - 1) * math.sqrt(variance / n)
     low, high = mean - half, mean + half
     if floor is not None:
@@ -105,10 +113,19 @@ def decimal_mean_interval(values: list[Decimal]) -> DecimalInterval | None:
         count = Decimal(n)
         mean = sum(values, Decimal(0)) / count
         variance = sum(((v - mean) ** 2 for v in values), Decimal(0)) / (count - 1)
+        if variance == 0:
+            return None
         half = Decimal(str(t_critical(n - 1))) * (variance / count).sqrt()
         low = max(mean - half, Decimal(0))
         high = mean + half
     return DecimalInterval(mean=mean, low=low, high=high, n=n)
+
+
+def _constant_verdict(mean: float | Decimal, n: int) -> Verdict:
+    """Every difference is the same: a direction only when an exact sign test supports it."""
+    if mean == 0 or n < SIGN_TEST_MIN:
+        return "cannot_tell"
+    return "higher" if mean > 0 else "lower"
 
 
 def _verdict(low: float | Decimal | None, high: float | Decimal | None) -> Verdict:
@@ -127,11 +144,14 @@ def paired_difference(candidate: Mapping[str, float], baseline: Mapping[str, flo
     if not prompts:
         return None
     diffs = [candidate[p] - baseline[p] for p in prompts]
+    n = len(diffs)
+    mean = math.fsum(diffs) / n
+    if n >= MIN_PROMPTS and len(set(diffs)) == 1:
+        return Difference(mean=mean, low=None, high=None, n=n, verdict=_constant_verdict(mean, n))
     interval = mean_interval(diffs)
-    mean = math.fsum(diffs) / len(diffs)
     low = interval.low if interval else None
     high = interval.high if interval else None
-    return Difference(mean=mean, low=low, high=high, n=len(diffs), verdict=_verdict(low, high))
+    return Difference(mean=mean, low=low, high=high, n=n, verdict=_verdict(low, high))
 
 
 def decimal_paired_difference(
@@ -147,6 +167,8 @@ def decimal_paired_difference(
         mean = sum(diffs, Decimal(0)) / Decimal(n)
         low: Decimal | None = None
         high: Decimal | None = None
+        if n >= MIN_PROMPTS and len(set(diffs)) == 1:
+            return DecimalDifference(mean=mean, low=None, high=None, n=n, verdict=_constant_verdict(mean, n))
         if n >= MIN_PROMPTS:
             variance = sum(((d - mean) ** 2 for d in diffs), Decimal(0)) / Decimal(n - 1)
             half = Decimal(str(t_critical(n - 1))) * (variance / Decimal(n)).sqrt()

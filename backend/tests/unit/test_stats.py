@@ -17,7 +17,7 @@ def test_t_critical_uses_the_table_and_rounds_down_between_entries():
     assert stats.t_critical(1) == 12.706
     assert stats.t_critical(30) == 2.042
     assert stats.t_critical(45) == 2.021  # between 40 and 60: the wider value
-    assert stats.t_critical(500) == 1.960
+    assert stats.t_critical(500) == 1.980  # the df=120 value, slightly wider than the limit
     with pytest.raises(ValueError):
         stats.t_critical(0)
 
@@ -64,6 +64,21 @@ def test_paired_difference_verdicts(candidate, verdict):
     assert found is not None and found.n == 4 and found.verdict == verdict
 
 
+def test_identical_values_have_no_interval():
+    assert stats.mean_interval([4.0, 4.0, 4.0]) is None
+    assert stats.decimal_mean_interval([Decimal("0.002")] * 3) is None
+
+
+@pytest.mark.parametrize(("n", "verdict"), [(3, "cannot_tell"), (5, "cannot_tell"), (6, "higher")])
+def test_constant_differences_need_a_sign_test(n, verdict):
+    # Three straight wins are not 95% evidence (sign test p = 0.25); six are (p = 0.031).
+    prompts = [f"p{i}" for i in range(n)]
+    found = stats.paired_difference(dict.fromkeys(prompts, 1.0), dict.fromkeys(prompts, 0.0))
+    assert found is not None and found.low is None and found.high is None and found.verdict == verdict
+    lower = stats.decimal_paired_difference(dict.fromkeys(prompts, Decimal(0)), dict.fromkeys(prompts, Decimal(1)))
+    assert lower is not None and lower.verdict == ("lower" if verdict == "higher" else verdict)
+
+
 def test_paired_difference_needs_shared_prompts():
     assert stats.paired_difference({"a": 1.0}, {"b": 1.0}) is None
     small = stats.paired_difference({"a": 5.0, "b": 5.0}, {"a": 1.0, "b": 1.0})
@@ -90,7 +105,10 @@ def test_trials_of_a_prompt_are_averaged_before_counting():
 @given(st.lists(st.floats(min_value=-1e6, max_value=1e6, allow_nan=False), min_size=3, max_size=40))
 def test_interval_contains_the_mean_and_ignores_order(values):
     interval = stats.mean_interval(values)
-    assert interval is not None
+    if interval is None:  # no interval only when the values do not vary (in floating point)
+        mean = math.fsum(values) / len(values)
+        assert math.fsum((v - mean) ** 2 for v in values) == 0
+        return
     assert interval.low <= interval.mean + 1e-6 and interval.mean <= interval.high + 1e-6
     again = stats.mean_interval(list(reversed(values)))
     assert again is not None and again.low == pytest.approx(interval.low) and again.high == pytest.approx(interval.high)
@@ -107,8 +125,9 @@ def test_spearman_extremes_and_no_variation():
     assert spearman([3, 3, 3, 3, 3], [1, 2, 3, 4, 5]) is None
 
 
-def test_spearman_interval_needs_enough_pairs():
+def test_spearman_interval_needs_enough_prompts_and_no_perfect_agreement():
     assert spearman_interval(0.8, 4) is None
+    assert spearman_interval(1.0, 30) is None
     low, high = spearman_interval(0.8, 30)  # type: ignore[misc]
     assert -1 < low < 0.8 < high < 1
 

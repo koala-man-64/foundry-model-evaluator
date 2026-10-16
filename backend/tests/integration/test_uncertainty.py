@@ -40,7 +40,13 @@ def test_intervals_count_prompts_and_differences_have_verdicts(client):
     good = chat_profile(client, endpoint["id"], "deepseek-good")
     base = chat_profile(client, endpoint["id"], "deepseek-base")
     names = {good["id"]: "good", base["id"]: "base"}
-    prompts = ["p1", "p2", "p3", "p4"]
+    # Different lengths, so the costs differ between prompts and a cost range exists.
+    prompts = [
+        "p1",
+        "p2 is a bit longer",
+        "p3 is longer than the second prompt",
+        "p4 is the longest prompt of the four here",
+    ]
     request = {
         "prompts": [{"user": p} for p in prompts],
         "candidates": [{"profile_id": good["id"]}, {"profile_id": base["id"]}],
@@ -49,8 +55,8 @@ def test_intervals_count_prompts_and_differences_have_verdicts(client):
     run_id = start_run(client, request, key="idem-uncertainty-1")
     detail = wait_for_run(client, run_id)
     attempts = attempts_by(detail, names)
-    good_scores = {"p1": 5, "p2": 5, "p3": 4, "p4": 5}
-    base_scores = {"p1": 2, "p2": 3, "p3": 2, "p4": 2}
+    good_scores = dict(zip(prompts, [5, 5, 4, 5], strict=True))
+    base_scores = dict(zip(prompts, [2, 3, 2, 2], strict=True))
     for trial in (1, 2):
         for prompt in prompts:
             score(client, attempts[("good", prompt, trial)]["id"], good_scores[prompt])
@@ -133,6 +139,8 @@ def test_calibration_compares_the_judge_with_manual_scores(client):
     [group] = result["groups"]
     assert group["judge"] == "Calibrated judge" and group["rubric"].endswith("v1")
     assert group["pairs"] == 10 and group["participant_pairs_excluded"] == 0
+    # Two answers per prompt: the interval's sample size is the 5 prompts, not the 10 answers.
+    assert group["prompts"] == 5 and group["settings"] == "default settings" and len(group["key"]) == 12
     judged = client.get(f"/api/runs/{run_id}").json()["judge_scores"]
     pairs = [(float(manual[a]), judged[a]["weighted_overall"]) for a in manual]  # default rubric is already 1-5
     assert group["within_one"] == pytest.approx(sum(1 for m, j in pairs if abs(j - m) <= 1) / 10)

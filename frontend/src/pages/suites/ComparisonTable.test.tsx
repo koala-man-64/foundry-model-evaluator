@@ -80,8 +80,8 @@ describe('ComparisonTable', () => {
         candidate('Better', {
           avg_manual_score: 4.75,
           manual_scored: 4,
-          manual_interval: { low: 4.2, high: 5, prompts: 4 },
-          cost_interval: { low: '0.0015', high: '0.0025', prompts: 4 },
+          manual_interval: { mean: 4.75, low: 4.2, high: 5, prompts: 4 },
+          cost_interval: { mean: '0.002', low: '0.0015', high: '0.0025', prompts: 4 },
           vs_baseline: {
             cost: { mean: '0.0005', low: '-0.0001', high: '0.0011', prompts: 4, verdict: 'cannot_tell' },
             latency_ms: null,
@@ -102,6 +102,8 @@ describe('ComparisonTable', () => {
     expect(within(row).getByText('cannot tell')).toBeInTheDocument()
     expect(screen.getByRole('row', { name: /^Base/ })).toHaveTextContent('baseline')
     expect(screen.getByTestId('interval-note')).toHaveTextContent('4 matched prompts')
+    // avg_cost 0.002 equals the per-prompt mean; no extra wording. A differing mean is named.
+    expect(row).not.toHaveTextContent('around the per-prompt mean $0.002')
   })
 
   it('shows judge scores and the billed failures otherwise', () => {

@@ -63,6 +63,7 @@ export function ManualScoreControl({ runId, attemptId, score }: { runId: string;
               type="button"
               aria-pressed={score?.score === value}
               aria-label={`Score ${value}`}
+              disabled={save.isPending}
               onClick={() => save.mutate(value)}
             >
               {value}

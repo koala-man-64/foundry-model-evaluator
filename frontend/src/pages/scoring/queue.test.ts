@@ -43,6 +43,8 @@ describe('scoring queue', () => {
       promptIndex: 1,
       trial: 1,
     })
+    // Only the current cell is waiting: "next" means another cell, so there is none.
+    expect(nextUnscoredCell(detail(['a11', 'a21', 'b11', 'b12', 'b21', 'b22']), latest, { promptIndex: 0, trial: 1 })).toBeNull()
     const all = ['a11', 'a12', 'a21', 'b11', 'b12', 'b21', 'b22']
     expect(nextUnscoredCell(detail(all), latest, { promptIndex: 0, trial: 1 })).toBeNull()
   })

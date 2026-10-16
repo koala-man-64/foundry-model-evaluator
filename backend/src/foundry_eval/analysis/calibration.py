@@ -6,10 +6,14 @@ correlation (Spearman, with ties ranked by their average), the share of answers 
 mean signed difference (judge minus you) and how often the judge preferred the answer you scored
 highest. Evaluations in which the judge also produced one of the answers are left out and counted.
 Nothing here costs anything: it only reads scores already stored.
+
+Answers to the same prompt are related, so the interval for the rank correlation counts *prompts*,
+not answers, as its sample size, and is shown only from ``MIN_INTERVAL_PROMPTS`` prompts.
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass, field
 
@@ -21,17 +25,21 @@ from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
 from ..repos.rubrics import RubricRepository
 from ..repos.runs import RunRepository
-from .comparisons import judge_basis
+from .comparisons import SCORING_SETTINGS, judge_basis
 
 MIN_PAIRS = 5  # below this a rank correlation is noise, so it is not reported
+MIN_INTERVAL_PROMPTS = 5
 
 
 class CalibrationGroup(BaseModel):
+    key: str  # stable id of the judge basis
     judge: str
     rubric: str
+    settings: str  # the judge's scoring settings, so two rows for one judge and rubric can be told apart
     scale_min: int
     scale_max: int
     pairs: int
+    prompts: int
     spearman: float | None
     spearman_low: float | None
     spearman_high: float | None
@@ -51,11 +59,14 @@ class Calibration(BaseModel):
 
 @dataclass
 class _Group:
+    key: str
     judge: str
     rubric: str
+    settings: str
     scale_min: int
     scale_max: int
     pairs: list[tuple[float, float]] = field(default_factory=list)  # (manual, judge rescaled to 1-5)
+    prompts: set[str] = field(default_factory=set)  # content hashes of the prompts the pairs came from
     top_agree: int = 0
     top_total: int = 0
     excluded: int = 0
@@ -92,8 +103,12 @@ def spearman(xs: list[float], ys: list[float]) -> float | None:
 
 
 def spearman_interval(rho: float, n: int) -> tuple[float, float] | None:
-    """Approximate 95% interval via Fisher's z with the Fieller-Hartley-Pearson variance for Spearman."""
-    if n < MIN_PAIRS:
+    """Approximate 95% interval via Fisher's z with the Fieller-Hartley-Pearson variance for Spearman.
+
+    ``n`` is the number of independent units (prompts). No interval for perfect agreement, where the
+    transform has no finite width.
+    """
+    if n < MIN_INTERVAL_PROMPTS or abs(rho) >= 0.999:
         return None
     clipped = max(min(rho, 0.999999), -0.999999)
     z = math.atanh(clipped)
@@ -117,6 +132,7 @@ class CalibrationService:
         for run_id in dict.fromkeys(run_ids):
             self.runs.get(run_id)
             current = {a.id for a in latest_attempts(self.runs.attempts(run_id)).values()}
+            hashes = {p.id: p.content_hash for p in self.runs.prompts(run_id)}
             manual = {k: v for k, v in self.runs.manual_scores(run_id).items() if k in current}
             for evaluation in latest_evaluations(self.evaluations.list_for_run(run_id)).values():
                 group = groups.get(judge_basis(evaluation))
@@ -129,6 +145,8 @@ class CalibrationService:
                 for candidate in scored:
                     judged = rescale(candidate.weighted_overall, group.scale_min, group.scale_max)
                     group.pairs.append((float(manual[candidate.attempt_id].score), judged))
+                if scored:
+                    group.prompts.add(hashes.get(evaluation.prompt_id, evaluation.prompt_id))
                 if len(evaluation.candidates) >= 2 and len(scored) == len(evaluation.candidates):
                     best = max(manual[c.attempt_id].score for c in scored)
                     top = [c for c in scored if manual[c.attempt_id].score == best]
@@ -139,6 +157,9 @@ class CalibrationService:
             "Your manual scores are one person's view, not ground truth.",
             "Judge scores are rescaled from the rubric's scale to 1-5 before they are compared with yours.",
         ]
+        notes.append(
+            "The interval for rank agreement counts prompts, not answers, because answers to one prompt are related."
+        )
         if any(g.excluded for g in groups.values()):
             notes.append("Evaluations in which the judge also produced an answer are left out.")
         return Calibration(
@@ -157,7 +178,17 @@ class CalibrationService:
             scale = (version.definition.scale_min, version.definition.scale_max)
         except NotFoundError:
             rubric, scale = "Unknown rubric", (1, 5)
-        return _Group(judge=judge, rubric=rubric, scale_min=scale[0], scale_max=scale[1])
+        basis = judge_basis(evaluation)
+        provided = evaluation.judge_settings.provided()
+        scoring = [f"{name}={provided[name]}" for name in SCORING_SETTINGS if name in provided]
+        return _Group(
+            key=hashlib.sha256(basis.encode()).hexdigest()[:12],
+            judge=judge,
+            rubric=rubric,
+            settings=", ".join(scoring) or "default settings",
+            scale_min=scale[0],
+            scale_max=scale[1],
+        )
 
     @staticmethod
     def _summary(group: _Group) -> CalibrationGroup:
@@ -165,13 +196,16 @@ class CalibrationService:
         manual = [p[0] for p in group.pairs]
         judged = [p[1] for p in group.pairs]
         rho = spearman(manual, judged) if n >= MIN_PAIRS else None
-        interval = spearman_interval(rho, n) if rho is not None else None
+        interval = spearman_interval(rho, len(group.prompts)) if rho is not None else None
         return CalibrationGroup(
+            key=group.key,
             judge=group.judge,
             rubric=group.rubric,
+            settings=group.settings,
             scale_min=group.scale_min,
             scale_max=group.scale_max,
             pairs=n,
+            prompts=len(group.prompts),
             spearman=rho,
             spearman_low=interval[0] if interval else None,
             spearman_high=interval[1] if interval else None,

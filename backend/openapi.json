@@ -526,6 +526,10 @@
             "title": "Judge",
             "type": "string"
           },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
           "mean_bias": {
             "anyOf": [
               {
@@ -545,6 +549,10 @@
             "title": "Participant Pairs Excluded",
             "type": "integer"
           },
+          "prompts": {
+            "title": "Prompts",
+            "type": "integer"
+          },
           "rubric": {
             "title": "Rubric",
             "type": "string"
@@ -556,6 +564,10 @@
           "scale_min": {
             "title": "Scale Min",
             "type": "integer"
+          },
+          "settings": {
+            "title": "Settings",
+            "type": "string"
           },
           "spearman": {
             "anyOf": [
@@ -611,11 +623,14 @@
           }
         },
         "required": [
+          "key",
           "judge",
           "rubric",
+          "settings",
           "scale_min",
           "scale_max",
           "pairs",
+          "prompts",
           "spearman",
           "spearman_low",
           "spearman_high",
@@ -2649,7 +2664,7 @@
         "type": "object"
       },
       "Interval": {
-        "description": "95% interval for a mean across prompts (trials of a prompt are averaged first).",
+        "description": "95% interval for the mean across prompts (trials of a prompt are averaged first).\n\n``mean`` is that per-prompt mean, the centre of the interval. It can differ from the cell average\nshown beside it when prompts have different numbers of matched trials.",
         "properties": {
           "high": {
             "title": "High",
@@ -2659,12 +2674,17 @@
             "title": "Low",
             "type": "number"
           },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
           "prompts": {
             "title": "Prompts",
             "type": "integer"
           }
         },
         "required": [
+          "mean",
           "low",
           "high",
           "prompts"
@@ -3447,12 +3467,17 @@
             "title": "Low",
             "type": "string"
           },
+          "mean": {
+            "title": "Mean",
+            "type": "string"
+          },
           "prompts": {
             "title": "Prompts",
             "type": "integer"
           }
         },
         "required": [
+          "mean",
           "low",
           "high",
           "prompts"
