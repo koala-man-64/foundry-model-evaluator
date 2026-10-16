@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 
 import { useRun, useRuns } from '../api/hooks'
 import type { Attempt } from '../api/types'
-import { JudgeScoreLine, ManualScoreControl } from '../components/ResponseCard'
+import { CheckResultsLine, JudgeScoreLine, ManualScoreControl } from '../components/ResponseCard'
 import { StatusBadge, Empty, ErrorMessage, Spinner } from '../components/ui'
 import { latestAttempts } from './RunPage'
 import { CalibrationPanel } from './scoring/CalibrationPanel'
@@ -122,6 +122,12 @@ export function ScoringPage() {
             <h3>Prompt</h3>
             {prompt.system_text && <div className="response-text small">{prompt.system_text}</div>}
             <div className="response-text">{prompt.user_text}</div>
+            {prompt.reference_text && (
+              <>
+                <h4>Reference answer</h4>
+                <div className="response-text small">{prompt.reference_text}</div>
+              </>
+            )}
           </div>
           <section aria-label="Manual scores" className="stack">
             <h2>Manual scores</h2>
@@ -150,6 +156,7 @@ export function ScoringPage() {
                       {attempt.output_text || (blind ? 'No answer.' : attempt.error_message) || '—'}
                     </div>
                     {!blind && detail.judge_scores?.[attempt.id] && <JudgeScoreLine score={detail.judge_scores[attempt.id]} />}
+                    {detail.check_results?.[attempt.id] && <CheckResultsLine outcome={detail.check_results[attempt.id]} />}
                     {attempt.status === 'succeeded' && (
                       <ManualScoreControl runId={detail.run.id} attemptId={attempt.id} score={detail.manual_scores[attempt.id]} />
                     )}

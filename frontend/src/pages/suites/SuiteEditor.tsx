@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { post, put } from '../../api/client'
 import { useProfiles, useRubrics } from '../../api/hooks'
 import type { GenerationSettings, ModelProfile, Suite, SuiteIn } from '../../api/types'
+import { type CheckDraft, ChecksEditor, checkToDraft, draftToCheck } from '../../components/ChecksEditor'
 import { cleanSettings, SettingsEditor, unsupportedSettings } from '../../components/SettingsEditor'
 import { ErrorMessage, Field, Spinner } from '../../components/ui'
 import { API_STYLE_LABELS } from '../../lib/format'
+import { importPrompts } from '../../lib/importPrompts'
 
 interface PromptDraft {
   key: string
@@ -14,6 +16,12 @@ interface PromptDraft {
   title: string
   system: string
   user: string
+  reference: string
+  checks: CheckDraft[]
+}
+
+function blankPrompt(): PromptDraft {
+  return { key: nextKey(), id: null, title: '', system: '', user: '', reference: '', checks: [] }
 }
 
 interface CandidateDraft {
@@ -85,10 +93,28 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
   const [description, setDescription] = useState(suite?.description ?? '')
   const [trials, setTrials] = useState(suite?.trials ?? 1)
   const [prompts, setPrompts] = useState<PromptDraft[]>(
-    suite?.prompts.map((p) => ({ key: p.id, id: p.id, title: p.title, system: p.system, user: p.user })) ?? [
-      { key: nextKey(), id: null, title: '', system: '', user: '' },
-    ],
+    suite?.prompts.map((p) => ({
+      key: p.id,
+      id: p.id,
+      title: p.title,
+      system: p.system,
+      user: p.user,
+      reference: p.reference ?? '',
+      checks: (p.checks ?? []).map(checkToDraft),
+    })) ?? [blankPrompt()],
   )
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [importNote, setImportNote] = useState<string[]>([])
+  const onImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const onlyBlank = prompts.length === 1 && !prompts[0].user.trim() && !prompts[0].id
+    const result = importPrompts(file.name, await file.text(), onlyBlank ? 0 : prompts.length)
+    const added = result.prompts.map((p) => ({ ...blankPrompt(), ...p, checks: p.checks.map(checkToDraft) }))
+    if (added.length) setPrompts((list) => (onlyBlank ? added : [...list, ...added]))
+    setImportNote([`Imported ${added.length} prompt${added.length === 1 ? '' : 's'} from ${file.name}.`, ...result.errors])
+  }
   const [candidates, setCandidates] = useState<CandidateDraft[]>(
     suite?.candidates.map((c) => ({
       key: c.id,
@@ -120,6 +146,12 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
   const problems: string[] = []
   if (!name.trim()) problems.push('Give the suite a name.')
   if (prompts.some((p) => !p.user.trim())) problems.push('Every prompt needs a user prompt.')
+  prompts.forEach((p, index) =>
+    p.checks.forEach((check, checkIndex) => {
+      const result = draftToCheck(check)
+      if (typeof result === 'string') problems.push(`Prompt ${index + 1}, check ${checkIndex + 1}: ${result}.`)
+    }),
+  )
   candidates.forEach((c, index) => {
     if (!c.profileId) problems.push(`Candidate ${index + 1}: choose a model profile.`)
     for (const label of unsupportedSettings(byId.get(c.profileId)?.capabilities, c.settings))
@@ -138,7 +170,14 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
       name: name.trim(),
       description,
       trials,
-      prompts: prompts.map((p) => ({ id: p.id, title: p.title, system: p.system, user: p.user })),
+      prompts: prompts.map((p) => ({
+        id: p.id,
+        title: p.title,
+        system: p.system,
+        user: p.user,
+        reference: p.reference,
+        checks: p.checks.map(draftToCheck).filter((c) => typeof c !== 'string'),
+      })),
       candidates: candidates.map((c) => ({
         id: c.id,
         profile_id: c.profileId,
@@ -182,10 +221,30 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
       <section className="stack" aria-label="Suite prompts">
         <div className="row-between">
           <h2>Prompts</h2>
-          <button type="button" onClick={() => setPrompts((list) => [...list, { key: nextKey(), id: null, title: '', system: '', user: '' }])}>
-            Add prompt
-          </button>
+          <div className="row">
+            <button type="button" onClick={() => fileInput.current?.click()} title="CSV with a user column, or JSON lines">
+              Import prompts
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".csv,.jsonl,.json,.ndjson"
+              hidden
+              aria-label="Import prompts from a file"
+              onChange={onImport}
+            />
+            <button type="button" onClick={() => setPrompts((list) => [...list, blankPrompt()])}>
+              Add prompt
+            </button>
+          </div>
         </div>
+        {importNote.length > 0 && (
+          <div className="callout small" data-testid="import-note">
+            {importNote.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
+          </div>
+        )}
         {prompts.map((prompt, index) => (
           <div key={prompt.key} className="card stack-sm" data-testid="suite-prompt">
             <div className="row-between">
@@ -209,6 +268,33 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
             <Field label={`Prompt ${index + 1} user prompt`}>
               <textarea rows={3} value={prompt.user} onChange={(e) => updatePrompt(prompt.key, { user: e.target.value })} />
             </Field>
+            <details open={Boolean(prompt.reference || prompt.checks.length)}>
+              <summary className="small">
+                Reference answer and checks
+                {prompt.checks.length > 0 ? ` (${prompt.checks.length} check${prompt.checks.length === 1 ? '' : 's'})` : ''}
+              </summary>
+              <div className="stack-sm">
+                <Field
+                  label={`Prompt ${index + 1} reference answer (optional)`}
+                  hint="Shown to the judge to grade correctness. It may be imperfect; the judge is told so."
+                >
+                  <textarea
+                    rows={2}
+                    value={prompt.reference}
+                    onChange={(e) => updatePrompt(prompt.key, { reference: e.target.value })}
+                  />
+                </Field>
+                <p className="small muted">
+                  Checks run on every answer for free. An answer passes when every check passes; the pass rate is shown
+                  next to cost, separately from manual and judge scores.
+                </p>
+                <ChecksEditor
+                  label={`Prompt ${index + 1} check`}
+                  checks={prompt.checks}
+                  onChange={(checks) => updatePrompt(prompt.key, { checks })}
+                />
+              </div>
+            </details>
           </div>
         ))}
       </section>

@@ -40,6 +40,7 @@ function candidate(partial: Partial<ComparisonCandidate>): ComparisonCandidate {
     win_cells: 2,
     win_rate: 0.5,
     custom_rates: false,
+    checks_cells: 0,
     ...partial,
   }
 }
@@ -54,6 +55,7 @@ function comparison(candidates: ComparisonCandidate[], judgeBases = 1): Comparis
     prompts_matched: 1,
     interval_min_prompts: 3,
     baseline: null,
+    has_checks: false,
     candidates,
     cells: [],
     notes: [],

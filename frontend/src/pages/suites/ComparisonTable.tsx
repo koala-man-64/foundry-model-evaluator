@@ -98,6 +98,11 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
               <th className="num" title="Share of the judge's preferences, averaged per cell. A tie gives each judged answer an equal share.">
                 Judge win rate
               </th>
+              {data.has_checks && (
+                <th className="num" title="Share of answers that pass every check of their prompt (free, deterministic)">
+                  Checks passed
+                </th>
+              )}
               <th className="num">Failures</th>
             </tr>
           </thead>
@@ -166,6 +171,16 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
                       <DifferenceLine kind="rate" difference={item.vs_baseline?.win_rate} />
                     </td>
                   </>
+                )}
+                {data.has_checks && (
+                  <td className="num">
+                    {item.avg_checks_passed === null || item.avg_checks_passed === undefined
+                      ? '—'
+                      : `${Math.round(item.avg_checks_passed * 100)}%`}
+                    <div className="small muted">{cells(item.checks_cells)} checked</div>
+                    <IntervalLine kind="pass" interval={item.checks_interval} shown={item.avg_checks_passed} />
+                    <DifferenceLine kind="pass" difference={item.vs_baseline?.checks} />
+                  </td>
                 )}
                 <td className="num">
                   {item.failures} of {item.attempts}

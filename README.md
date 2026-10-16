@@ -8,7 +8,11 @@ quality, token usage, latency and **estimated token cost**.
 - **Suites and history.** Save prompts, models and settings as a suite and run it with repeated trials. You get average
   cost, latency, scores and failure counts over matching prompts and trials, and the coverage is always shown. Each
   average has a 95% range across prompts, and against a baseline candidate each difference says whether it is
-  higher, lower, or too close to call.
+  higher, lower, or too close to call. Prompts can be imported from a CSV or JSON-lines file.
+- **Reference answers and checks.** Give a prompt a reference answer, which the judge uses to grade correctness, and
+  free deterministic checks (contains, does not contain, equals, pattern, number within a tolerance, JSON schema).
+  Checks run on every answer at no cost, and the pass rate sits next to cost in comparisons and on the quality-vs-cost
+  chart, separate from manual and judge scores.
 - **Charts.** Runs and suite comparisons are charted: quality against estimated cost per task (log scale, with the
   Pareto frontier and the most attractive quadrant), output tokens split into answer and reasoning, and latency. Every
   chart has a table view.

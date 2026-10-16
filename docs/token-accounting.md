@@ -176,6 +176,32 @@ as *matched* when every candidate has a succeeded answer in it, and the page sho
   **Retry failed** leaves them out because the same request would most likely repeat; retry one explicitly instead.
 - **Failures** count finished attempts that did not succeed. Attempts that have not finished are shown separately.
 
+### Checks
+
+A prompt can carry up to 10 deterministic checks. They run locally on each succeeded answer, every time results are
+shown, so they cost nothing and always agree with the checks frozen into the run.
+
+| Check | Passes when |
+|---|---|
+| Contains / Does not contain | the answer contains (or does not contain) the text, case-insensitive unless set |
+| Equals | the whole answer equals the text, ignoring leading, trailing and repeated whitespace |
+| Matches pattern | the regular expression is found in the answer |
+| Number | the last number in the answer (or any number) is within the tolerance of the value; `1,234.5` reads as 1234.5 |
+| JSON schema | the answer, optionally inside one ``` fence, is JSON that matches the schema |
+
+- An answer **passes** when every check of its prompt passes. Comparisons show the share of answers that pass, per
+  cell and then over the common cells, with the same 95% range and baseline difference as the other metrics. It is a
+  separate score: it is never blended with manual or judge scores.
+- Checks that could not run as written are refused when the suite is saved, never skipped later: an invalid regular
+  expression, a pattern with nested quantifiers such as `(a+)+` (which can take very long on long answers), a JSON
+  schema keyword this checker does not implement (it supports `type`, `properties`, `required`,
+  `additionalProperties: false`, `items`, `enum`, `const`, `minItems`/`maxItems`, `minLength`/`maxLength` and
+  `minimum`/`maximum`), or a number given as a float.
+- A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
+  may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
+  a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was
+  created with.
+
 ### Uncertainty
 
 A small difference in an average can be noise, so every average also shows a **95% range across prompts**:

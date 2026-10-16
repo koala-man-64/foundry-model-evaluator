@@ -100,7 +100,7 @@ export function ComparePage() {
     return {
       kind: 'compare',
       title: draft.title,
-      prompts: [{ system: draft.system, user: draft.user, title: '', suite_prompt_id: draft.suitePromptId }],
+      prompts: [{ system: draft.system, user: draft.user, title: '', suite_prompt_id: draft.suitePromptId, reference: '' }],
       candidates: draft.candidates.map((c) => ({
         profile_id: c.profileId,
         label: c.label.trim() || null,

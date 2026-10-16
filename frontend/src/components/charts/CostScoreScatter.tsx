@@ -16,7 +16,7 @@ import {
   scaleLog,
 } from './chartMath'
 
-type ScoreKind = 'judge' | 'manual'
+type ScoreKind = 'judge' | 'manual' | 'checks'
 
 const WIDTH = 960
 const HEIGHT = 420
@@ -37,11 +37,16 @@ export function publisherColor(publisher: string): string {
 }
 
 function score(candidate: ComparisonCandidate, kind: ScoreKind): number | null {
+  if (kind === 'checks') {
+    const passed = candidate.avg_checks_passed
+    return passed === null || passed === undefined ? null : passed * 100
+  }
   const value = kind === 'judge' ? candidate.avg_judge_score : candidate.avg_manual_score
   return value === null || value === undefined ? null : value
 }
 
 function scoreCells(candidate: ComparisonCandidate, kind: ScoreKind): number {
+  if (kind === 'checks') return candidate.checks_cells
   return kind === 'judge' ? candidate.judge_scored : candidate.manual_scored
 }
 
@@ -61,7 +66,11 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
       const y = score(candidate, kind)
       if (cost === null) missing.push({ label: candidate.label, reason: 'no complete cost estimate' })
       else if (cost <= 0) missing.push({ label: candidate.label, reason: 'cost $0' })
-      else if (y === null) missing.push({ label: candidate.label, reason: kind === 'judge' ? judgeGap : 'not scored by hand' })
+      else if (y === null)
+        missing.push({
+          label: candidate.label,
+          reason: kind === 'judge' ? judgeGap : kind === 'checks' ? 'no checked answers' : 'not scored by hand',
+        })
       else plotted.push({ key: candidate.candidate_key, x: cost, y, candidate })
     }
     return { data: plotted, unplotted: missing }
@@ -89,7 +98,8 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
       .map((d) => ({ key: d.key, text: d.candidate.label, x: x(d.x), y: y(d.y) })),
     PLOT,
   )
-  const kindLabel = kind === 'judge' ? 'Judge score (weighted overall)' : 'Manual score'
+  const kindLabel =
+    kind === 'judge' ? 'Judge score (weighted overall)' : kind === 'checks' ? 'Checks passed (%)' : 'Manual score'
   const summary = `${kindLabel} against average estimated token cost per task for ${data.length} candidates; ${frontier.length} on the Pareto frontier.`
 
   return (
@@ -103,6 +113,7 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
           <select value={kind} onChange={(e) => setKind(e.target.value as ScoreKind)} aria-label="Score">
             <option value="judge">Judge</option>
             <option value="manual">Manual</option>
+            {comparison.has_checks && <option value="checks">Checks passed</option>}
           </select>
         </label>
       }

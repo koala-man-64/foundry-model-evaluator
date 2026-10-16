@@ -182,6 +182,12 @@ export function RunPage() {
           )}
           <h4>User prompt</h4>
           <div className="response-text">{prompt.user_text}</div>
+          {prompt.reference_text && (
+            <>
+              <h4>Reference answer</h4>
+              <div className="response-text">{prompt.reference_text}</div>
+            </>
+          )}
         </details>
       )}
 
@@ -198,6 +204,7 @@ export function RunPage() {
                 candidate={candidate}
                 manualScore={detail.manual_scores[attempt.id]}
                 judgeScore={detail.judge_scores?.[attempt.id]}
+                checks={detail.check_results?.[attempt.id]}
                 retried={retriedIds.has(attempt.id)}
               />
             )
