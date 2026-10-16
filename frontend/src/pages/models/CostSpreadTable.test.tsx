@@ -81,6 +81,16 @@ describe('CostSpreadTable', () => {
     expect(cells[7]).toHaveTextContent('no request priced completely')
   })
 
+  it('says when the percentiles are of a batch-blended cost', () => {
+    const batched = { ...result([candidate('Model D')]), what_if: { ...result([]).what_if, batch_share: '0.4', batch_rate_ratio: '0.5' } }
+    const { unmount } = render(<CostSpreadTable result={batched} />)
+    expect(screen.getByText('batch blended')).toBeInTheDocument()
+    expect(screen.getByText(/not of a mix of batch and full-price requests/)).toBeInTheDocument()
+    unmount()
+    render(<CostSpreadTable result={result([candidate('Model D')])} />)
+    expect(screen.queryByText('batch blended')).not.toBeInTheDocument()
+  })
+
   it('has no sample warning from 30 priced requests', () => {
     const spread = { ...candidate('Model C').cost_spread!, sample_warning: null }
     render(<CostSpreadTable result={result([candidate('Model C', { cost_spread: spread })])} />)

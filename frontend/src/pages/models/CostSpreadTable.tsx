@@ -13,6 +13,12 @@ export function CostSpreadTable({ result }: { result: ProjectionResult }) {
         Nearest-rank percentiles over the requests with complete estimates. The monthly figures are what {requests} requests
         would cost if every request cost the p50 or the p95; they are not a forecast range.
       </p>
+      {result.what_if.batch_share != null && (
+        <p className="small">
+          <Badge tone="info">batch blended</Badge> Every request's cost blends the batch share at the batch price ratio with the rest at
+          the full cost, so these are percentiles of that blended cost, not of a mix of batch and full-price requests.
+        </p>
+      )}
       <div className="card table-wrap">
         <table>
           <thead>

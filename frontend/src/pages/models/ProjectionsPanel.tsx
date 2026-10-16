@@ -28,6 +28,13 @@ export function validRatio(text: string): boolean {
   return parsed !== null && !parsed.negative && parsed.digits > 0n && parsed.digits <= 10n ** BigInt(parsed.scale)
 }
 
+/** A share of requests entered as a percentage from 0 to 100. */
+export function validPercentShare(text: string): boolean {
+  const fraction = percentToFraction(text)
+  const parsed = fraction === null ? null : parseDecimal(fraction)
+  return parsed !== null && parsed.digits <= 10n ** BigInt(parsed.scale)
+}
+
 export function ProjectionsPanel() {
   const runs = useRuns()
   const finished = useMemo(
@@ -56,7 +63,7 @@ export function ProjectionsPanel() {
   if (!validMultiplier(outputMultiplier)) problems.push('The output length multiplier must be a positive number.')
   if (readShare.trim() && readFraction === null) problems.push('The cache read share must be a percentage.')
   if (writeShare.trim() && writeFraction === null) problems.push('The cache write share must be a percentage.')
-  if (batchShare.trim() && batchFraction === null) problems.push('The batch share must be a percentage.')
+  if (batchShare.trim() && !validPercentShare(batchShare)) problems.push('The batch share must be a percentage from 0 to 100.')
   if (batchRatio.trim() && !validRatio(batchRatio))
     problems.push('The batch price ratio must be greater than 0 and at most 1.')
   if (!batchShare.trim() !== !batchRatio.trim()) problems.push('Enter both the batch share and the batch price ratio, or neither.')
