@@ -17,7 +17,8 @@ without an explicit action.
   each run, and unfinished work is never replayed after a restart.
 - **Synced folders.** Prompts, answers and history stay out of OneDrive and out of the repository.
 - **Exports.** Run exports leave out keys, the endpoint URL, request bodies and raw responses, and leave out prompt and
-  answer text unless you ask for it. In CSV files, text that could run as a spreadsheet formula is prefixed with `'`.
+  answer text, provider error messages (they can quote either) and stop strings unless you ask for them. Profiles are
+  exported through an allow-list. In CSV files, text that could run as a spreadsheet formula is prefixed with `'`.
 
 **What it trusts:** other programs running as your Windows user. They can read your Credential Manager entries and the
 app's data folder, and they can call the local API (there is no per-launch token). Use the app on a machine and

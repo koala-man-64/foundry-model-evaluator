@@ -72,7 +72,7 @@ def make_attempt(attempt_id: str, **overrides: Any) -> Attempt:
         "cost_lower": D("0.0000012"),
         "cost_upper": D("0.0000012"),
         "error_type": None,
-        "error_message": None,
+        "error_message": "ATTEMPT ERROR MARKER",
         "created_at": "2026-01-01T00:00:00.000+00:00",
     }
     fields.update(overrides)
@@ -119,7 +119,7 @@ def make_evaluation(candidate_id: str = "cand-1") -> Evaluation:
         cost=CostEstimate(status="complete", currency="USD", total=D("0.01"), lower=D("0.01"), upper=D("0.01")),
         cost_total=D("0.01"),
         error_type=None,
-        error_message=None,
+        error_message="EVALUATION ERROR MARKER",
         created_at="2026-01-01T00:01:00.000+00:00",
         candidates=[
             EvaluationCandidate(
@@ -203,9 +203,20 @@ def make_data(attempts: list[Attempt] | None = None, *, title: str = "Title", la
                 profile_snapshot={
                     "name": "P",
                     "deployment": "gpt-test",
-                    "endpoint": {"id": "e1", "name": "Mock", "base_url": SECRET_URL, "region": "eastus2"},
+                    "notes": "PROFILE NOTE MARKER",
+                    "meter_terms": "METER TERMS MARKER",
+                    "custom_path": "/custom/path-marker",
+                    "api_version": "2099-API-VERSION-MARKER",
+                    "capabilities": {"CAPABILITY-MARKER": True},
+                    "endpoint": {
+                        "id": "e1",
+                        "name": "Mock",
+                        "base_url": SECRET_URL,
+                        "region": "eastus2",
+                        "auth_style": "api-key",
+                    },
                 },
-                settings=GenerationSettings(max_output_tokens=100),
+                settings=GenerationSettings(max_output_tokens=100, stop=["STOP STRING MARKER"]),
                 candidate_key="key-1",
                 price_snapshot_id="snap-1",
             )
@@ -246,6 +257,8 @@ def test_csv_columns_are_in_order_and_output_text_is_last_when_requested():
     data = make_data()
     header = build_run_csv(data, include_text=False).splitlines()[0].split(",")
     assert header == list(CSV_COLUMNS)
+    assert header[header.index("retry_of") + 1] == "superseded"
+    assert header[header.index("judge_weighted_overall") + 1] == "judge_is_participant"
     assert build_run_csv(data, include_text=True).splitlines()[0].split(",") == [*CSV_COLUMNS, "output_text"]
 
 
@@ -308,6 +321,8 @@ def test_csv_joins_manual_and_judge_scores_and_one_row_per_attempt():
         "default-v1",
     )
     assert retry["retry_of"] == "att-ok"
+    assert (ok["superseded"], retry["superseded"]) == ("true", "false")
+    assert (ok["judge_is_participant"], retry["judge_is_participant"]) == ("false", "")
     assert (retry["manual_score"], retry["judge_weighted_overall"], retry["rubric_version_id"]) == ("", "", "")
 
 
@@ -383,7 +398,7 @@ def test_json_never_contains_endpoint_url_request_body_or_raw_output():
     assert SECRET_URL not in text and "secret-resource" not in text
     assert "REQUEST BODY MARKER" not in text and "JUDGE RAW OUTPUT" not in text
     [candidate] = build(make_data(), True)["candidates"]
-    assert candidate["profile"]["endpoint"] == {"id": "e1", "name": "Mock", "region": "eastus2"}
+    assert candidate["profile"]["endpoint"] == {"name": "Mock", "region": "eastus2"}
 
 
 def test_json_text_is_included_only_when_requested():
@@ -396,6 +411,9 @@ def test_json_text_is_included_only_when_requested():
         "EXPLANATION MARKER",
         "CRITERION MARKER",
         "PREFERENCE MARKER",
+        "ATTEMPT ERROR MARKER",
+        "EVALUATION ERROR MARKER",
+        "STOP STRING MARKER",
     ]
     without = json.dumps(build(make_data(), False))
     assert not [m for m in markers if m in without]
@@ -424,3 +442,53 @@ def test_json_evaluations_include_the_judge_and_criteria():
     assert evaluation["candidates"][0]["criteria"] == [{"key": "accuracy", "score": 4}]
     assert evaluation["candidates"][0]["weighted_overall"] == 3.75
     assert evaluation["cost"]["total"] == "0.01"
+
+
+def test_error_messages_and_stop_strings_follow_include_text_but_error_type_stays():
+    attempt = make_attempt("att-bad", status=AttemptStatus.FAILED, error_type="http_500")
+    default = build(make_data([attempt]), False)
+    assert "ATTEMPT ERROR MARKER" not in json.dumps(default) and "EVALUATION ERROR MARKER" not in json.dumps(default)
+    assert "error_message" not in default["attempts"][0] and "error_message" not in default["evaluations"][0]
+    assert default["attempts"][0]["error_type"] == "http_500"
+    assert "stop" not in default["candidates"][0]["settings"]
+    assert "ATTEMPT ERROR MARKER" not in build_run_csv(make_data([attempt]), include_text=False)
+
+    full = build(make_data([attempt]), True)
+    assert full["attempts"][0]["error_message"] == "ATTEMPT ERROR MARKER"
+    assert full["evaluations"][0]["error_message"] == "EVALUATION ERROR MARKER"
+    assert full["candidates"][0]["settings"]["stop"] == ["STOP STRING MARKER"]
+
+
+def test_profile_is_an_allow_list_without_notes_meter_terms_or_capabilities():
+    text = json.dumps(build(make_data(), True))
+    for marker in (
+        "PROFILE NOTE MARKER",
+        "METER TERMS MARKER",
+        "path-marker",
+        "API-VERSION-MARKER",
+        "CAPABILITY-MARKER",
+    ):
+        assert marker not in text
+    [candidate] = build(make_data(), False)["candidates"]
+    assert candidate["profile"] == {
+        "name": "P",
+        "deployment": "gpt-test",
+        "endpoint": {"name": "Mock", "region": "eastus2"},
+    }
+
+
+def test_superseded_marks_attempts_replaced_by_a_retry_and_a_note_explains_it():
+    attempts = [
+        make_attempt("att-1", status=AttemptStatus.FAILED),
+        make_attempt("att-2", status=AttemptStatus.FAILED, retry_of="att-1"),
+        make_attempt("att-3", retry_of="att-2"),
+        make_attempt("att-other"),
+    ]
+    document = build(make_data(attempts), False)
+    assert {a["id"]: a["superseded"] for a in document["attempts"]} == {
+        "att-1": True,
+        "att-2": True,
+        "att-3": False,
+        "att-other": False,
+    }
+    assert any("only attempts that are not superseded count" in n for n in document["notes"])

@@ -2,7 +2,8 @@
 
 The builders take already-loaded data and return a dict or text, so they can be tested without HTTP or a database.
 They read stored data and immutable price snapshots only. They never include request bodies, raw provider
-responses, API keys, or the endpoint URL. Prompt and answer text is included only when ``include_text`` is true.
+responses, API keys, or the endpoint URL. Prompt and answer text, provider error messages and stop strings are
+included only when ``include_text`` is true. Profiles are exported through an allow-list of fields.
 
 Money is exported as exact decimal strings. An unknown value is ``null`` in JSON and an empty cell in CSV; the cost
 status always says why (``complete``, ``incomplete``, ``not_sent`` or ``pending``). Unknown cost is never zero.
@@ -38,6 +39,7 @@ CSV_COLUMNS: tuple[str, ...] = (
     "trial_index",
     "attempt_id",
     "retry_of",
+    "superseded",
     "status",
     "finish_reason",
     "error_type",
@@ -56,6 +58,7 @@ CSV_COLUMNS: tuple[str, ...] = (
     "currency",
     "manual_score",
     "judge_weighted_overall",
+    "judge_is_participant",
     "judge_evaluation_id",
     "rubric_version_id",
 )
@@ -66,16 +69,21 @@ CSV_TEXT_COLUMNS = frozenset(
 )
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
+NOTE_SUPERSEDED = (
+    "Every attempt is listed, retries included. An attempt with superseded=true was replaced by a later retry "
+    "(a later attempt's retry_of names it); only attempts that are not superseded count for their cell."
+)
 NOTES: tuple[str, ...] = (
     "Costs are estimates from token counts and the rates frozen with this run; they are not bills.",
     "Incomplete costs carry status 'incomplete' and a lower bound; they are never shown as 0. "
     "A null value means 'not reported' or 'unknown'.",
     "Cost status 'not_sent' means the request was never sent, so nothing was billed. "
     "Status 'pending' means the attempt had not finished when the export was made.",
+    NOTE_SUPERSEDED,
 )
 NOTE_NO_TEXT = (
-    "Prompts, answers, reasoning summaries, manual-score notes and judge explanations were left out. "
-    "Export with include_text=true to add them."
+    "Prompts, answers, reasoning summaries, provider error messages, stop strings, manual-score notes and judge "
+    "explanations were left out. Export with include_text=true to add them."
 )
 
 
@@ -169,13 +177,41 @@ def rates_json(card: RateCard) -> list[dict[str, Any]]:
     return rows
 
 
+_PROFILE_FIELDS: tuple[str, ...] = (
+    "name",
+    "api_style",
+    "route",
+    "deployment",
+    "publisher",
+    "model_name",
+    "model_version",
+    "deployment_type",
+    "processing_tier",
+    "context_window",
+    "max_output_tokens",
+    "streaming",
+    "include_usage",
+)
+_ENDPOINT_FIELDS: tuple[str, ...] = ("name", "region")
+
+
 def _profile_json(candidate: RunCandidate) -> dict[str, Any]:
-    """The profile snapshot without the endpoint's URL (the endpoint name and region stay)."""
-    snapshot: dict[str, Any] = dict(candidate.profile_snapshot)
+    """An allow-list of the profile snapshot. Notes, meter terms, custom path, API version, capabilities and the
+    endpoint's URL and credential details are never exported."""
+    snapshot = candidate.profile_snapshot
+    profile: dict[str, Any] = {k: snapshot[k] for k in _PROFILE_FIELDS if k in snapshot}
     endpoint = snapshot.get("endpoint")
     if isinstance(endpoint, dict):
-        snapshot["endpoint"] = {k: v for k, v in endpoint.items() if k != "base_url"}
-    return snapshot
+        profile["endpoint"] = {k: endpoint[k] for k in _ENDPOINT_FIELDS if k in endpoint}
+    return profile
+
+
+def _settings_json(candidate: RunCandidate, include_text: bool) -> dict[str, Any]:
+    """Generation settings. Stop strings can hold free text, so they follow ``include_text``."""
+    settings = candidate.settings.model_dump(mode="json", exclude_none=True)
+    if not include_text:
+        settings.pop("stop", None)
+    return settings
 
 
 # ---------------------------------------------------------------------------------------------------- JSON
@@ -192,7 +228,7 @@ def _prompt_json(prompt: RunPrompt, include_text: bool) -> dict[str, Any]:
     return item
 
 
-def _candidate_json(candidate: RunCandidate, data: RunExportData) -> dict[str, Any]:
+def _candidate_json(candidate: RunCandidate, data: RunExportData, include_text: bool) -> dict[str, Any]:
     card = data.rate_cards.get(candidate.price_snapshot_id)
     return {
         "id": candidate.id,
@@ -201,16 +237,17 @@ def _candidate_json(candidate: RunCandidate, data: RunExportData) -> dict[str, A
         "candidate_key": candidate.candidate_key,
         "profile_id": candidate.profile_id,
         "profile": _profile_json(candidate),
-        "settings": candidate.settings.model_dump(mode="json", exclude_none=True),
+        "settings": _settings_json(candidate, include_text),
         "price_snapshot_id": candidate.price_snapshot_id,
         "rates": rates_json(card) if card is not None else [],
     }
 
 
-def _attempt_json(a: Attempt, include_text: bool) -> dict[str, Any]:
+def _attempt_json(a: Attempt, include_text: bool, superseded: bool) -> dict[str, Any]:
     item: dict[str, Any] = {
         "id": a.id,
         "retry_of": a.retry_of,
+        "superseded": superseded,
         "prompt_id": a.prompt_id,
         "candidate_id": a.candidate_id,
         "trial_index": a.trial_index,
@@ -218,7 +255,6 @@ def _attempt_json(a: Attempt, include_text: bool) -> dict[str, Any]:
         "finish_reason": a.finish_reason,
         "raw_finish_reason": a.raw_finish_reason,
         "error_type": a.error_type,
-        "error_message": a.error_message,
         "request_sent_at": a.request_sent_at,
         "latency_ms": a.latency_ms,
         "ttft_ms": a.ttft_ms,
@@ -229,6 +265,7 @@ def _attempt_json(a: Attempt, include_text: bool) -> dict[str, Any]:
         "cost": cost_json(a.cost),
     }
     if include_text:
+        item["error_message"] = a.error_message
         item["output_text"] = a.output_text
         item["reasoning_summary"] = a.reasoning_summary
     return item
@@ -265,14 +302,19 @@ def _evaluation_json(e: Evaluation, include_text: bool) -> dict[str, Any]:
         "preferred": e.preferred,
         "preferred_candidate_id": e.preferred_candidate_id,
         "error_type": e.error_type,
-        "error_message": e.error_message,
         "created_at": e.created_at,
         "cost": cost_json(e.cost),
         "candidates": candidates,
     }
     if include_text:
+        result["error_message"] = e.error_message
         result["preference_explanation"] = e.preference_explanation
     return result
+
+
+def superseded_ids(attempts: list[Attempt]) -> frozenset[str]:
+    """Attempts replaced by a later retry (some attempt's ``retry_of`` names them)."""
+    return frozenset(a.retry_of for a in attempts if a.retry_of)
 
 
 def build_run_json(data: RunExportData, *, include_text: bool, exported_at: str, app_version: str) -> dict[str, Any]:
@@ -292,6 +334,7 @@ def build_run_json(data: RunExportData, *, include_text: bool, exported_at: str,
             entry["notes"] = score.notes
         manual_scores.append(entry)
 
+    replaced = superseded_ids(data.attempts)
     notes = list(NOTES)
     if not include_text:
         notes.append(NOTE_NO_TEXT)
@@ -316,8 +359,8 @@ def build_run_json(data: RunExportData, *, include_text: bool, exported_at: str,
             "judge_config": run.judge_config,
         },
         "prompts": [_prompt_json(p, include_text) for p in data.prompts],
-        "candidates": [_candidate_json(c, data) for c in data.candidates],
-        "attempts": [_attempt_json(a, include_text) for a in data.attempts],
+        "candidates": [_candidate_json(c, data, include_text) for c in data.candidates],
+        "attempts": [_attempt_json(a, include_text, a.id in replaced) for a in data.attempts],
         "manual_scores": manual_scores,
         "evaluations": [_evaluation_json(e, include_text) for e in data.evaluations],
         "totals": {
@@ -357,6 +400,7 @@ def build_run_csv(data: RunExportData, *, include_text: bool) -> str:
     columns = (*CSV_COLUMNS, "output_text") if include_text else CSV_COLUMNS
     prompts = {p.id: p for p in data.prompts}
     candidates = {c.id: c for c in data.candidates}
+    replaced = superseded_ids(data.attempts)
     rubric_by_evaluation = {e.id: e.rubric_version_id for e in data.evaluations}
     out = io.StringIO(newline="")
     writer = csv.writer(out, lineterminator="\n")
@@ -379,6 +423,7 @@ def build_run_csv(data: RunExportData, *, include_text: bool) -> str:
             "trial_index": a.trial_index,
             "attempt_id": a.id,
             "retry_of": a.retry_of,
+            "superseded": "true" if a.id in replaced else "false",
             "status": a.status.value,
             "finish_reason": a.finish_reason,
             "error_type": a.error_type,
@@ -393,6 +438,7 @@ def build_run_csv(data: RunExportData, *, include_text: bool) -> str:
             **_cost_cells(a.cost),
             "manual_score": manual.score if manual else None,
             "judge_weighted_overall": judge.weighted_overall if judge else None,
+            "judge_is_participant": ("true" if judge.judge_is_participant else "false") if judge else None,
             "judge_evaluation_id": judge.evaluation_id if judge else None,
             "rubric_version_id": rubric_by_evaluation.get(judge.evaluation_id) if judge else None,
         }

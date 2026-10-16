@@ -36,6 +36,7 @@ def exported_run(client: TestClient) -> str:
         api_style=ApiStyle.OPENAI_RESPONSES,
         deployment="gpt-5.6-terra",
         meter_terms="5.6 terra",
+        notes="PROFILE-NOTE-MARKER private remark",
     )
     claude = create_profile(
         client,
@@ -170,6 +171,22 @@ def test_failed_attempts_carry_a_status_not_zero(client, exported_run):
     assert csv_failed["cost_status"] == "incomplete" and csv_failed["cost_total"] == ""
 
 
+def test_retried_attempts_are_marked_superseded_and_profiles_are_an_allow_list(client, exported_run):
+    response = export(client, exported_run)
+    document = response.json()
+    failed = {a["retry_of"] is None: a for a in document["attempts"] if a["status"] == "failed"}
+    assert failed[True]["superseded"] is True and failed[False]["superseded"] is False
+    assert failed[False]["retry_of"] == failed[True]["id"]
+    assert [a["superseded"] for a in document["attempts"]].count(True) == 1
+    assert any("not superseded" in note for note in document["notes"])
+
+    for text in (response.text, export(client, exported_run, format="csv").text):
+        assert "PROFILE-NOTE-MARKER" not in text
+    for candidate in document["candidates"]:
+        assert {"notes", "meter_terms", "custom_path", "api_version", "capabilities"}.isdisjoint(candidate["profile"])
+        assert "stop" not in candidate["settings"]
+
+
 def test_rates_candidates_and_evaluations_are_exported_without_the_endpoint_url(client, exported_run):
     response = export(client, exported_run)
     document = response.json()
@@ -177,10 +194,8 @@ def test_rates_candidates_and_evaluations_are_exported_without_the_endpoint_url(
     candidates = {c["label"]: c for c in document["candidates"]}
     claude = candidates[INJECTED_LABEL]
     assert claude["profile"]["endpoint"] == {
-        "id": claude["profile"]["endpoint"]["id"],
         "name": "Mock",
         "region": "eastus2",
-        "auth_style": claude["profile"]["endpoint"]["auth_style"],
     }
     rates = {r["category"]: r for r in claude["rates"]}
     assert (rates["output"]["price"], rates["output"]["per_million"], rates["output"]["source"]) == (
@@ -245,6 +260,10 @@ def test_csv_has_one_row_per_attempt_in_the_documented_columns(client, exported_
     assert claude_row["currency"] == "USD" and claude_row["input_total"] != ""
     fail_rows = by_label["fail-500"]
     assert sorted(r["retry_of"] != "" for r in fail_rows) == [False, True]
+    assert sorted((r["retry_of"] != "", r["superseded"]) for r in fail_rows) == [(False, "true"), (True, "false")]
+    assert {r["superseded"] for r in by_label["'" + INJECTED_LABEL]} == {"false"}
+    assert claude_row["judge_is_participant"] == "false"
+    assert all(r["judge_is_participant"] == "" for r in fail_rows)
     assert all(r["status"] == "failed" and r["input_total"] == "" for r in fail_rows)
     manual = [r for r in rows(response.text) if r["manual_score"]]
     assert len(manual) == 1 and manual[0]["manual_score"] == "4"

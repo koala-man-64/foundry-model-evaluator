@@ -102,11 +102,18 @@ the price snapshots frozen with the run, so it never makes a call to a model.
   columns.
 - **Costs** are exact decimal strings. An empty cell or `null` means *not reported*, and `cost_status` says why
   (`complete`, `incomplete` with a lower bound, `not_sent`, or `pending`). An unknown cost is never written as 0.
-- **Left out by default:** prompt text, answers, reasoning summaries, manual-score notes and judge explanations.
-  Tick **Include prompt and answer text** to add them. Never included: API keys, the endpoint URL, request bodies and
-  raw provider responses.
+- **Retries.** Every attempt is listed. `superseded` is true for an attempt that a later retry replaced
+  (`retry_of` names it); only attempts that are not superseded count for their cell.
+- **Left out by default:** prompt text, answers, reasoning summaries, provider error messages, stop strings,
+  manual-score notes and judge explanations (error messages can quote the prompt or the answer). Tick **Include
+  prompt and answer text** to add them. Profiles are exported through an allow-list (no profile notes, meter terms,
+  custom path, API version or capabilities). Never included: API keys, the endpoint URL, request bodies and raw
+  provider responses.
 - **Spreadsheets.** In the CSV, text that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading
   `'`, so a model's answer or a title cannot run as a formula when you open the file in Excel.
+- **Encoding.** The CSV is UTF-8 without a byte-order mark, because it is meant for tools as much as for Excel. In
+  Excel, import it (Data > From Text/CSV) and choose UTF-8 as the file origin; opening it directly can garble
+  non-ASCII characters.
 
 The same files come from `GET /api/runs/{run_id}/export?format=json|csv&include_text=false`.
 
