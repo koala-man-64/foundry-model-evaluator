@@ -118,14 +118,16 @@ scripts\foundry-eval.cmd run-suite --suite "Support answers" --candidate "GPT-5.
   CI job, or a command that timed out or lost its connection, follows and re-checks that run instead of starting a new
   one. Nothing is retried automatically. `--timeout` (default 3600 seconds) only stops the waiting; the run continues.
 - **`--candidate`** (repeatable: a candidate's id, label or profile name) runs only those candidates, for example a new
-  deployment against a frozen baseline run. Labels stay as in a full run of the suite.
+  deployment against a frozen baseline run. Labels stay as in a full run of the suite, and naming every candidate is the
+  same run as naming none.
 - **Output.** Progress and a summary go to stderr; stdout has only the JSON document: the run, its attempts and
   costs, and every gate with its outcome and reason.
 
 Gates (`--fail-if`, repeatable):
 
-- `failures-above=<n>`: at most *n* attempts may fail (the default is 0). An attempt retried in the app counts once,
-  through its newest retry.
+- `failures-above=<n>`: at most *n* paid calls may fail (the default is 0). Answers count, and so does each prompt and
+  trial that the automatic judge left without a result. An attempt retried in the app counts once, through its newest
+  retry. A run whose automatic judging did not start always fails this gate.
 - `cost-upper-above=<amount>`: the upper bound of the run's estimated cost (answers and judging) must not exceed the
   amount.
 - `incomplete-cost`: every cost estimate must be complete.
@@ -136,17 +138,22 @@ cost per answer (`--baseline-metrics judge,checks,cost` chooses). It uses the pa
 comparison: a metric regresses when the verdict points the bad way (lower score or pass rate, higher cost), that is the
 whole 95% interval across prompts is past zero. `--tolerance judge=0.25`, `checks=0.1` or `cost=0.0005` (per answer)
 allows that much: the metric regresses only when the end of the interval nearest zero is past the tolerance.
-*Cannot tell* passes. A metric that has data but no verdict fails as inconclusive (fewer than 3 paired prompts, values
-for only one side, or judges that are not comparable), because missing evidence is not a pass; a metric neither run
-has (no judge, no checks) does not apply. A difference that is the same on every prompt needs at least 6 prompts for a
-verdict.
+*Cannot tell* passes. A metric that has data but no verdict fails as inconclusive, because missing evidence is not a
+pass: fewer than 3 paired prompts, values for only one side, judges that are not comparable, or a bad difference that
+is the same on every prompt but on fewer than 6 prompts (the sign test needs 6). A metric neither run has (no judge,
+no checks) does not apply, but the gate fails when none of the chosen metrics applies or the comparison fails.
+
+The baseline stays frozen. Before anything is spent, the command refuses a run that includes the baseline candidate
+again (same profile and settings), since the comparison would pool the new answers into the baseline; choose the new
+candidates with `--candidate`. It also refuses a suite that shares no prompt with the baseline run, and warns when it
+shares only some.
 
 | Exit code | Outcome |
 |---|---|
 | 0 | Passed. |
 | 1 | Gate failed: a cost limit was exceeded, or a metric regressed or was inconclusive against the baseline. |
 | 2 | Error before a verdict: bad arguments, the app is not running, the suite was not found, the preview refused the run, or the wait timed out. |
-| 3 | Attempts failed: more than `failures-above` allows. |
+| 3 | Attempts failed: more failed answers or judge results than `failures-above` allows, or automatic judging did not start. |
 | 4 | Cost incomplete: a cost gate could not be decided because an estimate is incomplete or pending (an unknown cost is never taken as zero). |
 
 When several apply, 3 comes before 4, and 4 before 1; the JSON lists every gate.

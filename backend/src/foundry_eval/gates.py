@@ -3,8 +3,10 @@
 Gates read the app's own API answers (the run detail and a comparison), so they judge exactly what
 the app shows. Each gate ends in one outcome. The command exits with the most basic problem found:
 
-* ``attempts_failed`` (3): more attempts did not succeed than ``failures-above`` allows (none by
-  default). The measurement itself is incomplete, so this comes first.
+* ``attempts_failed`` (3): more paid calls did not succeed than ``failures-above`` allows (none by
+  default): answers, and judge evaluations of prompts and trials that have no judge result. A run
+  whose automatic judging did not start fails here too. The measurement itself is incomplete, so this
+  comes first.
 * ``cost_incomplete`` (4): a cost gate could not be decided because an estimate is incomplete or
   still pending. An unknown cost is never taken as zero.
 * ``gate_failed`` (1): a cost limit was exceeded, or the comparison with the baseline found a
@@ -21,8 +23,11 @@ pass rate, a higher cost per answer) and the end of the interval nearest zero li
 tolerance, so with a zero tolerance the verdict alone decides. Without an interval (every paired
 difference the same) the difference itself is used. "Cannot tell" passes: there is data, and no
 regression shows. A metric with data but no verdict (too few paired prompts, values on one side
-only, or judges that are not comparable) is inconclusive and fails the gate, because missing
-evidence is not a pass. A metric neither run has (no judge, no checks) does not apply.
+only, judges that are not comparable, or the same bad difference on too few prompts for the sign
+test) is inconclusive and fails the gate, because missing evidence is not a pass. A metric neither
+run has (no judge, no checks) does not apply, but a gate on which no chosen metric applies, or whose
+comparison failed, fails. The baseline must stay frozen: a new run that measured the baseline
+candidate again would be pooled into it, so that fails as well.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal
 
+from .analysis.stats import SIGN_TEST_MIN
 from .money import to_text, validate_money_input
 
 Outcome = Literal["passed", "gate_failed", "attempts_failed", "cost_incomplete"]
@@ -109,6 +115,8 @@ def parse_tolerances(values: Sequence[str]) -> dict[str, Decimal]:
         if name in tolerances:
             raise GateSpecError(f"--tolerance {name} is given more than once")
         tolerances[name] = _amount(value, f"the {name} tolerance")
+        if name == "checks" and tolerances[name] > 1:
+            raise GateSpecError("the checks tolerance is a share of answers, from 0 to 1")
     return tolerances
 
 
@@ -128,25 +136,46 @@ def counted_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [a for a in attempts if a["id"] not in replaced]
 
 
+def judging_failures(evaluations: list[dict[str, Any]]) -> tuple[int, int]:
+    """(prompts and trials judged, those without a successful judge evaluation).
+
+    A later successful re-judging replaces an earlier failure, as in comparisons.
+    """
+    judged: dict[tuple[str, int], bool] = {}
+    for evaluation in evaluations:
+        cell = (evaluation["prompt_id"], evaluation["trial_index"])
+        judged[cell] = judged.get(cell, False) or evaluation["status"] == "succeeded"
+    return len(judged), sum(1 for succeeded in judged.values() if not succeeded)
+
+
 def _unknown_cost(cost: dict[str, Any]) -> str:
     labels = (("pending", "pending"), ("incomplete", "incomplete"), ("other_currency", "in another currency"))
     parts = [f"{cost[field]} {label}" for field, label in labels if cost.get(field)]
-    return f"the cost has no upper bound ({', '.join(parts) or 'unknown'}); an unknown cost is never taken as zero"
+    return f"the cost is not fully known ({', '.join(parts) or 'unknown'}); an unknown cost is never taken as zero"
 
 
-def run_gates(gates: Gates, detail: dict[str, Any]) -> list[dict[str, Any]]:
-    """The gates on the run itself: failed attempts and its estimated cost (generation and judging)."""
+def run_gates(
+    gates: Gates, detail: dict[str, Any], evaluations: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """The gates on the run itself: failed paid calls, and its estimated cost (answers and judging)."""
     attempts = counted_attempts(detail["attempts"])
     failed = Counter(a["status"] for a in attempts if a["status"] != "succeeded")
-    count = sum(failed.values())
+    judged, unjudged = judging_failures(evaluations or [])
+    judge_error = detail.get("run", {}).get("judge_error")
+    count = sum(failed.values()) + unjudged
     statuses = ", ".join(f"{n} {status}" for status, n in sorted(failed.items()))
+    text = f"{sum(failed.values())} of {len(attempts)} attempts did not succeed" + (f" ({statuses})" if failed else "")
+    if judged:
+        text += f"; {unjudged} of {judged} judged prompts and trials have no judge result"
+    if judge_error:
+        text += f"; {judge_error}"
     results: list[dict[str, Any]] = [
         {
             "gate": "failures-above",
             "limit": gates.failures_above,
             "value": count,
-            "outcome": "attempts_failed" if count > gates.failures_above else "passed",
-            "detail": f"{count} of {len(attempts)} attempts did not succeed" + (f" ({statuses})" if count else ""),
+            "outcome": "attempts_failed" if count > gates.failures_above or judge_error else "passed",
+            "detail": text,
         }
     ]
     cost = detail["combined_cost"]
@@ -154,7 +183,7 @@ def run_gates(gates: Gates, detail: dict[str, Any]) -> list[dict[str, Any]]:
     if gates.cost_upper_above is not None:
         limit = gates.cost_upper_above
         upper = cost.get("upper")
-        if upper is None:
+        if upper is None or cost["status"] == "pending" or cost.get("pending"):
             outcome: Outcome = "cost_incomplete"
             text = _unknown_cost(cost)
         elif Decimal(upper) > limit:
@@ -223,20 +252,26 @@ def assess_metric(
         result["reason"] = f"{difference['prompts']} paired prompts; a verdict needs at least {minimum}"
         return result
     worse = _WORSE[metric]
-    if verdict != worse:
-        result.update(status="ok", reason=f"{name}: {verdict.replace('_', ' ')}")
-        return result
     # The end of the interval nearest zero, or the difference itself when every paired difference is the same.
+    constant = difference["low"] is None and difference["high"] is None
     if worse == "higher":
-        edge = _number(difference["low"]) if difference["low"] is not None else _number(difference["mean"])
+        edge = _number(difference["mean"] if constant else difference["low"])
         beyond = edge is not None and edge > tolerance
     else:
-        edge = _number(difference["high"]) if difference["high"] is not None else _number(difference["mean"])
+        edge = _number(difference["mean"] if constant else difference["high"])
         beyond = edge is not None and edge < -tolerance
-    reason = f"{name} is {worse} than the baseline"
-    if tolerance:
-        reason += f", {'beyond' if beyond else 'within'} the tolerance of {to_text(tolerance)}"
-    result.update(status="regressed" if beyond else "ok", reason=reason)
+    if verdict == worse:
+        reason = f"{name} is {worse} than the baseline"
+        if tolerance:
+            reason += f", {'beyond' if beyond else 'within'} the tolerance of {to_text(tolerance)}"
+        result.update(status="regressed" if beyond else "ok", reason=reason)
+    elif verdict == "cannot_tell" and constant and beyond:
+        result["reason"] = (
+            f"{name} is {worse} by the same amount on all {difference['prompts']} paired prompts; "
+            f"a verdict then needs at least {SIGN_TEST_MIN} prompts"
+        )
+    else:
+        result.update(status="ok", reason=f"{name}: {verdict.replace('_', ' ')}")
     return result
 
 
@@ -249,12 +284,17 @@ def baseline_gate(
     metrics: Sequence[str],
     tolerances: dict[str, Decimal],
     applies: dict[str, bool],
+    remeasured: bool = False,
+    error: str | None = None,
 ) -> dict[str, Any]:
-    """Each new candidate against the baseline candidate, on the chosen metrics."""
+    """Each new candidate against the baseline candidate, on the chosen metrics.
+
+    ``remeasured``: the new run ran the baseline candidate again. ``error``: the comparison failed.
+    """
     by_key = {c["candidate_key"]: c for c in comparison["candidates"]}
     baseline = by_key.get(baseline_key)
     rows: list[dict[str, Any]] = []
-    for key in candidate_keys:
+    for key in [] if remeasured or error else candidate_keys:
         candidate = by_key.get(key, {"candidate_key": key})
         differences = candidate.get("vs_baseline") or {}
         rows.append(
@@ -276,13 +316,22 @@ def baseline_gate(
             }
         )
     statuses = [m["status"] for row in rows for m in row["metrics"].values()]
-    if not rows:
-        outcome: Outcome = "gate_failed"
+    outcome: Outcome = "gate_failed"
+    if error:
+        text = f"the comparison failed: {error}"
+    elif remeasured:
+        text = (
+            "the new run also ran the baseline candidate, which would be pooled into the baseline; "
+            "choose the new candidates with --candidate"
+        )
+    elif not rows:
         text = "the new run has no candidate other than the baseline candidate"
     elif "regressed" in statuses:
-        outcome, text = "gate_failed", "a candidate regressed against the baseline"
+        text = "a candidate regressed against the baseline"
     elif "inconclusive" in statuses:
-        outcome, text = "gate_failed", "a metric with data has no verdict against the baseline"
+        text = "a metric with data has no verdict against the baseline"
+    elif all(status == "not_applicable" for status in statuses):
+        text = "none of the chosen metrics applies to these runs, so nothing was compared"
     else:
         outcome, text = "passed", "no regression against the baseline"
     return {

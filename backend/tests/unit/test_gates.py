@@ -8,6 +8,7 @@ from typing import Any
 import httpx2
 import pytest
 
+from foundry_eval import cli
 from foundry_eval.app_client import ApiError, AppClient, RequestOutcomeUnknownError
 from foundry_eval.gates import (
     EXIT_CODES,
@@ -15,6 +16,7 @@ from foundry_eval.gates import (
     GateSpecError,
     assess_metric,
     baseline_gate,
+    judging_failures,
     overall_outcome,
     parse_fail_if,
     parse_metrics,
@@ -188,3 +190,91 @@ def test_the_client_sends_the_spa_headers_and_never_retries():
     assert paid["origin"] == origin and paid["x-fme-client"] == "1" and paid["idempotency-key"] == "cli-suite-key"
     assert seen[1].url.query == b"run_id=a&run_id=b" and "idempotency-key" not in seen[1].headers
     assert error.value.status == 422 and error.value.detail == "budget: too large"
+
+
+def test_the_run_key_names_one_suite_and_candidate_choice():
+    key = cli.suite_run_key("suite-1", ["b", "a"], "build-7")
+    assert key == cli.suite_run_key("suite-1", ["a", "b"], "build-7")  # the order of --candidate does not matter
+    assert key.startswith("cli-suite-") and 8 <= len(key) <= 128
+    others = {
+        cli.suite_run_key("suite-2", ["a", "b"], "build-7"),
+        cli.suite_run_key("suite-1", ["a"], "build-7"),
+        cli.suite_run_key("suite-1", None, "build-7"),
+        cli.suite_run_key("suite-1", ["a", "b"], "build-8"),
+    }
+    assert key not in others and len(others) == 4
+
+
+def test_failed_judging_counts_unless_a_re_judging_succeeded():
+    evaluations = [
+        {"prompt_id": "p1", "trial_index": 1, "status": "malformed"},
+        {"prompt_id": "p1", "trial_index": 1, "status": "succeeded"},
+        {"prompt_id": "p2", "trial_index": 1, "status": "failed"},
+        {"prompt_id": "p2", "trial_index": 2, "status": "succeeded"},
+    ]
+    assert judging_failures(evaluations) == (3, 1)
+    [failures] = run_gates(Gates(), detail([attempt("a")]), evaluations)
+    assert failures["value"] == 1 and failures["outcome"] == "attempts_failed"
+    assert "1 of 3 judged prompts and trials have no judge result" in failures["detail"]
+    # Automatic judging that did not start fails even when failures are allowed.
+    stopped = {**detail([attempt("a")]), "run": {"judge_error": "Automatic judging did not start: no key"}}
+    [failures] = run_gates(Gates(failures_above=10), stopped)
+    assert failures["outcome"] == "attempts_failed" and "did not start" in failures["detail"]
+
+
+def test_a_pending_cost_is_not_final_even_with_an_upper_bound():
+    gates = Gates(cost_upper_above=Decimal(1))
+    _, limit = run_gates(gates, detail([], status="pending", upper="0.01", pending=1))
+    assert limit["outcome"] == "cost_incomplete"
+
+
+def test_the_checks_tolerance_is_a_share():
+    assert parse_tolerances(["checks=1"]) == {"checks": Decimal(1)}
+    with pytest.raises(GateSpecError, match="from 0 to 1"):
+        parse_tolerances(["checks=1.5"])
+
+
+def test_the_same_bad_difference_on_too_few_prompts_is_inconclusive():
+    worse = assess("checks", difference("cannot_tell", -1.0, prompts=4))
+    assert worse["status"] == "inconclusive" and "all 4 paired prompts" in worse["reason"]
+    assert "at least 6" in worse["reason"]
+    assert assess("checks", difference("cannot_tell", -1.0, prompts=4), "1")["status"] == "ok"
+    assert assess("checks", difference("cannot_tell", 1.0, prompts=4))["status"] == "ok"
+    assert assess("cost", difference("cannot_tell", "0", prompts=4))["status"] == "ok"
+
+
+def test_a_baseline_gate_without_a_comparison_fails():
+    comparison = {
+        **COMPARISON,
+        "candidates": [
+            {"candidate_key": "base", "label": "Base"},
+            {"candidate_key": "new", "label": "New", "vs_baseline": {}},
+        ],
+    }
+    options: dict[str, Any] = {
+        "baseline_run_id": "run-1",
+        "baseline_key": "base",
+        "candidate_keys": ["new"],
+        "metrics": ("judge", "checks"),
+        "tolerances": {},
+        "applies": {"judge": False, "checks": False},
+    }
+    nothing = baseline_gate(comparison, **options)
+    assert nothing["outcome"] == "gate_failed" and "none of the chosen metrics applies" in nothing["detail"]
+    failed = baseline_gate({"candidates": []}, error="No attempts found.", **options)
+    assert failed["outcome"] == "gate_failed" and failed["detail"] == "the comparison failed: No attempts found."
+    pooled = baseline_gate(comparison, remeasured=True, **options)
+    assert pooled["outcome"] == "gate_failed" and "pooled into the baseline" in pooled["detail"]
+    assert pooled["candidates"] == []
+
+
+class StuckRun:
+    """A client whose run is queued while nothing runs it."""
+
+    def get(self, path: str, params: Any = None) -> dict[str, Any]:
+        return {"status": "queued", "active": False, "total": 2, "counts": {"queued": 2}}
+
+
+def test_a_queued_run_that_nothing_runs_is_reported_at_once():
+    with pytest.raises(cli.RunSuiteError, match="not running it"):
+        cli._wait_for_run(StuckRun(), "run-1", timeout=3600, poll=0.01)  # type: ignore[arg-type]

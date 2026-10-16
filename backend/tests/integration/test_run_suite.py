@@ -145,6 +145,16 @@ def test_baseline_gate_fails_on_a_regression_and_tolerances_relax_it(app, mock, 
     assert chat_calls(mock) == 6
     baseline_id = baseline["run"]["id"]
 
+    # Running the baseline candidate again would pool it into the frozen baseline: refused before spending.
+    full = ["--suite", "Regression", "--budget", "1", "--run-key", "full-1", "--baseline-run", baseline_id]
+    code, refused, _ = run_cli(app, capsys, *full)
+    assert code == 2 and "is the baseline candidate" in refused["error"] and chat_calls(mock) == 6
+    # So is a suite that shares no prompt with the baseline run.
+    create_suite(app, [pricier], name="Other prompts", prompts=[{"user": "Something else entirely"}])
+    other = ["--suite", "Other prompts", "--budget", "1", "--run-key", "other-1", "--baseline-run", baseline_id]
+    code, refused, _ = run_cli(app, capsys, *other)
+    assert code == 2 and "None of the suite's prompts" in refused["error"] and chat_calls(mock) == 6
+
     args = ["--suite", "Regression", "--budget", "1", "--run-key", "new-1", "--baseline-run", baseline_id]
     args += ["--candidate", "deepseek-new", "--candidate", "deepseek-v2"]
     code, report, err = run_cli(app, capsys, *args)
@@ -170,9 +180,53 @@ def test_baseline_gate_fails_on_a_regression_and_tolerances_relax_it(app, mock, 
     assert metrics["cost"]["status"] == "ok" and "within the tolerance" in metrics["cost"]["reason"]
     assert metrics["cost"]["tolerance"] == "1"
 
-    # Only the judge is compared, and neither run was judged.
+    # Only the judge is chosen, and neither run was judged: nothing was compared, which is not a pass.
     code, judged, _ = run_cli(app, capsys, *args, "--baseline-metrics", "judge")
-    assert code == 0 and set(judged["gates"][-1]["candidates"][0]["metrics"]) == {"judge"}
+    assert code == 1 and "none of the chosen metrics applies" in judged["gates"][-1]["detail"]
+    assert set(judged["gates"][-1]["candidates"][0]["metrics"]) == {"judge"}
+
+
+def judge_profile(client: TestClient, endpoint_id: str, deployment: str) -> dict:
+    profile = create_profile(
+        client,
+        endpoint_id,
+        preset="openai-standard",
+        api_style=ApiStyle.OPENAI_RESPONSES,
+        deployment=deployment,
+        model_name="gpt-4.1",
+        context_window=100_000,
+    )
+    for category, price in (("input_uncached", "2"), ("cache_read", "0.5"), ("output", "8")):
+        set_manual(client, profile["id"], category, price)
+    return profile
+
+
+def test_judged_runs_compare_judge_scores_and_failed_judging_counts(app, mock, capsys):
+    endpoint = create_endpoint(app)
+    base = chat_profile(app, endpoint["id"], "deepseek-base")
+    same = chat_profile(app, endpoint["id"], "deepseek-v2")
+    judging = {"enabled": True, "settings": {"max_output_tokens": 2000}}
+    good = judge_profile(app, endpoint["id"], "gpt-4.1-judge")
+    create_suite(app, [base, same], judge={**judging, "judge_profile_id": good["id"]})
+    first = ["--suite", "Regression", "--budget", "1", "--run-key", "judged-base", "--candidate", "deepseek-base"]
+    code, baseline, err = run_cli(app, capsys, *first)
+    assert code == 0, (baseline, err)
+    assert baseline["run"]["judging"]["by_status"] == {"succeeded": 6}
+    assert Decimal(baseline["cost"]["judging"]["total"]) > 0
+
+    second = ["--suite", "Regression", "--budget", "1", "--run-key", "judged-new", "--candidate", "deepseek-v2"]
+    code, report, err = run_cli(app, capsys, *second, "--baseline-run", baseline["run"]["id"])
+    assert code == 0, (report, err)
+    judge = report["gates"][-1]["candidates"][0]["metrics"]["judge"]
+    assert judge["status"] == "ok" and judge["prompts"] == 6, judge
+
+    # A judge whose output cannot be read leaves every prompt without a judge result.
+    broken = judge_profile(app, endpoint["id"], "gpt-4.1-judge-malformed")
+    create_suite(app, [base], name="Broken judge", judge={**judging, "judge_profile_id": broken["id"]})
+    code, report, _ = run_cli(app, capsys, "--suite", "Broken judge", "--budget", "1", "--run-key", "broken-1")
+    assert code == 3 and report["outcome"] == "attempts_failed"
+    [failures] = report["gates"]
+    assert failures["value"] == 6 and "6 of 6 judged prompts and trials have no judge result" in failures["detail"]
 
 
 def test_failed_attempts_exit_3_unless_the_gate_allows_them(app, mock, capsys):

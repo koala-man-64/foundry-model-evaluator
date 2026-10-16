@@ -367,8 +367,11 @@ def _wait_for_run(client: AppClient, run_id: str, *, timeout: float, poll: float
         if line != shown:
             print(f"run {run_id}: {line}", file=sys.stderr)
             shown = line
-        if not progress["active"] and progress["status"] not in ("queued", "running"):
-            return
+        if not progress["active"]:
+            if progress["status"] == "queued":
+                raise RunSuiteError("The run is queued, but the app is not running it; see the app's log file.")
+            if progress["status"] != "running":
+                return
         if time.monotonic() >= deadline:
             raise RunSuiteError(
                 f"The run is still going after {timeout:g} s and continues in the app. Run the same command again "
@@ -389,6 +392,40 @@ def _has_checks(detail: dict[str, Any]) -> bool:
     return any(prompt.get("checks") for prompt in detail["prompts"])
 
 
+def _provided(settings: dict[str, Any]) -> dict[str, Any]:
+    """Settings that were set, as candidate keys count them (``GenerationSettings.provided``)."""
+    return {name: value for name, value in settings.items() if value is not None and value != []}
+
+
+def _check_baseline_fits(
+    suite: dict[str, Any], candidate_ids: list[str] | None, baseline: tuple[dict[str, Any], dict[str, Any]]
+) -> None:
+    """Refuse, before anything is spent, a run that cannot be compared with the frozen baseline."""
+    from .execution.runs import content_hash
+
+    detail, chosen = baseline
+    candidates = [c for c in suite["candidates"] if candidate_ids is None or c["id"] in candidate_ids]
+    for candidate in candidates:
+        if candidate["profile_id"] == chosen["profile_id"] and _provided(candidate["settings"]) == _provided(
+            chosen["settings"]
+        ):
+            raise RunSuiteError(
+                f"The suite candidate {candidate['label'] or chosen['label']!r} is the baseline candidate (same "
+                "profile and settings); running it again would pool it into the frozen baseline. Choose the new "
+                "candidates with --candidate."
+            )
+    known = {prompt["content_hash"] for prompt in detail["prompts"]}
+    shared = sum(1 for prompt in suite["prompts"] if content_hash(prompt["system"], prompt["user"]) in known)
+    if not shared:
+        raise RunSuiteError("None of the suite's prompts is in the baseline run, so nothing could be compared.")
+    if shared < len(suite["prompts"]):
+        print(
+            f"warning: {shared} of the suite's {len(suite['prompts'])} prompts are in the baseline run; "
+            "only those are compared",
+            file=sys.stderr,
+        )
+
+
 def _run_suite(
     client: AppClient,
     config: AppConfig,
@@ -407,7 +444,11 @@ def _run_suite(
     suite = _resolve_suite(client, args.suite)
     report["suite"] = {"id": suite["id"], "name": suite["name"]}
     candidate_ids = _resolve_candidates(client, suite, args.candidate) if args.candidate else None
+    if candidate_ids is not None and set(candidate_ids) == {c["id"] for c in suite["candidates"]}:
+        candidate_ids = None  # every candidate: the same run (and run key) as naming none
     baseline = _resolve_baseline(client, args.baseline_run, args.baseline_candidate) if args.baseline_run else None
+    if baseline is not None:
+        _check_baseline_fits(suite, candidate_ids, baseline)
     title = args.title if args.title is not None else f"{suite['name']} ({args.run_key})"
     body: dict[str, Any] = {"title": title[:200], "budget": to_text(budget)}
     if candidate_ids is not None:
@@ -428,9 +469,17 @@ def _run_suite(
             file=sys.stderr,
         )
 
-    created = client.post(
-        f"{suite_path}/runs", body, idempotency_key=suite_run_key(suite["id"], candidate_ids, args.run_key)
-    )
+    try:
+        created = client.post(
+            f"{suite_path}/runs", body, idempotency_key=suite_run_key(suite["id"], candidate_ids, args.run_key)
+        )
+    except ApiError as exc:
+        if exc.status < 500:
+            raise
+        raise RunSuiteError(
+            f"The app answered: {exc}. The run may have been created; run the same command again (same --run-key) "
+            "to follow it without paying twice."
+        ) from exc
     run_id: str = created["run_id"]
     report["run"] = {"id": run_id, "created": created["created"], "url": f"{config.origin}/runs/{run_id}"}
     if not created["created"]:
@@ -439,6 +488,8 @@ def _run_suite(
 
     detail: dict[str, Any] = client.get(f"/api/runs/{_path_id(run_id)}")
     run = detail["run"]
+    if run["budget"] is not None and Decimal(run["budget"]) != budget:
+        print(f"note: this run's budget is {run['budget']}, set when it was created", file=sys.stderr)
     attempts = counted_attempts(detail["attempts"])
     statuses: dict[str, int] = {}
     for attempt in attempts:
@@ -462,12 +513,13 @@ def _run_suite(
         "budget_committed": (detail["budget"] or {}).get("committed"),
     }
 
-    results = run_gates(gates, detail)
+    evaluations = client.get(f"/api/runs/{_path_id(run_id)}/evaluations") if _has_judging(detail) else []
+    results = run_gates(gates, detail, evaluations)
     if baseline is not None:
         baseline_detail, baseline_candidate = baseline
         baseline_key: str = baseline_candidate["candidate_key"]
-        keys = (c["candidate_key"] for c in detail["candidates"])
-        new_keys = [key for key in dict.fromkeys(keys) if key != baseline_key]
+        keys = list(dict.fromkeys(c["candidate_key"] for c in detail["candidates"]))
+        new_keys = [key for key in keys if key != baseline_key]
         params = [("run_id", baseline_detail["run"]["id"]), ("run_id", run_id)]
         params += [("candidate_key", key) for key in [baseline_key, *new_keys]] + [("baseline", baseline_key)]
         applies = {
@@ -475,10 +527,12 @@ def _run_suite(
             "checks": _has_checks(baseline_detail) or _has_checks(detail),
             "cost": True,
         }
+        comparison: dict[str, Any] = {"candidates": []}
+        error = None
         try:
-            comparison: dict[str, Any] = client.get("/api/comparisons", params)
+            comparison = client.get("/api/comparisons", params)
         except ApiError as exc:
-            comparison = {"candidates": [], "notes": [f"The comparison failed: {exc.detail}"], "cells_matched": 0}
+            error = exc.detail
         results.append(
             baseline_gate(
                 comparison,
@@ -488,6 +542,8 @@ def _run_suite(
                 metrics=metrics,
                 tolerances=tolerances,
                 applies=applies,
+                remeasured=baseline_key in keys,
+                error=error,
             )
         )
     report["gates"] = results
