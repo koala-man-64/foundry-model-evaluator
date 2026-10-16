@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import csv
 import io
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
 from ..execution.totals import CostTotal
+from ..grading.checks import CheckOutcome, checks_json
 from ..judging.service import JudgeScore
 from ..money import to_text
 from ..pricing.calculator import CostEstimate
@@ -61,6 +63,7 @@ CSV_COLUMNS: tuple[str, ...] = (
     "judge_is_participant",
     "judge_evaluation_id",
     "rubric_version_id",
+    "checks_passed",
 )
 # Columns holding text that comes from users, models or providers. Only these are protected against
 # spreadsheet formula injection; the numeric columns are produced by the app.
@@ -105,6 +108,7 @@ class RunExportData:
     currency: str = "USD"
     budget_limit: Decimal | None = None
     budget_committed: Decimal | None = None
+    check_results: dict[str, CheckOutcome] = field(default_factory=dict)  # by attempt id, as the run view shows
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
@@ -221,11 +225,29 @@ def _prompt_json(prompt: RunPrompt, include_text: bool) -> dict[str, Any]:
         "position": prompt.position,
         "title": prompt.title,
         "content_hash": prompt.content_hash,
+        "has_reference": bool(prompt.reference_text),
+        "checks_count": len(prompt.checks),
     }
     if include_text:
+        # Reference answers and check values are task text, so they follow include_text like the prompt.
         item["system_text"] = prompt.system_text
         item["user_text"] = prompt.user_text
+        item["reference_text"] = prompt.reference_text
+        item["checks"] = json.loads(checks_json(prompt.checks))
     return item
+
+
+def _checks_json(outcome: CheckOutcome | None, include_text: bool) -> dict[str, Any] | None:
+    """The deterministic checks of an answer; details can quote the answer, so they follow include_text."""
+    if outcome is None:
+        return None
+    return {
+        "passed": outcome.passed,
+        "results": [
+            {"kind": r.kind, "passed": r.passed, **({"detail": r.detail} if include_text else {})}
+            for r in outcome.results
+        ],
+    }
 
 
 def _candidate_json(candidate: RunCandidate, data: RunExportData, include_text: bool) -> dict[str, Any]:
@@ -243,7 +265,9 @@ def _candidate_json(candidate: RunCandidate, data: RunExportData, include_text: 
     }
 
 
-def _attempt_json(a: Attempt, include_text: bool, superseded: bool) -> dict[str, Any]:
+def _attempt_json(
+    a: Attempt, include_text: bool, superseded: bool, checks: CheckOutcome | None = None
+) -> dict[str, Any]:
     item: dict[str, Any] = {
         "id": a.id,
         "retry_of": a.retry_of,
@@ -263,6 +287,7 @@ def _attempt_json(a: Attempt, include_text: bool, superseded: bool) -> dict[str,
         "service_tier": a.service_tier,
         "usage": a.usage.model_dump(mode="json") if a.usage is not None else None,
         "cost": cost_json(a.cost),
+        "checks": _checks_json(checks, include_text),
     }
     if include_text:
         item["error_message"] = a.error_message
@@ -360,7 +385,9 @@ def build_run_json(data: RunExportData, *, include_text: bool, exported_at: str,
         },
         "prompts": [_prompt_json(p, include_text) for p in data.prompts],
         "candidates": [_candidate_json(c, data, include_text) for c in data.candidates],
-        "attempts": [_attempt_json(a, include_text, a.id in replaced) for a in data.attempts],
+        "attempts": [
+            _attempt_json(a, include_text, a.id in replaced, data.check_results.get(a.id)) for a in data.attempts
+        ],
         "manual_scores": manual_scores,
         "evaluations": [_evaluation_json(e, include_text) for e in data.evaluations],
         "totals": {
@@ -393,6 +420,13 @@ def _cost_cells(cost: CostEstimate | None) -> dict[str, str]:
         "cost_upper": _cell(_money(cost.upper)),
         "currency": cost.currency,
     }
+
+
+def _passed_cell(outcome: CheckOutcome | None) -> str | None:
+    """ "true", "false", "unknown" (a check could not be evaluated) or empty (the prompt has no checks)."""
+    if outcome is None:
+        return None
+    return "unknown" if outcome.passed is None else ("true" if outcome.passed else "false")
 
 
 def build_run_csv(data: RunExportData, *, include_text: bool) -> str:
@@ -441,6 +475,7 @@ def build_run_csv(data: RunExportData, *, include_text: bool) -> str:
             "judge_is_participant": ("true" if judge.judge_is_participant else "false") if judge else None,
             "judge_evaluation_id": judge.evaluation_id if judge else None,
             "rubric_version_id": rubric_by_evaluation.get(judge.evaluation_id) if judge else None,
+            "checks_passed": _passed_cell(data.check_results.get(a.id)),
         }
         if include_text:
             row["output_text"] = a.output_text

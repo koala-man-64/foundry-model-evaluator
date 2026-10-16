@@ -53,6 +53,7 @@ def export_run(
         evaluations=services.evaluations.list_for_run(run_id),
         rate_cards=cards,
         judge_scores=detail.judge_scores,
+        check_results=detail.check_results,
         generation_cost=detail.generation_cost,
         judging_cost=detail.judging_cost,
         combined_cost=detail.combined_cost,

@@ -211,3 +211,32 @@ def test_cells_graded_differently_across_runs_are_left_out(client):
     assert "1 cell used different checks" in notes and "1 cell were judged with different reference" in notes
     for candidate in comparison["candidates"]:
         assert candidate["checks_cells"] == 2 and candidate["judge_scored"] == 2
+
+
+def test_exports_carry_check_outcomes_and_keep_reference_text_out_by_default(client):
+    endpoint = create_endpoint(client)
+    profiles = [chat_profile(client, endpoint["id"], name) for name in ("deepseek-alpha", "deepseek-beta")]
+    suite = client.post("/api/suites", json=suite_payload([p["id"] for p in profiles])).json()
+    detail = run_suite(client, suite["id"], "idem-gt-export")
+    run_id = detail["run"]["id"]
+
+    plain = client.get(f"/api/runs/{run_id}/export", params={"format": "json"}).json()
+    first = next(p for p in plain["prompts"] if p["position"] == 0)
+    assert first["has_reference"] is True and first["checks_count"] == 2
+    assert "reference_text" not in first and "checks" not in first
+    for attempt in plain["attempts"]:
+        outcome = detail["check_results"][attempt["id"]]
+        assert attempt["checks"]["passed"] == outcome["passed"]
+        assert all("detail" not in r for r in attempt["checks"]["results"])  # details can quote the answer
+    assert "Paris" not in json.dumps(plain)
+
+    full = client.get(f"/api/runs/{run_id}/export", params={"format": "json", "include_text": "true"}).json()
+    first = next(p for p in full["prompts"] if p["position"] == 0)
+    assert first["reference_text"] == "Paris" and first["checks"][0]["kind"] == "contains"
+    assert all("detail" in r for a in full["attempts"] for r in a["checks"]["results"])
+
+    csv_text = client.get(f"/api/runs/{run_id}/export", params={"format": "csv"}).text
+    header, *rows = csv_text.strip().split("\n")
+    column = header.split(",").index("checks_passed")
+    expected = {"true" if detail["check_results"][a["id"]]["passed"] else "false" for a in detail["attempts"]}
+    assert {row.split(",")[column] for row in rows} == expected
