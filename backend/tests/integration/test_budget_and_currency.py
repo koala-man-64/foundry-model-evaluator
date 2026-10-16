@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from foundry_eval.execution.budget import input_token_upper_bound
 from foundry_eval.types import ApiStyle
 from tests.api_support import create_endpoint, create_profile, make_client, set_manual, start_run, wait_for_run
 
@@ -78,6 +79,33 @@ def test_judge_preview_shows_the_worst_case_the_engine_reserves(client):
     assert evaluation["status"] == "succeeded"
     # The body (structured-output schema included) bounds the input, as in the engine's reservation.
     assert Decimal(evaluation["budget_reserved"]) == Decimal(preview["worst_case_total"])
+
+
+def test_generation_preview_shows_the_worst_case_the_engine_reserves(client):
+    endpoint = create_endpoint(client)
+    profile = claude(client, endpoint["id"], "claude-cand")
+    request = {
+        "prompts": [
+            {"user": "hi"},
+            {"system": "Be brief.", "user": 'A longer prompt with "quotes",\nnewlines and tabs\tthat JSON escapes.'},
+        ],
+        "candidates": [{"profile_id": profile["id"], "settings": {"max_output_tokens": 50}}],
+        "budget": "0.5",
+    }
+    preview = client.post("/api/runs/preview", json=request).json()
+    assert preview["ok"], preview
+    worst = Decimal(preview["candidates"][0]["worst_case_per_call"])
+    run_id = start_run(client, request, key="idem-gen-preview-01")
+    detail = wait_for_run(client, run_id)
+    # Each call reserves against its stored request body; the preview shows the largest of them.
+    reserved = sorted(Decimal(a["budget_reserved"]) for a in detail["attempts"])
+    assert reserved[-1] == worst and reserved[0] < worst
+    # The body bound covers what the bare prompt text misses (settings, framing keys, JSON escapes).
+    longer = request["prompts"][1]
+    text_only = input_token_upper_bound(longer["system"], longer["user"])
+    per_million = Decimal(1_000_000)
+    text_only_worst = text_only * Decimal(CLAUDE_RATES["cache_write_1h"]) / per_million + 50 * Decimal(15) / per_million
+    assert worst > text_only_worst
 
 
 def test_judge_preview_warns_when_the_worst_case_exceeds_the_remaining_budget(client):

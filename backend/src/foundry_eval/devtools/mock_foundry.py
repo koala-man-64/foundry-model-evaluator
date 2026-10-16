@@ -9,7 +9,8 @@ Implements just enough of:
 * Azure Retail Prices ``GET /api/retail/prices`` (paged) from a bundled demo catalog.
 
 Deployment names trigger special behaviour: ``fail-500``, ``rate-limited``, ``slow`` (or
-``slow-<seconds>``), ``no-usage``, ``judge-malformed``. ``GET /__mock/stats`` reports request counts
+``slow-<seconds>``), ``no-usage``, ``judge-malformed``, and for Chat Completions ``tool-call`` (the
+model asks to call a tool instead of answering) and ``empty-answer`` (it stops with no text). ``GET /__mock/stats`` reports request counts
 and which auth header was used (keys are never echoed, only their SHA-256 prefixes).
 
 Run: ``python -m foundry_eval.devtools.mock_foundry --port 8766``
@@ -283,6 +284,15 @@ def create_mock_app(expected_key: str | None = None) -> FastAPI:
         schema = ((body.get("response_format") or {}).get("json_schema") or {}).get("schema")
         text = _judge_output(schema, system + user, deployment) if schema or "judge" in deployment else None
         text = text if text is not None else _answer(deployment, effort, user)
+        tool_call = "tool-call" in deployment
+        if tool_call or "empty-answer" in deployment:
+            text = ""
+        finish = "tool_calls" if tool_call else "stop"
+        message: dict[str, Any] = {"role": "assistant", "content": None if tool_call else text}
+        if tool_call:
+            message["tool_calls"] = [
+                {"id": "call_mock", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+            ]
         prompt_tokens = _tokens(system + user) + 6
         prompt_key = _hash(system + user + deployment)
         cached = (prompt_tokens // 2) if prompt_key in state.seen_prompts else 0
@@ -303,9 +313,7 @@ def create_mock_app(expected_key: str | None = None) -> FastAPI:
                     "id": "chatcmpl-mock",
                     "object": "chat.completion",
                     "model": deployment,
-                    "choices": [
-                        {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
-                    ],
+                    "choices": [{"index": 0, "message": message, "finish_reason": finish}],
                     "usage": usage,
                 },
                 headers=headers,
@@ -326,7 +334,7 @@ def create_mock_app(expected_key: str | None = None) -> FastAPI:
                 "id": "chatcmpl-mock",
                 "object": "chat.completion.chunk",
                 "model": deployment,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": finish}],
             }
             yield _sse(None, done)
             if include_usage and "no-usage" not in deployment:

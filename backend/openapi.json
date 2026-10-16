@@ -831,6 +831,10 @@
             "title": "Currency",
             "type": "string"
           },
+          "judge_bases": {
+            "title": "Judge Bases",
+            "type": "integer"
+          },
           "notes": {
             "items": {
               "type": "string"
@@ -851,6 +855,7 @@
           "currency",
           "cells_total",
           "cells_matched",
+          "judge_bases",
           "candidates",
           "cells",
           "notes"
@@ -973,6 +978,10 @@
             "title": "Failures",
             "type": "integer"
           },
+          "failures_billed": {
+            "title": "Failures Billed",
+            "type": "integer"
+          },
           "judge_comparisons": {
             "title": "Judge Comparisons",
             "type": "integer"
@@ -1051,6 +1060,7 @@
           "attempts",
           "succeeded",
           "failures",
+          "failures_billed",
           "pending",
           "covered_cells",
           "avg_cost",
@@ -4089,6 +4099,16 @@
             "title": "Currency",
             "type": "string"
           },
+          "last_refresh_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FetchOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "profile_id": {
             "title": "Profile Id",
             "type": "string"
@@ -4112,6 +4132,7 @@
           "card",
           "rows",
           "catalog",
+          "last_refresh_error",
           "categories"
         ],
         "title": "RatesOut",

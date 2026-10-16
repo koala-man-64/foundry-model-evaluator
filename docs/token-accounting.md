@@ -132,8 +132,8 @@ total becomes incomplete and says how many estimates it left out.
 
 A run can have a budget. Before each call (including judge calls), the app reserves the call's worst case:
 
-- input: the UTF-8 byte count of the request plus 256 framing tokens, an upper bound on the token count, at the
-  highest input-category rate
+- input: the UTF-8 byte count of the exact request body that is sent (prompt, settings and any schema, as JSON) plus
+  256 framing tokens, an upper bound on the token count, at the highest input-category rate
 - output: `max_output_tokens` at the output rate
 
 A call that could exceed the budget is skipped and costs $0. A budget needs complete rates and `max_output_tokens`, so
@@ -146,8 +146,9 @@ framing tokens and the gap between bytes and tokens cover these in practice.
 When a sent call reports no usage, its whole reservation counts as spent. The reservation is saved with the call, so
 spending is not under-counted after a restart either.
 
-The judge preview shows the same worst case that is reserved: it bounds the whole request body, including the
-structured-output schema. It warns when that worst case is more than what is left of the budget; evaluations that do
+The run and judge previews show the same worst case that is reserved: they bound the whole request body of every
+call, including any structured-output schema, and the run preview shows the largest per-call worst case of each
+candidate. It warns when that worst case is more than what is left of the budget; evaluations that do
 not fit are skipped and cost nothing. Judging a run that has a budget needs judge rates in the run's currency.
 
 ## Comparisons
@@ -162,6 +163,17 @@ as *matched* when every candidate has a succeeded answer in it, and the page sho
   left out and counted.
 - **Judge win rate.** The share of the judge's preferences, averaged per cell in the same way. A tie among *n* judged
   answers gives each one 1/*n*, so the shares of one evaluation always add up to 1.
+- **Judge scores must share a basis.** Judge scores and wins are only averaged when every evaluation in the cells being
+  averaged used the same rubric version, the same judge (profile, deployment, model name and version, API style,
+  structured output) and the same scoring settings (temperature, top_p, top_k, effort, thinking mode and budget).
+  Otherwise a 1–5 and a 1–10 rubric, or two different judges, would be averaged together, so the judge averages and
+  win rates are shown as withheld and a note says why. Re-judging with a larger `max_output_tokens`, other display
+  options or a seed keeps the basis.
+- **Only answers count as succeeded.** A response that asks to call a tool, or that has no answer text (for example a
+  reasoning model that used all of `max_output_tokens` before answering), is recorded as a failed attempt with the
+  reason. It keeps its usage and estimated cost, because the provider billed it, but it is never matched or judged.
+  Comparisons count these billed failures per candidate, projections list them as "billed, but not an answer", and
+  **Retry failed** leaves them out because the same request would most likely repeat; retry one explicitly instead.
 - **Failures** count finished attempts that did not succeed. Attempts that have not finished are shown separately.
 
 ## Projections

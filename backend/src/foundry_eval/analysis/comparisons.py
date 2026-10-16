@@ -12,6 +12,12 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
 - Costs use complete estimates in the requested currency only; the others are counted as excluded.
 - The judge win rate is averaged per cell in the same way. A tie gives each of the n judged answers
   1/n, so the shares of one evaluation always sum to 1.
+- Judge scores and wins are comparable only when they share a scoring basis: the same rubric version,
+  the same judge (profile, deployment, model, API style, structured output) and the same settings that
+  change how it scores. If the cells that would be averaged mix bases, judge averages and win rates
+  are withheld (with a note) instead of averaging different scales or judges together.
+- Failed attempts whose provider reported usage were billed; they are counted per candidate because
+  their cost is in the run totals but, as failures, not in the averages.
 - Failures are counted over all cells, for finished attempts only.
 """
 
@@ -24,7 +30,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..judging.service import JudgeService, latest_attempts
+from ..judging.service import JudgeService, judge_scores, latest_attempts, latest_evaluations
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
 from ..repos.evaluations import Evaluation, EvaluationRepository
@@ -50,6 +56,8 @@ class ComparisonCandidate(BaseModel):
     attempts: int
     succeeded: int
     failures: int
+    # Failures whose provider reported token usage, so they were billed (in the run totals, not the averages).
+    failures_billed: int
     pending: int
     covered_cells: int
     avg_cost: Money | None
@@ -87,6 +95,9 @@ class Comparison(BaseModel):
     currency: str
     cells_total: int
     cells_matched: int
+    # Distinct judge scoring bases (rubric version, judge, judge settings) in the matched cells.
+    # More than one means the judge averages and win rates are withheld.
+    judge_bases: int
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -99,6 +110,7 @@ class _Observation:
     label: str
     manual: int | None
     judge: float | None
+    judge_basis: str | None = None
 
 
 @dataclass
@@ -130,6 +142,8 @@ class _CellValues:
     manual: dict[Cell, float] = field(default_factory=dict)
     judge: dict[Cell, float] = field(default_factory=dict)
     wins: dict[Cell, list[float]] = field(default_factory=dict)
+    judge_bases: dict[Cell, set[str]] = field(default_factory=dict)
+    win_bases: dict[Cell, set[str]] = field(default_factory=dict)
     cost_excluded: int = 0
     cost_other_currency: int = 0
 
@@ -164,11 +178,16 @@ def _usage_values(observations: list[_Observation], name: str) -> list[float]:
     return values
 
 
+def _common_cells[T](per_cell: dict[str, dict[Cell, T]], matched: list[Cell]) -> list[Cell]:
+    """The matched cells in which every candidate that has the metric at all has a value."""
+    participants = [key for key, values in per_cell.items() if values]
+    return [cell for cell in matched if all(cell in per_cell[key] for key in participants)]
+
+
 def _common_values[T](per_cell: dict[str, dict[Cell, T]], matched: list[Cell]) -> dict[str, list[T]]:
     """Each candidate's cell values over the metric's common cells (none for a candidate without any)."""
-    participants = [key for key, values in per_cell.items() if values]
-    common = [cell for cell in matched if all(cell in per_cell[key] for key in participants)]
-    return {key: [per_cell[key][cell] for cell in common] if key in participants else [] for key in per_cell}
+    common = _common_cells(per_cell, matched)
+    return {key: [values[cell] for cell in common] if values else [] for key, values in per_cell.items()}
 
 
 def _cell_values(observations: list[_Observation], currency: str, into: _CellValues, cell: Cell) -> None:
@@ -202,6 +221,26 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
         mean = _mean(values)
         if mean is not None:
             target[cell] = mean
+    bases = {o.judge_basis for o in observations if o.judge is not None and o.judge_basis is not None}
+    if bases:
+        into.judge_bases[cell] = bases
+
+
+# Judge settings that change how answers are scored. Output limits, stop sequences, display options,
+# the seed and prompt caching do not, so re-judging with a larger max_output_tokens keeps the basis.
+_SCORING_SETTINGS = ("temperature", "top_p", "top_k", "effort", "thinking_mode", "thinking_budget_tokens")
+_JUDGE_IDENTITY = ("deployment", "model_name", "model_version", "api_style")
+
+
+def judge_basis(evaluation: Evaluation) -> str:
+    """What must match for two judge scores to be comparable: rubric version, judge and scoring settings."""
+    snapshot = evaluation.judge_profile_snapshot
+    settings = evaluation.judge_settings.model_dump()
+    parts = [evaluation.rubric_version_id, evaluation.judge_profile_id]
+    parts += [str(snapshot.get(name, "")) for name in _JUDGE_IDENTITY]
+    parts.append(f"structured={evaluation.structured_output}")
+    parts += [f"{name}={settings.get(name)!r}" for name in _SCORING_SETTINGS]
+    return "|".join(parts)
 
 
 def _win_outcome(evaluation: Evaluation, mine: list[str]) -> float:
@@ -227,7 +266,10 @@ class ComparisonService:
             prompts = {p.id: p for p in self.runs.prompts(run_id)}
             candidates = {c.id: c for c in self.runs.candidates(run_id)}
             manual = self.runs.manual_scores(run_id)
-            judge_scores = self.judge.scores_for_run(run_id)
+            # One read of the run's evaluations feeds the scores, the wins and their bases alike.
+            run_evaluations = self.evaluations.list_for_run(run_id)
+            scores = judge_scores(run_evaluations)
+            bases = {e.id: judge_basis(e) for e in run_evaluations}
             for (prompt_id, candidate_id, trial), attempt in latest_attempts(self.runs.attempts(run_id)).items():
                 candidate = candidates[candidate_id]
                 if candidate_keys and candidate.candidate_key not in candidate_keys:
@@ -247,24 +289,19 @@ class ComparisonService:
                     order.append(candidate.candidate_key)
                 item.runs.add(run.id)
                 score = manual.get(attempt.id)
-                judged = judge_scores.get(attempt.id)
+                judged = scores.get(attempt.id)
                 observation = _Observation(
                     attempt=attempt,
                     run_id=run.id,
                     label=candidate.label,
                     manual=score.score if score else None,
                     judge=judged.weighted_overall if judged else None,
+                    judge_basis=bases.get(judged.evaluation_id) if judged else None,
                 )
                 item.slots.append(observation)
                 item.by_cell.setdefault(cell, []).append(observation)
             key_by_candidate = {c.id: c.candidate_key for c in candidates.values()}
-            latest_eval: dict[tuple[str, int], Evaluation] = {}
-            for evaluation in self.evaluations.list_for_run(run_id):
-                if evaluation.status == "succeeded":
-                    slot = (evaluation.prompt_id, evaluation.trial_index)
-                    if slot not in latest_eval or evaluation.created_at >= latest_eval[slot].created_at:
-                        latest_eval[slot] = evaluation
-            for evaluation in latest_eval.values():
+            for evaluation in latest_evaluations(run_evaluations).values():
                 prompt = prompts[evaluation.prompt_id]
                 labels = {c.label: key_by_candidate[c.candidate_id] for c in evaluation.candidates}
                 evaluations.append(((prompt.content_hash, evaluation.trial_index), evaluation, labels))
@@ -289,6 +326,26 @@ class ComparisonService:
                 if key in values:
                     mine = [label for label, candidate_key in labels.items() if candidate_key == key]
                     values[key].wins.setdefault(cell, []).append(_win_outcome(evaluation, mine))
+                    values[key].win_bases.setdefault(cell, set()).add(judge_basis(evaluation))
+        # Only the cells that would be averaged decide whether the judge evidence is comparable.
+        judge_cells = _common_cells({k: v.judge for k, v in values.items()}, matched)
+        win_cells = _common_cells({k: v.wins for k, v in values.items()}, matched)
+        judge_bases: set[str] = set()
+        for value in values.values():
+            for cell in judge_cells:
+                judge_bases |= value.judge_bases.get(cell, set())
+            for cell in win_cells:
+                judge_bases |= value.win_bases.get(cell, set())
+        if len(judge_bases) > 1:
+            for value in values.values():
+                value.judge.clear()
+                value.wins.clear()
+            notes.append(
+                f"Judge scores in these cells come from {len(judge_bases)} different combinations of rubric "
+                "version, judge and judge settings, so they are not comparable. Judge averages and win rates "
+                "are not shown; compare runs judged the same way, or re-judge them with one rubric version "
+                "and judge."
+            )
         costs = _common_values({k: v.cost for k, v in values.items()}, matched)
         latency = _common_values({k: v.latency for k, v in values.items()}, matched)
         tokens = _common_values({k: v.tokens for k, v in values.items()}, matched)
@@ -318,6 +375,9 @@ class ComparisonService:
                     attempts=len(item.slots),
                     succeeded=sum(1 for o in item.slots if o.attempt.status is AttemptStatus.SUCCEEDED),
                     failures=sum(1 for o in item.slots if o.attempt.status in _FAILED),
+                    failures_billed=sum(
+                        1 for o in item.slots if o.attempt.status in _FAILED and o.attempt.usage is not None
+                    ),
                     pending=sum(1 for o in item.slots if o.attempt.status in _PENDING),
                     covered_cells=len(usable[key]),
                     avg_cost=_decimal_mean([c.mean for c in costs[key]]),
@@ -357,6 +417,7 @@ class ComparisonService:
             currency=currency,
             cells_total=len(cells),
             cells_matched=len(matched),
+            judge_bases=len(judge_bases),
             candidates=results,
             cells=cell_rows,
             notes=notes,

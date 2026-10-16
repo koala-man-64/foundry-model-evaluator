@@ -38,6 +38,8 @@ function CostCell({ item, currency }: { item: ComparisonCandidate; currency: str
   )
 }
 
+const WITHHELD = 'Withheld: the judge scores use different rubrics, judges or judge settings'
+
 export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; charts?: boolean }) {
   const comparison = useComparison(runIds)
   if (runIds.length === 0) return <Empty>Select one or more runs to compare.</Empty>
@@ -45,6 +47,7 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
   if (comparison.error) return <ErrorMessage error={comparison.error} />
   const data = comparison.data
   if (!data) return null
+  const withheld = data.judge_bases > 1
   return (
     <div className="stack-sm" aria-label="Comparison">
       {charts && <ComparisonCharts comparison={data} />}
@@ -96,19 +99,42 @@ export function ComparisonTable({ runIds, charts = true }: { runIds: string[]; c
                   {number(item.avg_manual_score, 2)}
                   <div className="small muted">{cells(item.manual_scored)} scored</div>
                 </td>
-                <td className="num">
-                  {number(item.avg_judge_score, 2)}
-                  <div className="small muted">{cells(item.judge_scored)} judged</div>
-                </td>
-                <td className="num">
-                  {item.win_rate === null || item.win_rate === undefined ? '—' : `${Math.round(item.win_rate * 100)}%`}
-                  <div className="small muted">
-                    {cells(item.win_cells)} · {item.judge_comparisons} evaluation{item.judge_comparisons === 1 ? '' : 's'}
-                  </div>
-                </td>
+                {withheld ? (
+                  <>
+                    <td className="num" title={WITHHELD}>
+                      <span className="muted">withheld</span>
+                      <div className="small muted">mixed judges</div>
+                    </td>
+                    <td className="num" title={WITHHELD}>
+                      <span className="muted">withheld</span>
+                      <div className="small muted">mixed judges</div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="num">
+                      {number(item.avg_judge_score, 2)}
+                      <div className="small muted">{cells(item.judge_scored)} judged</div>
+                    </td>
+                    <td className="num">
+                      {item.win_rate === null || item.win_rate === undefined ? '—' : `${Math.round(item.win_rate * 100)}%`}
+                      <div className="small muted">
+                        {cells(item.win_cells)} · {item.judge_comparisons} evaluation{item.judge_comparisons === 1 ? '' : 's'}
+                      </div>
+                    </td>
+                  </>
+                )}
                 <td className="num">
                   {item.failures} of {item.attempts}
                   <div className="small muted">attempts{item.pending > 0 ? ` · ${item.pending} not finished` : ''}</div>
+                  {item.failures_billed > 0 && (
+                    <div
+                      className="small muted"
+                      title="Failed attempts whose provider reported token usage. Their cost is in the run totals, not in these averages."
+                    >
+                      {item.failures_billed} billed
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

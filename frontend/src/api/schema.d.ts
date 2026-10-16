@@ -1008,6 +1008,8 @@ export interface components {
             cells_total: number;
             /** Currency */
             currency: string;
+            /** Judge Bases */
+            judge_bases: number;
             /** Notes */
             notes: string[];
             /** Run Ids */
@@ -1047,6 +1049,8 @@ export interface components {
             custom_rates: boolean;
             /** Failures */
             failures: number;
+            /** Failures Billed */
+            failures_billed: number;
             /** Judge Comparisons */
             judge_comparisons: number;
             /** Judge Scored */
@@ -2085,6 +2089,7 @@ export interface components {
             categories: components["schemas"]["Category"][];
             /** Currency */
             currency: string;
+            last_refresh_error: components["schemas"]["FetchOut"] | null;
             /** Profile Id */
             profile_id: string;
             /** Region */

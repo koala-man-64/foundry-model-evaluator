@@ -7,6 +7,7 @@ import pytest
 
 from foundry_eval.config import AppConfig
 from foundry_eval.instance_lock import InstanceLockError
+from foundry_eval.pricing.retail import RetailPricesClient
 from foundry_eval.types import ApiStyle
 from tests.api_support import (
     CANARY,
@@ -270,21 +271,22 @@ def test_budget_skips_calls_that_could_exceed_it(tmp_path):
         )
         set_manual(client, profile["id"], "input_uncached", "1")
         set_manual(client, profile["id"], "output", "10")
-        # worst case per call: (1 byte + 256 framing) x $1/M + 100 x $10/M = 0.001257
+        # worst case per call: (140-byte request body + 256 framing) x $1/M + 100 x $10/M = 0.001396.
+        # Two reservations fit in the budget; a third does not, even after one call settles at $0.0003.
         request = {
             "prompts": [{"user": "x"}],
             "candidates": [{"profile_id": profile["id"], "settings": {"max_output_tokens": 100}}],
             "trials": 3,
-            "budget": "0.0026",
+            "budget": "0.0029",
         }
         preview = client.post("/api/runs/preview", json=request).json()
-        assert preview["ok"] and preview["worst_case_total"] == "0.003771"
+        assert preview["ok"] and preview["worst_case_total"] == "0.004188"
         run_id = start_run(client, request)
         detail = wait_for_run(client, run_id)
     statuses = sorted(a["status"] for a in detail["attempts"])
     assert statuses == ["skipped_budget", "succeeded", "succeeded"]
     assert slow.calls == 2
-    assert detail["budget"]["limit"] == "0.0026"
+    assert detail["budget"]["limit"] == "0.0029"
 
 
 def test_missing_key_fails_before_sending(tmp_path, mock_app):
@@ -362,3 +364,72 @@ def test_canary_key_never_reaches_disk(tmp_path, mock_app):
     for file in data.rglob("*"):
         if file.is_file():
             assert CANARY.encode() not in file.read_bytes(), f"key found in {file}"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_tool_calls_and_empty_answers_are_billed_failures_not_answers(client, streaming):
+    endpoint = create_endpoint(client)
+    profiles = []
+    for deployment in ("chat-tool-call", "chat-empty-answer", "chat-ok"):
+        profile = create_profile(
+            client,
+            endpoint["id"],
+            preset="generic-chat",
+            api_style=ApiStyle.OPENAI_CHAT,
+            deployment=deployment,
+            streaming=streaming,
+        )
+        set_manual(client, profile["id"], "input_uncached", "1")
+        set_manual(client, profile["id"], "output", "10")
+        profiles.append(profile)
+    request = {
+        "prompts": [{"user": "What is the capital of France?"}],
+        "candidates": [{"profile_id": p["id"], "settings": {"max_output_tokens": 50}} for p in profiles],
+    }
+    detail = wait_for_run(client, start_run(client, request, key=f"idem-no-answer-{int(streaming)}"))
+    deployments = {p["id"]: p["deployment"] for p in profiles}
+    by_candidate = {c["id"]: deployments[c["profile_id"]] for c in detail["candidates"]}
+    attempts = {by_candidate[a["candidate_id"]]: a for a in detail["attempts"]}
+    tool, empty, ok = attempts["chat-tool-call"], attempts["chat-empty-answer"], attempts["chat-ok"]
+    assert tool["status"] == "failed" and tool["finish_reason"] == "tool_call"
+    assert tool["error_type"] == "no_answer" and "call a tool" in tool["error_message"]
+    assert empty["status"] == "failed" and empty["error_type"] == "no_answer"
+    assert "no answer text" in empty["error_message"]
+    assert ok["status"] == "succeeded" and ok["error_type"] is None
+    # The provider billed the calls, so their usage and cost are kept.
+    for attempt in (tool, empty):
+        assert attempt["usage"] is not None and attempt["cost"]["status"] == "complete"
+    assert detail["run"]["status"] == "completed_with_errors"
+    run_id = detail["run"]["id"]
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    by_profile = {c["profile_name"]: c for c in comparison["candidates"]}
+    assert by_profile["chat-tool-call"]["failures"] == 1 and by_profile["chat-tool-call"]["failures_billed"] == 1
+    assert by_profile["chat-ok"]["failures_billed"] == 0
+    # A billed non-answer would most likely repeat, so only an explicit single retry re-sends it.
+    key = f"idem-no-answer-retry-{int(streaming)}"
+    retry = client.post(f"/api/runs/{run_id}/retry-failed", headers={"Idempotency-Key": key})
+    assert retry.status_code == 200 and retry.json()["attempt_ids"] == []
+
+
+def test_rates_show_the_prices_in_use_and_a_later_failed_refresh(client):
+    endpoint = create_endpoint(client)
+    gpt = create_profile(
+        client,
+        endpoint["id"],
+        preset="openai-reasoning-cache-write",
+        api_style=ApiStyle.OPENAI_RESPONSES,
+        deployment="gpt-5.6-terra",
+        meter_terms="5.6 terra",
+    )
+    assert client.post("/api/pricing/refresh", json={}).json()[0]["status"] == "succeeded"
+    before = client.get(f"/api/profiles/{gpt['id']}/rates").json()
+    assert before["catalog"]["status"] == "succeeded" and before["last_refresh_error"] is None
+
+    services = client.app.state.services
+    services.pricing.retail = RetailPricesClient(transport=httpx2.MockTransport(lambda r: httpx2.Response(503)))
+    failed = client.post("/api/pricing/refresh", json={}).json()[0]
+    assert failed["status"] == "failed" and "cached prices were kept unchanged" in failed["error"]
+    after = client.get(f"/api/profiles/{gpt['id']}/rates").json()
+    assert after["catalog"] == before["catalog"]
+    assert after["last_refresh_error"]["status"] == "failed"
+    assert after["card"]["tiers"][0]["categories"]["output"]["rate"]["price"] == "15"

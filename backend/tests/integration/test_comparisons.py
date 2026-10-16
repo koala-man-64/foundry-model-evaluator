@@ -287,3 +287,63 @@ def test_unfinished_attempts_are_pending_not_failures(client):
     comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
     for candidate in comparison["candidates"]:
         assert candidate["pending"] == 0 and candidate["failures"] == 1
+
+
+def test_judge_scores_from_different_rubrics_or_judges_are_not_averaged_together(client):
+    endpoint = create_endpoint(client)
+    profiles = [chat_profile(client, endpoint["id"], f"deepseek-{name}") for name in ("m", "n")]
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    rubric = client.post(
+        "/api/rubrics",
+        json={
+            "name": "Ten-point scale",
+            "definition": {"scale_min": 1, "scale_max": 10, "criteria": [{"key": "accuracy", "name": "Accuracy"}]},
+        },
+    )
+    assert rubric.status_code == 201, rubric.text
+    request = {"prompts": [{"user": "Hello"}], "candidates": [{"profile_id": p["id"]} for p in profiles]}
+    first = start_run(client, request, key="idem-basis-run-1")
+    wait_for_run(client, first)
+    judge(client, first, {"judge_profile_id": judge_id}, key="idem-basis-judge-1")
+    second = start_run(client, request, key="idem-basis-run-2")
+    wait_for_run(client, second)
+    judge(client, second, {"judge_profile_id": judge_id, "rubric_id": rubric.json()["id"]}, key="idem-basis-judge-2")
+
+    alone = client.get("/api/comparisons", params={"run_id": first}).json()
+    assert alone["judge_bases"] == 1
+    assert all(c["avg_judge_score"] is not None and c["win_rate"] is not None for c in alone["candidates"])
+
+    mixed = client.get("/api/comparisons", params={"run_id": [first, second]}).json()
+    assert mixed["judge_bases"] == 2
+    for candidate in mixed["candidates"]:
+        assert candidate["avg_judge_score"] is None and candidate["judge_scored"] == 0
+        assert candidate["win_rate"] is None and candidate["judge_comparisons"] == 0
+    assert any("not comparable" in note for note in mixed["notes"])
+
+    # Judge settings are part of the basis too: re-judging with other settings changes it.
+    judge(client, second, {"judge_profile_id": judge_id, "settings": {"temperature": 0.5}}, key="idem-basis-judge-3")
+    again = client.get("/api/comparisons", params={"run_id": [first, second]}).json()
+    assert again["judge_bases"] == 2
+
+    unjudged = start_run(client, request, key="idem-basis-run-3")
+    wait_for_run(client, unjudged)
+    assert client.get("/api/comparisons", params={"run_id": unjudged}).json()["judge_bases"] == 0
+
+
+def test_re_judging_with_a_larger_output_limit_keeps_the_judge_basis(client):
+    endpoint = create_endpoint(client)
+    profiles = [chat_profile(client, endpoint["id"], f"deepseek-{name}") for name in ("r", "s")]
+    judge_id = judge_profile(client, endpoint["id"])["id"]
+    request = {
+        "prompts": [{"user": "One"}, {"user": "Two"}],
+        "candidates": [{"profile_id": p["id"]} for p in profiles],
+    }
+    run_id = start_run(client, request, key="idem-limit-run-1")
+    wait_for_run(client, run_id)
+    judge(client, run_id, {"judge_profile_id": judge_id}, key="idem-limit-judge-1")
+    prompt_id = client.get(f"/api/runs/{run_id}").json()["prompts"][0]["id"]
+    payload = {"judge_profile_id": judge_id, "prompt_id": prompt_id, "settings": {"max_output_tokens": 4000}}
+    judge(client, run_id, payload, key="idem-limit-judge-2")
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    assert comparison["judge_bases"] == 1
+    assert all(c["avg_judge_score"] is not None for c in comparison["candidates"])

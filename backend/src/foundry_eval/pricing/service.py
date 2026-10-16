@@ -53,13 +53,18 @@ class PricingService:
         settings = self.settings.get()
         results: list[RegionRefresh] = []
         for region in sorted(regions if regions is not None else self.regions_in_use()):
+            cached = len(self.catalog.items(region, settings.currency))
+            kept = f" The {cached} cached prices were kept unchanged." if cached else ""
             fetch_id = self.catalog.start_fetch(region, settings.currency, settings.product_filters)
             try:
                 items, warnings = await self.retail.fetch(region, settings.currency, settings.product_filters)
+                if not items and cached:
+                    # An empty answer for a region that had prices is an outage or a bad filter, not news.
+                    raise RetailPricesError("The Retail Prices API returned no prices for this region.")
             except Exception as exc:
                 message = str(exc) if isinstance(exc, RetailPricesError) else f"{type(exc).__name__}: {exc}"
-                self.catalog.fail_fetch(fetch_id, message)
-                results.append(RegionRefresh(region=region, status="failed", error=message))
+                self.catalog.fail_fetch(fetch_id, message + kept)
+                results.append(RegionRefresh(region=region, status="failed", error=message + kept))
                 continue
             count = self.catalog.replace_region(fetch_id, region, settings.currency, items)
             results.append(RegionRefresh(region=region, status="succeeded", item_count=count, warnings=warnings))

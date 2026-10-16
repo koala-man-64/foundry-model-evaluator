@@ -44,6 +44,7 @@ _STOP_REASONS = {
     "max_tokens": FinishReason.MAX_TOKENS,
     "refusal": FinishReason.REFUSAL,
     "model_context_window_exceeded": FinishReason.CONTEXT_EXCEEDED,
+    "tool_use": FinishReason.TOOL_CALL,
 }
 
 

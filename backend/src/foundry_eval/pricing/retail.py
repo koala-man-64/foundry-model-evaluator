@@ -150,12 +150,17 @@ class RetailPricesClient:
         currency: str,
         product_filters: tuple[str, ...] | list[str] = DEFAULT_PRODUCT_FILTERS,
     ) -> tuple[list[RetailItem], list[str]]:
-        """Fetch consumption price items for one region. Returns (items, warnings)."""
+        """Fetch consumption price items for one region. Returns (items, warnings).
+
+        Every product filter must succeed. The caller replaces the region's cached catalog with the
+        result, so a partial result would silently drop meters (and the rates matched to them);
+        any failed filter therefore fails the whole fetch and the cached catalog is kept.
+        """
         validate_region(region)
         validate_currency(currency)
         items: dict[tuple[str, str, Decimal, str], RetailItem] = {}
         warnings: list[str] = []
-        succeeded = 0
+        failures: list[str] = []
         skipped = 0
         async with make_async_client(
             timeout=make_timeout(15, 60), url=self.base_url, transport=self._transport
@@ -188,9 +193,8 @@ class RetailPricesClient:
                         if next_link and not self._same_origin(next_link):
                             raise RetailPricesError("Retail Prices API returned a next-page link on another host")
                         url = next_link or None
-                    succeeded += 1
                 except (httpx2.HTTPError, RetailPricesError, ValueError) as exc:
-                    warnings.append(f"Filter {clause!r} failed: {exc}")
-        if succeeded == 0:
-            raise RetailPricesError("; ".join(warnings) or "Retail Prices API query failed")
+                    failures.append(f"Filter {clause!r} failed: {exc}")
+        if failures:
+            raise RetailPricesError("; ".join(failures))
         return list(items.values()), warnings

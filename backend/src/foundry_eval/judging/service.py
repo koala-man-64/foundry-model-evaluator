@@ -141,6 +141,36 @@ def latest_attempts(attempts: list[Attempt]) -> dict[tuple[str, str, int], Attem
     return latest
 
 
+def latest_evaluations(evaluations: list[Evaluation]) -> dict[tuple[str, int], Evaluation]:
+    """The newest succeeded evaluation per (prompt, trial); earlier ones were re-judged."""
+    latest: dict[tuple[str, int], Evaluation] = {}
+    for evaluation in evaluations:
+        if evaluation.status != "succeeded":
+            continue
+        key = (evaluation.prompt_id, evaluation.trial_index)
+        current = latest.get(key)
+        if current is None or evaluation.created_at >= current.created_at:
+            latest[key] = evaluation
+    return latest
+
+
+def judge_scores(evaluations: list[Evaluation]) -> dict[str, JudgeScore]:
+    """Latest successful judge result per attempt, from one read of a run's evaluations."""
+    scores: dict[str, JudgeScore] = {}
+    for evaluation in latest_evaluations(evaluations).values():
+        for candidate in evaluation.candidates:
+            scores[candidate.attempt_id] = JudgeScore(
+                evaluation_id=evaluation.id,
+                label=candidate.label,
+                weighted_overall=candidate.weighted_overall,
+                judge_overall=candidate.judge_overall,
+                preferred=evaluation.preferred == candidate.label,
+                tie=evaluation.preferred == "tie",
+                judge_is_participant=evaluation.judge_is_participant,
+            )
+    return scores
+
+
 def participant_reasons(judge: ModelProfile, endpoint: Endpoint, candidates: list[RunCandidate]) -> list[str]:
     """Why the judge may be judging its own output (shown as a warning and stored with the result)."""
     reasons: list[str] = []
@@ -638,24 +668,4 @@ class JudgeService:
 
     def scores_for_run(self, run_id: str) -> dict[str, JudgeScore]:
         """Latest successful judge result per attempt."""
-        latest: dict[tuple[str, int], Evaluation] = {}
-        for evaluation in self.evaluations.list_for_run(run_id):
-            if evaluation.status != "succeeded":
-                continue
-            key = (evaluation.prompt_id, evaluation.trial_index)
-            current = latest.get(key)
-            if current is None or evaluation.created_at >= current.created_at:
-                latest[key] = evaluation
-        scores: dict[str, JudgeScore] = {}
-        for evaluation in latest.values():
-            for candidate in evaluation.candidates:
-                scores[candidate.attempt_id] = JudgeScore(
-                    evaluation_id=evaluation.id,
-                    label=candidate.label,
-                    weighted_overall=candidate.weighted_overall,
-                    judge_overall=candidate.judge_overall,
-                    preferred=evaluation.preferred == candidate.label,
-                    tie=evaluation.preferred == "tie",
-                    judge_is_participant=evaluation.judge_is_participant,
-                )
-        return scores
+        return judge_scores(self.evaluations.list_for_run(run_id))
