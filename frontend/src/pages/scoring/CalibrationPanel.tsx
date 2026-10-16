@@ -27,7 +27,7 @@ export function CalibrationPanel({ runIds }: { runIds: string[] }) {
   const data = calibration.data
   if (!data) return null
   return (
-    <section aria-label="Judge calibration" className="stack-sm">
+    <section aria-label="Calibration against your scores" className="stack-sm">
       <h2>Judge vs. your scores</h2>
       {data.groups.length === 0 ? (
         <p className="small muted">Judge this run and score some answers by hand to see how closely the judge agrees with you.</p>
