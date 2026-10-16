@@ -8,6 +8,7 @@ attempt records. Database writes are short and run on the event loop thread.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import logging
 from collections import defaultdict
@@ -24,14 +25,14 @@ from ..money import add
 from ..pricing.calculator import CostContext, CostEstimate, estimate_cost
 from ..pricing.ratecard import RateCard
 from ..pricing.snapshots import load_snapshot
-from ..providers.base import ProviderAdapter, ProviderCall, ProviderResult
+from ..providers.base import ProviderAdapter, ProviderCall, ProviderResult, unusable_answer
 from ..providers.request_builder import endpoint_url, profile_timeouts
 from ..repos.endpoints import EndpointRepository, NotFoundError
 from ..repos.runs import RunRepository
 from ..repos.settings import SettingsRepository
 from ..types import ApiStyle, AttemptStatus, RunStatus
 from ..usage.normalizers import normalize_usage
-from .budget import BudgetState, input_token_upper_bound, worst_case_cost
+from .budget import BudgetState, body_input_upper_bound, worst_case_cost
 
 log = logging.getLogger(__name__)
 
@@ -371,7 +372,6 @@ class Engine:
         if attempt.status is not AttemptStatus.QUEUED:
             return
         candidate = self.runs.candidate(attempt.candidate_id)
-        prompt = self.runs.prompt(attempt.prompt_id)
         with self.db.connect() as conn:
             card, _meta = load_snapshot(conn, candidate.price_snapshot_id)
         currency = card.currency
@@ -385,7 +385,8 @@ class Engine:
             endpoint_info=endpoint_info,
             body=attempt.request_body,
             card=card,
-            input_upper=input_token_upper_bound(prompt.system_text, prompt.user_text),
+            # The stored body is exactly what is sent (prompt, settings, any schema), so it bounds the input.
+            input_upper=body_input_upper_bound(attempt.request_body),
             max_output_tokens=candidate.settings.max_output_tokens,
             mark_sent=functools.partial(self.runs.mark_sent, attempt_id),
             semaphore=semaphore,
@@ -394,10 +395,16 @@ class Engine:
             self.runs.finish_not_sent(attempt_id, outcome.status, outcome.message, currency)
             return
         result = outcome
+        problem = unusable_answer(result)
+        if problem is not None:
+            # Billed but not an answer: keep usage and cost, record it as a failure (never matched or judged).
+            result = dataclasses.replace(result, ok=False, error_type="no_answer", error_message=problem)
         facts = normalize_usage(profile.api_style, result.raw_usage, service_tier=result.service_tier)
         if facts is None:
             reason = "usage not reported by the provider"
-            if not result.ok:
+            if result.error_type == "no_answer":
+                reason = "the provider completed the call but reported no usage; it may still be billed"
+            elif not result.ok:
                 reason += f" (request failed: {result.error_type or 'error'}); no usage was reported"
             cost = CostEstimate.usage_missing(currency, reason, self.runs.attempt(attempt_id).budget_reserved)
         else:

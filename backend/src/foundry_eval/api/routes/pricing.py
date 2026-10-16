@@ -50,7 +50,9 @@ class RatesOut(BaseModel):
     currency: str
     card: RateCard
     rows: list[RateRow]
+    # The refresh whose prices are in use, and a later refresh that failed (prices were kept).
     catalog: FetchOut | None
+    last_refresh_error: FetchOut | None
     categories: list[Category]
 
 
@@ -185,13 +187,19 @@ def _rates(services: ServicesDep, profile_id: str) -> RatesOut:
     endpoint = services.endpoints.get(profile.endpoint_id)
     currency = services.settings.get().currency
     context = pricing_context(profile, endpoint, currency)
+    catalog = services.pricing.catalog
+    in_use = catalog.last_fetch(context.region, currency, status="succeeded") if context.region else None
+    latest = catalog.last_fetch(context.region, currency) if context.region else None
+    if latest is not None and in_use is not None and latest.started_at <= in_use.started_at:
+        latest = None
     return RatesOut(
         profile_id=profile.id,
         region=context.region,
         currency=currency,
         card=services.pricing.resolve(profile, endpoint),
         rows=services.rates.list(profile.id),
-        catalog=_fetch_out(services.pricing.catalog.last_fetch(context.region, currency)) if context.region else None,
+        catalog=_fetch_out(in_use),
+        last_refresh_error=_fetch_out(latest) if latest is not None and latest.status == "failed" else None,
         categories=list(categories_for(profile.api_style)),
     )
 

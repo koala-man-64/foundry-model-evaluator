@@ -58,6 +58,21 @@ class ProviderResult:
     retry_after: str | None = None
 
 
+def unusable_answer(result: ProviderResult) -> str | None:
+    """Why a response the provider completed is still not an answer to compare, or None if it is one.
+
+    Such a response was billed, so it keeps its usage and cost, but it must not enter comparisons or
+    the judge as if it were an (empty) answer.
+    """
+    if not result.ok:
+        return None
+    if result.finish_reason is FinishReason.TOOL_CALL:
+        return "The model asked to call a tool instead of answering; tool calls are not supported."
+    if not result.output_text.strip():
+        return f"The model returned no answer text (finish reason: {result.finish_reason.value})."
+    return None
+
+
 class ProviderAdapter(Protocol):
     api_style: ApiStyle
 

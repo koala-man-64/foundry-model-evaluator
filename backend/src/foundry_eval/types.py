@@ -21,6 +21,7 @@ class FinishReason(StrEnum):
     CONTENT_FILTER = "content_filter"
     REFUSAL = "refusal"
     CONTEXT_EXCEEDED = "context_exceeded"
+    TOOL_CALL = "tool_call"
     ERROR = "error"
     OTHER = "other"
 

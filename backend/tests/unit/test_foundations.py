@@ -209,6 +209,17 @@ def test_migrations_are_idempotent(tmp_path):
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
+def test_a_database_from_a_newer_version_is_refused(tmp_path):
+    db = Database(tmp_path / "db.sqlite3")
+    known = db.migrate()
+    with db.connect() as conn:
+        conn.execute(f"PRAGMA user_version = {known + 1}")
+    with pytest.raises(RuntimeError, match="newer version"):
+        db.migrate()
+    with db.connect() as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == known + 1
+
+
 def test_strict_tables_enforce_column_types(tmp_path):
     db = Database(tmp_path / "db.sqlite3")
     db.migrate()

@@ -83,6 +83,7 @@ export const FINISH_LABELS: Record<string, string> = {
   content_filter: 'Content filtered',
   refusal: 'Refused',
   context_exceeded: 'Context exceeded',
+  tool_call: 'Asked to call a tool',
   error: 'Error',
   other: 'Other',
 }

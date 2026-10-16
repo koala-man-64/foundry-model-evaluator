@@ -79,15 +79,15 @@ async def test_client_pages_parses_decimals_and_merges_filters():
     assert isinstance(mm.retail_price, Decimal)
 
 
-async def test_client_reports_failed_filter_as_warning():
+async def test_client_fails_when_any_filter_fails():
+    # A partial result would replace the cached catalog and drop meters, so one failed filter fails the fetch.
     def handler(request: httpx2.Request) -> httpx2.Response:
         if "contains" in request.url.params["$filter"]:
             return httpx2.Response(400, content=b'{"Error": "bad filter"}')
         return httpx2.Response(200, content=b'{"Items": [], "NextPageLink": null}')
 
-    items, warnings = await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch("eastus2", "USD")
-    assert items == []
-    assert len(warnings) == 1 and "HTTP 400" in warnings[0]
+    with pytest.raises(RetailPricesError, match="HTTP 400"):
+        await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch("eastus2", "USD")
 
 
 async def test_client_fails_when_every_filter_fails():
