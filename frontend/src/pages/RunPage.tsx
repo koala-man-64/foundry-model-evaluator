@@ -224,6 +224,7 @@ export function RunPage() {
                 candidate={candidate}
                 manualScore={detail.manual_scores[attempt.id]}
                 judgeScore={detail.judge_scores?.[attempt.id]}
+                judgeAggregate={detail.judge_aggregates?.[attempt.id]}
                 checks={detail.check_results?.[attempt.id]}
                 retried={retriedIds.has(attempt.id)}
               />
