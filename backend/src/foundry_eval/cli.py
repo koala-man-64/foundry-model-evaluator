@@ -392,28 +392,11 @@ def _has_checks(detail: dict[str, Any]) -> bool:
     return any(prompt.get("checks") for prompt in detail["prompts"])
 
 
-def _provided(settings: dict[str, Any]) -> dict[str, Any]:
-    """Settings that were set, as candidate keys count them (``GenerationSettings.provided``)."""
-    return {name: value for name, value in settings.items() if value is not None and value != []}
-
-
-def _check_baseline_fits(
-    suite: dict[str, Any], candidate_ids: list[str] | None, baseline: tuple[dict[str, Any], dict[str, Any]]
-) -> None:
-    """Refuse, before anything is spent, a run that cannot be compared with the frozen baseline."""
+def _check_baseline_prompts(suite: dict[str, Any], baseline: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    """Refuse, before anything is spent, a suite that shares no prompt with the baseline run."""
     from .execution.runs import content_hash
 
-    detail, chosen = baseline
-    candidates = [c for c in suite["candidates"] if candidate_ids is None or c["id"] in candidate_ids]
-    for candidate in candidates:
-        if candidate["profile_id"] == chosen["profile_id"] and _provided(candidate["settings"]) == _provided(
-            chosen["settings"]
-        ):
-            raise RunSuiteError(
-                f"The suite candidate {candidate['label'] or chosen['label']!r} is the baseline candidate (same "
-                "profile and settings); running it again would pool it into the frozen baseline. Choose the new "
-                "candidates with --candidate."
-            )
+    detail, _ = baseline
     known = {prompt["content_hash"] for prompt in detail["prompts"]}
     shared = sum(1 for prompt in suite["prompts"] if content_hash(prompt["system"], prompt["user"]) in known)
     if not shared:
@@ -448,7 +431,7 @@ def _run_suite(
         candidate_ids = None  # every candidate: the same run (and run key) as naming none
     baseline = _resolve_baseline(client, args.baseline_run, args.baseline_candidate) if args.baseline_run else None
     if baseline is not None:
-        _check_baseline_fits(suite, candidate_ids, baseline)
+        _check_baseline_prompts(suite, baseline)
     title = args.title if args.title is not None else f"{suite['name']} ({args.run_key})"
     body: dict[str, Any] = {"title": title[:200], "budget": to_text(budget)}
     if candidate_ids is not None:
@@ -461,6 +444,15 @@ def _run_suite(
         print(f"warning: {warning}", file=sys.stderr)
     if not preview["ok"]:
         raise RunSuiteError("The app refused the run: " + "; ".join(preview["errors"]))
+    if baseline is not None:
+        baseline_key = baseline[1]["candidate_key"]
+        for item in preview["candidates"]:
+            if item["candidate_key"] == baseline_key:
+                raise RunSuiteError(
+                    f"The candidate {item['label']!r} would be the baseline candidate again (same candidate key), "
+                    "and comparisons would pool it into the frozen baseline. Choose the new candidates with "
+                    "--candidate."
+                )
     worst = preview["worst_case_total"]
     print(f"{preview['calls']} calls, worst-case cost {worst} (budget {to_text(budget)})", file=sys.stderr)
     if worst is not None and Decimal(worst) > budget:
@@ -517,7 +509,7 @@ def _run_suite(
     results = run_gates(gates, detail, evaluations)
     if baseline is not None:
         baseline_detail, baseline_candidate = baseline
-        baseline_key: str = baseline_candidate["candidate_key"]
+        baseline_key = baseline_candidate["candidate_key"]
         keys = list(dict.fromkeys(c["candidate_key"] for c in detail["candidates"]))
         new_keys = [key for key in keys if key != baseline_key]
         params = [("run_id", baseline_detail["run"]["id"]), ("run_id", run_id)]

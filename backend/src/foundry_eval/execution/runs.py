@@ -72,6 +72,8 @@ class CandidatePreview(BaseModel):
     custom_rates: list[str]
     worst_case_per_call: Money | None
     worst_case_reason: str | None
+    # How comparisons follow this candidate across runs (pricing identity and exact settings).
+    candidate_key: str = ""
 
 
 class RunPreview(BaseModel):
@@ -110,6 +112,11 @@ def _settings_summary(settings: GenerationSettings, keys: set[str]) -> str:
     values = settings.provided()
     parts = [f"{k}={values[k]}" for k in sorted(keys) if k in values]
     return ", ".join(parts)
+
+
+def candidate_key(profile: ModelProfile, endpoint: Endpoint, currency: str, settings: GenerationSettings) -> str:
+    identity = profile.pricing_identity(endpoint, currency)
+    return hashlib.sha256(f"{identity}|{settings.canonical_json()}".encode()).hexdigest()[:16]
 
 
 def candidate_labels(specs: list[CandidateSpec], profiles: dict[str, ModelProfile]) -> list[str]:
@@ -221,6 +228,7 @@ class RunService:
                     custom_rates=custom,
                     worst_case_per_call=worst,
                     worst_case_reason=reason,
+                    candidate_key=candidate_key(profile, endpoint, card.currency, spec.settings),
                 )
             )
         if request.budget is not None:
@@ -310,8 +318,7 @@ class RunService:
                 endpoint, card = cards[profile.id]
                 if profile.id not in snapshot_ids:
                     snapshot_ids[profile.id] = create_snapshot(conn, profile, endpoint, card)
-                identity = profile.pricing_identity(endpoint, card.currency)
-                key = hashlib.sha256(f"{identity}|{spec.settings.canonical_json()}".encode()).hexdigest()[:16]
+                key = candidate_key(profile, endpoint, card.currency, spec.settings)
                 candidate_id = self.runs.insert_candidate(
                     conn,
                     run_id,

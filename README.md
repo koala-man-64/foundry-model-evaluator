@@ -126,9 +126,10 @@ scripts\foundry-eval.cmd run-suite --suite "Support answers" --candidate "GPT-5.
 
 Gates (`--fail-if`, repeatable):
 
-- `failures-above=<n>`: at most *n* paid calls may fail (the default is 0). Answers count, and so does each prompt and
-  trial that the automatic judge left without a result. An attempt retried in the app counts once, through its newest
-  retry. A run whose automatic judging did not start always fails this gate.
+- `failures-above=<n>`: at most *n* failures (the default is 0). Each answer that did not succeed counts, and in a
+  judged run so does each prompt and trial that has an answer but no judge result. A prompt and trial without any
+  answer is not judged, so it counts once, through its failed answers. An attempt retried in the app counts once,
+  through its newest retry. A run whose automatic judging did not start always fails this gate.
 - `cost-upper-above=<amount>`: the upper bound of the run's estimated cost (answers and judging) must not exceed the
   amount.
 - `incomplete-cost`: every cost estimate must be complete.
@@ -144,10 +145,11 @@ pass: fewer than 3 paired prompts, values for only one side, judges that are not
 is the same on every prompt but on fewer than 6 prompts (the sign test needs 6). A metric neither run has (no judge,
 no checks) does not apply, but the gate fails when none of the chosen metrics applies or the comparison fails.
 
-The baseline stays frozen. Before anything is spent, the command refuses a run that includes the baseline candidate
-again (same profile and settings), since the comparison would pool the new answers into the baseline; choose the new
-candidates with `--candidate`. It also refuses a suite that shares no prompt with the baseline run, and warns when it
-shares only some.
+The baseline stays frozen. Before anything is spent, the command refuses a run whose preview shows the baseline
+candidate again (the same candidate key: pricing identity and settings), since the comparison would pool the new
+answers into the baseline; choose the new candidates with `--candidate`. A profile pointed at a new deployment is a
+new candidate and is compared as usual. The command also refuses a suite that shares no prompt with the baseline run,
+and warns when it shares only some.
 
 | Exit code | Outcome |
 |---|---|

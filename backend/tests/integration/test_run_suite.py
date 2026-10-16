@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from foundry_eval import cli
 from foundry_eval.app_client import AppClient
 from foundry_eval.devtools.mock_foundry import create_mock_app
+from foundry_eval.domain.profiles import ProfileFields
 from foundry_eval.types import ApiStyle
 from tests.api_support import create_endpoint, create_profile, make_client, set_manual
 
@@ -148,7 +149,7 @@ def test_baseline_gate_fails_on_a_regression_and_tolerances_relax_it(app, mock, 
     # Running the baseline candidate again would pool it into the frozen baseline: refused before spending.
     full = ["--suite", "Regression", "--budget", "1", "--run-key", "full-1", "--baseline-run", baseline_id]
     code, refused, _ = run_cli(app, capsys, *full)
-    assert code == 2 and "is the baseline candidate" in refused["error"] and chat_calls(mock) == 6
+    assert code == 2 and "would be the baseline candidate again" in refused["error"] and chat_calls(mock) == 6
     # So is a suite that shares no prompt with the baseline run.
     create_suite(app, [pricier], name="Other prompts", prompts=[{"user": "Something else entirely"}])
     other = ["--suite", "Other prompts", "--budget", "1", "--run-key", "other-1", "--baseline-run", baseline_id]
@@ -184,6 +185,26 @@ def test_baseline_gate_fails_on_a_regression_and_tolerances_relax_it(app, mock, 
     code, judged, _ = run_cli(app, capsys, *args, "--baseline-metrics", "judge")
     assert code == 1 and "none of the chosen metrics applies" in judged["gates"][-1]["detail"]
     assert set(judged["gates"][-1]["candidates"][0]["metrics"]) == {"judge"}
+
+
+def test_a_profile_pointed_at_a_new_deployment_is_compared_with_its_frozen_baseline(app, mock, capsys):
+    endpoint = create_endpoint(app)
+    profile = chat_profile(app, endpoint["id"], "deepseek-base")
+    create_suite(app, [profile])
+    code, baseline, _ = run_cli(app, capsys, "--suite", "Regression", "--budget", "1", "--run-key", "old-deployment")
+    assert code == 0, baseline
+
+    # Same profile and settings, new deployment: a different candidate, so not the baseline run again.
+    fields = {name: value for name, value in profile.items() if name in ProfileFields.model_fields}
+    response = app.put(f"/api/profiles/{profile['id']}", json={**fields, "deployment": "deepseek-new"})
+    assert response.status_code == 200, response.text
+    args = ["--suite", "Regression", "--budget", "1", "--run-key", "new-deployment"]
+    code, report, err = run_cli(app, capsys, *args, "--baseline-run", baseline["run"]["id"])
+    assert chat_calls(mock) == 12, err
+    [row] = report["gates"][-1]["candidates"]
+    assert row["candidate_key"] != report["gates"][-1]["baseline_candidate"]["candidate_key"]
+    # The new deployment answers in another style, so its checks regress against the old one.
+    assert code == 1 and row["metrics"]["checks"]["status"] == "regressed", report
 
 
 def judge_profile(client: TestClient, endpoint_id: str, deployment: str) -> dict:
@@ -334,7 +355,8 @@ def test_suite_runs_can_choose_candidates_and_keep_their_labels(client: TestClie
 
     preview = client.post(f"{path}/preview", json={"candidate_ids": [second]}).json()
     assert preview["ok"] and preview["calls"] == 1
-    assert [c["label"] for c in preview["candidates"]] == ["deepseek-base (temperature=0.8)"]
+    [chosen] = preview["candidates"]
+    assert chosen["label"] == "deepseek-base (temperature=0.8)" and len(chosen["candidate_key"]) == 16
     for body, message in (
         ({"candidate_ids": ["nope"]}, "Not candidates of this suite: nope"),
         ({"candidate_ids": [first, first]}, "only once"),
@@ -348,4 +370,5 @@ def test_suite_runs_can_choose_candidates_and_keep_their_labels(client: TestClie
     assert response.status_code == 201, response.text
     detail = client.get(f"/api/runs/{response.json()['run_id']}").json()
     assert [c["label"] for c in detail["candidates"]] == ["deepseek-base (temperature=0.8)"]
+    assert detail["candidates"][0]["candidate_key"] == chosen["candidate_key"]  # the preview's key is the run's
     assert len(detail["attempts"]) == 1

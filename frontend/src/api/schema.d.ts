@@ -953,6 +953,11 @@ export interface components {
         };
         /** CandidatePreview */
         CandidatePreview: {
+            /**
+             * Candidate Key
+             * @default
+             */
+            candidate_key: string;
             /** Custom Rates */
             custom_rates: string[];
             /** Index */

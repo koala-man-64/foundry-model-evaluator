@@ -63,8 +63,10 @@ def detail(attempts: list[dict], **cost: Any) -> dict[str, Any]:
     return {"attempts": attempts, "combined_cost": combined}
 
 
-def attempt(identifier: str, status: str = "succeeded", retry_of: str | None = None) -> dict[str, Any]:
-    return {"id": identifier, "status": status, "retry_of": retry_of}
+def attempt(
+    identifier: str, status: str = "succeeded", retry_of: str | None = None, prompt: str = "p1", trial: int = 1
+) -> dict[str, Any]:
+    return {"id": identifier, "status": status, "retry_of": retry_of, "prompt_id": prompt, "trial_index": trial}
 
 
 def test_failures_count_a_retried_attempt_through_its_retry():
@@ -220,6 +222,20 @@ def test_failed_judging_counts_unless_a_re_judging_succeeded():
     stopped = {**detail([attempt("a")]), "run": {"judge_error": "Automatic judging did not start: no key"}}
     [failures] = run_gates(Gates(failures_above=10), stopped)
     assert failures["outcome"] == "attempts_failed" and "did not start" in failures["detail"]
+
+
+def test_a_judged_run_expects_a_judge_result_for_every_answered_prompt_and_trial():
+    attempts = [attempt("a", prompt="p1"), attempt("b", prompt="p2"), attempt("c", "failed", prompt="p3")]
+    evaluations = [{"prompt_id": "p1", "trial_index": 1, "status": "succeeded"}]
+    # p2 was answered but has no evaluation at all; p3 has no answer, so it counts once, as a failed answer.
+    assert judging_failures(evaluations, {("p1", 1), ("p2", 1)}) == (2, 1)
+    judged = {**detail(attempts), "run": {"judge_config": {"judge_profile_id": "j"}}}
+    [failures] = run_gates(Gates(failures_above=1), judged, evaluations)
+    assert failures["value"] == 2 and failures["outcome"] == "attempts_failed"
+    assert "1 of 2 judged prompts and trials have no judge result" in failures["detail"]
+    # Without automatic judging, only the evaluations that exist are counted.
+    [failures] = run_gates(Gates(failures_above=1), detail(attempts), evaluations)
+    assert failures["value"] == 1 and failures["outcome"] == "passed"
 
 
 def test_a_pending_cost_is_not_final_even_with_an_upper_bound():

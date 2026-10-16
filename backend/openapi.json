@@ -655,6 +655,11 @@
       },
       "CandidatePreview": {
         "properties": {
+          "candidate_key": {
+            "default": "",
+            "title": "Candidate Key",
+            "type": "string"
+          },
           "custom_rates": {
             "items": {
               "type": "string"

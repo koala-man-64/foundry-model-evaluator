@@ -3,10 +3,11 @@
 Gates read the app's own API answers (the run detail and a comparison), so they judge exactly what
 the app shows. Each gate ends in one outcome. The command exits with the most basic problem found:
 
-* ``attempts_failed`` (3): more paid calls did not succeed than ``failures-above`` allows (none by
-  default): answers, and judge evaluations of prompts and trials that have no judge result. A run
-  whose automatic judging did not start fails here too. The measurement itself is incomplete, so this
-  comes first.
+* ``attempts_failed`` (3): more failures than ``failures-above`` allows (none by default): answers
+  that did not succeed, and prompts and trials with an answer but no judge result when the run is
+  judged. A prompt and trial without any answer is not judged, so it counts once, through its failed
+  answers. A run whose automatic judging did not start fails here too. The measurement itself is
+  incomplete, so this comes first.
 * ``cost_incomplete`` (4): a cost gate could not be decided because an estimate is incomplete or
   still pending. An unknown cost is never taken as zero.
 * ``gate_failed`` (1): a cost limit was exceeded, or the comparison with the baseline found a
@@ -136,12 +137,16 @@ def counted_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [a for a in attempts if a["id"] not in replaced]
 
 
-def judging_failures(evaluations: list[dict[str, Any]]) -> tuple[int, int]:
-    """(prompts and trials judged, those without a successful judge evaluation).
+def judging_failures(
+    evaluations: list[dict[str, Any]], expected: set[tuple[str, int]] | None = None
+) -> tuple[int, int]:
+    """(prompts and trials to judge, those without a successful judge evaluation).
 
-    A later successful re-judging replaces an earlier failure, as in comparisons.
+    ``expected`` are the prompts and trials the judge should have results for (those with an answer);
+    one without any evaluation counts as unjudged. A later successful re-judging replaces an earlier
+    failure, as in comparisons.
     """
-    judged: dict[tuple[str, int], bool] = {}
+    judged: dict[tuple[str, int], bool] = dict.fromkeys(expected or (), False)
     for evaluation in evaluations:
         cell = (evaluation["prompt_id"], evaluation["trial_index"])
         judged[cell] = judged.get(cell, False) or evaluation["status"] == "succeeded"
@@ -160,8 +165,11 @@ def run_gates(
     """The gates on the run itself: failed paid calls, and its estimated cost (answers and judging)."""
     attempts = counted_attempts(detail["attempts"])
     failed = Counter(a["status"] for a in attempts if a["status"] != "succeeded")
-    judged, unjudged = judging_failures(evaluations or [])
-    judge_error = detail.get("run", {}).get("judge_error")
+    run = detail.get("run", {})
+    # As the judge groups answers: every prompt and trial with a succeeded answer gets judged.
+    answered = {(a["prompt_id"], a["trial_index"]) for a in attempts if a["status"] == "succeeded"}
+    judged, unjudged = judging_failures(evaluations or [], answered if run.get("judge_config") else None)
+    judge_error = run.get("judge_error")
     count = sum(failed.values()) + unjudged
     statuses = ", ".join(f"{n} {status}" for status, n in sorted(failed.items()))
     text = f"{sum(failed.values())} of {len(attempts)} attempts did not succeed" + (f" ({statuses})" if failed else "")
