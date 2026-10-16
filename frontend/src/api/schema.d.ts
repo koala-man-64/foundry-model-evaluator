@@ -891,6 +891,7 @@ export interface components {
         AttemptStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted" | "skipped_budget";
         /** BaselineDifferences */
         BaselineDifferences: {
+            checks?: components["schemas"]["Difference"] | null;
             cost: components["schemas"]["MoneyDifference"] | null;
             judge: components["schemas"]["Difference"] | null;
             latency_ms: components["schemas"]["Difference"] | null;
@@ -1070,6 +1071,22 @@ export interface components {
             reason?: string | null;
             status: components["schemas"]["RateStatus"];
         };
+        /** CheckOutcome */
+        CheckOutcome: {
+            /** Passed */
+            passed: boolean | null;
+            /** Results */
+            results: components["schemas"]["CheckResult"][];
+        };
+        /** CheckResult */
+        CheckResult: {
+            /** Detail */
+            detail: string;
+            /** Kind */
+            kind: string;
+            /** Passed */
+            passed: boolean | null;
+        };
         /** Comparison */
         Comparison: {
             /** Baseline */
@@ -1084,6 +1101,11 @@ export interface components {
             cells_total: number;
             /** Currency */
             currency: string;
+            /**
+             * Has Checks
+             * @default false
+             */
+            has_checks: boolean;
             /** Interval Min Prompts */
             interval_min_prompts: number;
             /** Judge Bases */
@@ -1101,6 +1123,8 @@ export interface components {
             api_style: string;
             /** Attempts */
             attempts: number;
+            /** Avg Checks Passed */
+            avg_checks_passed?: number | null;
             /** Avg Cost */
             avg_cost: string | null;
             /** Avg Input Tokens */
@@ -1117,6 +1141,12 @@ export interface components {
             avg_reasoning_tokens: number | null;
             /** Candidate Key */
             candidate_key: string;
+            /**
+             * Checks Cells
+             * @default 0
+             */
+            checks_cells: number;
+            checks_interval?: components["schemas"]["Interval"] | null;
             /** Cost Cells */
             cost_cells: number;
             /** Cost Excluded */
@@ -1180,6 +1210,21 @@ export interface components {
             prompt_title: string;
             /** Trial Index */
             trial_index: number;
+        };
+        /** ContainsCheck */
+        ContainsCheck: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "contains";
+            /** Value */
+            value: string;
         };
         /** CostEstimate */
         CostEstimate: {
@@ -1484,6 +1529,24 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * ExactCheck
+         * @description The whole answer equals the value, ignoring leading, trailing and repeated whitespace.
+         */
+        ExactCheck: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "exact";
+            /** Value */
+            value: string;
+        };
         /** FetchOut */
         FetchOut: {
             /** Currency */
@@ -1577,6 +1640,21 @@ export interface components {
             mean: number;
             /** Prompts */
             prompts: number;
+        };
+        /**
+         * JsonSchemaCheck
+         * @description The answer (optionally inside one ``` fence) is JSON that matches the schema.
+         */
+        JsonSchemaCheck: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "json_schema";
+            /** Schema */
+            schema: {
+                [key: string]: unknown;
+            };
         };
         /** JudgePreview */
         JudgePreview: {
@@ -1859,6 +1937,69 @@ export interface components {
             /** Prompts */
             prompts: number;
         };
+        /** NotContainsCheck */
+        NotContainsCheck: {
+            /**
+             * Case Sensitive
+             * @default false
+             */
+            case_sensitive: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "not_contains";
+            /** Value */
+            value: string;
+        };
+        /**
+         * NumberCheck
+         * @description A number in the answer (the last one, or any) is within ``tolerance`` of ``value``.
+         */
+        "NumberCheck-Input": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "number";
+            /**
+             * Tolerance
+             * @default 0
+             */
+            tolerance: number | string;
+            /** Value */
+            value: number | string;
+            /**
+             * Which
+             * @default last
+             * @enum {string}
+             */
+            which: "last" | "any";
+        };
+        /**
+         * NumberCheck
+         * @description A number in the answer (the last one, or any) is within ``tolerance`` of ``value``.
+         */
+        "NumberCheck-Output": {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "number";
+            /**
+             * Tolerance
+             * @default 0
+             */
+            tolerance: string;
+            /** Value */
+            value: string;
+            /**
+             * Which
+             * @default last
+             * @enum {string}
+             */
+            which: "last" | "any";
+        };
         /** OrderEntry */
         OrderEntry: {
             /** Attempt Id */
@@ -2068,6 +2209,13 @@ export interface components {
         };
         /** PromptSpec */
         PromptSpec: {
+            /** Checks */
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
             /** Suite Prompt Id */
             suite_prompt_id?: string | null;
             /**
@@ -2411,6 +2559,10 @@ export interface components {
             budget: components["schemas"]["BudgetOut"] | null;
             /** Candidates */
             candidates: components["schemas"]["RunCandidateOut"][];
+            /** Check Results */
+            check_results?: {
+                [key: string]: components["schemas"]["CheckOutcome"];
+            };
             combined_cost: components["schemas"]["CostTotal"];
             /** Evaluation Counts */
             evaluation_counts?: {
@@ -2449,12 +2601,19 @@ export interface components {
         };
         /** RunPrompt */
         RunPrompt: {
+            /** Checks */
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Content Hash */
             content_hash: string;
             /** Id */
             id: string;
             /** Position */
             position: number;
+            /**
+             * Reference Text
+             * @default
+             */
+            reference_text: string;
             /** Run Id */
             run_id: string;
             /** Suite Prompt Id */
@@ -2668,10 +2827,17 @@ export interface components {
         };
         /** SuitePrompt */
         SuitePrompt: {
+            /** Checks */
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Output"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Id */
             id: string;
             /** Position */
             position: number;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
             /** System */
             system: string;
             /** Title */
@@ -2681,8 +2847,15 @@ export interface components {
         };
         /** SuitePromptIn */
         SuitePromptIn: {
+            /** Checks */
+            checks?: (components["schemas"]["ContainsCheck"] | components["schemas"]["NotContainsCheck"] | components["schemas"]["ExactCheck"] | components["schemas"]["NumberCheck-Input"] | components["schemas"]["JsonSchemaCheck"])[];
             /** Id */
             id?: string | null;
+            /**
+             * Reference
+             * @default
+             */
+            reference: string;
             /**
              * System
              * @default

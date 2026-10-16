@@ -16,6 +16,13 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
   the same judge (profile, deployment, model, API style, structured output) and the same settings that
   change how it scores. If the cells that would be averaged mix bases, judge averages and win rates
   are withheld (with a note) instead of averaging different scales or judges together.
+- Checks: the share of answers that pass every deterministic check of their prompt, averaged per cell
+  like the scores, over the matched cells whose prompts have checks. It is a separate score source,
+  never blended with manual or judge scores. An answer a check could not be evaluated on counts as
+  unknown, not as a fail.
+- A cell repeated across runs must have been graded the same way: a cell whose runs used different
+  checks is left out of the checks metric, and one whose runs gave the judge different reference
+  answers is left out of the judge metrics, each with a note.
 - Failed attempts whose provider reported usage were billed; they are counted per candidate because
   their cost is in the run totals but, as failures, not in the averages.
 - Failures are counted over all cells, for finished attempts only.
@@ -26,6 +33,7 @@ A cell is (prompt content hash, trial index). Candidates are identified by their
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -33,6 +41,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
+from ..grading.checks import checks_json, run_checks
 from ..judging.service import JudgeService, judge_scores, latest_attempts, latest_evaluations
 from ..money import Money, add, div
 from ..repos.endpoints import NotFoundError
@@ -94,6 +103,7 @@ class BaselineDifferences(BaseModel):
     manual: Difference | None
     judge: Difference | None
     win_rate: Difference | None
+    checks: Difference | None = None
 
 
 class ComparisonCandidate(BaseModel):
@@ -131,6 +141,9 @@ class ComparisonCandidate(BaseModel):
     win_cells: int
     win_rate: float | None
     custom_rates: bool
+    avg_checks_passed: float | None = None
+    checks_cells: int = 0
+    checks_interval: Interval | None = None
     cost_interval: MoneyInterval | None = None
     latency_interval: Interval | None = None
     manual_interval: Interval | None = None
@@ -160,6 +173,8 @@ class Comparison(BaseModel):
     prompts_matched: int
     interval_min_prompts: int
     baseline: str | None
+    # Whether any compared prompt has deterministic checks (the table shows the column only then).
+    has_checks: bool = False
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -173,6 +188,9 @@ class _Observation:
     manual: int | None
     judge: float | None
     judge_basis: str | None = None
+    checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None if unknown
+    checks_fp: str | None = None  # which checks graded it (None: its prompt has no checks)
+    reference_fp: str = ""  # which reference answer the judge saw for its prompt ("" for none)
 
 
 @dataclass
@@ -203,6 +221,7 @@ class _CellValues:
     reasoning: dict[Cell, float] = field(default_factory=dict)
     manual: dict[Cell, float] = field(default_factory=dict)
     judge: dict[Cell, float] = field(default_factory=dict)
+    checks: dict[Cell, float] = field(default_factory=dict)
     wins: dict[Cell, list[float]] = field(default_factory=dict)
     judge_bases: dict[Cell, set[str]] = field(default_factory=dict)
     win_bases: dict[Cell, set[str]] = field(default_factory=dict)
@@ -279,6 +298,7 @@ def _cell_values(observations: list[_Observation], currency: str, into: _CellVal
         (into.reasoning, _usage_values(observations, "reasoning")),
         (into.manual, [float(o.manual) for o in observations if o.manual is not None]),
         (into.judge, [o.judge for o in observations if o.judge is not None]),
+        (into.checks, [o.checks for o in observations if o.checks is not None]),
     ):
         mean = _mean(values)
         if mean is not None:
@@ -305,6 +325,14 @@ def judge_basis(evaluation: Evaluation) -> str:
     return "|".join(parts)
 
 
+def _fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16] if text else ""
+
+
+def _checks_value(passed: bool | None) -> float | None:
+    return None if passed is None else float(passed)
+
+
 def _win_outcome(evaluation: Evaluation, mine: list[str]) -> float:
     if evaluation.preferred == "tie":
         return len(mine) / len(evaluation.candidates)
@@ -320,6 +348,7 @@ class _PromptValues:
     manual: dict[str, float]
     judge: dict[str, float]
     wins: dict[str, float]
+    checks: dict[str, float]
 
 
 def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[str, _PromptValues]:
@@ -328,6 +357,7 @@ def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[
     manual_cells = _common_cells({k: v.manual for k, v in values.items()}, matched)
     judge_cells = _common_cells({k: v.judge for k, v in values.items()}, matched)
     win_cells = _common_cells({k: v.wins for k, v in values.items()}, matched)
+    check_cells = _common_cells({k: v.checks for k, v in values.items()}, matched)
     result: dict[str, _PromptValues] = {}
     for key, value in values.items():
         result[key] = _PromptValues(
@@ -336,6 +366,7 @@ def _prompt_values(values: dict[str, _CellValues], matched: list[Cell]) -> dict[
             manual=stats.prompt_means(stats.by_prompt(value.manual, manual_cells, float)),
             judge=stats.prompt_means(stats.by_prompt(value.judge, judge_cells, float)),
             wins=stats.prompt_means(stats.by_prompt(value.wins, win_cells, lambda o: sum(o) / len(o))),
+            checks=stats.prompt_means(stats.by_prompt(value.checks, check_cells, float)),
         )
     return result
 
@@ -356,6 +387,7 @@ def _intervals(prompt: _PromptValues, judge_scale: tuple[float, float] | None) -
         "manual_interval": _interval(prompt.manual, floor=1.0, ceiling=5.0),
         "judge_interval": _interval(prompt.judge, floor=scale_floor, ceiling=scale_ceiling),
         "win_rate_interval": _interval(prompt.wins, floor=0.0, ceiling=1.0),
+        "checks_interval": _interval(prompt.checks, floor=0.0, ceiling=1.0),
     }
 
 
@@ -378,6 +410,7 @@ def _differences(candidate: _PromptValues, baseline: _PromptValues) -> BaselineD
         manual=_difference(candidate.manual, baseline.manual),
         judge=_difference(candidate.judge, baseline.judge),
         win_rate=_difference(candidate.wins, baseline.wins),
+        checks=_difference(candidate.checks, baseline.checks),
     )
 
 
@@ -399,10 +432,11 @@ class ComparisonService:
         self, run_ids: list[str], candidate_keys: list[str] | None, currency: str, baseline: str | None = None
     ) -> Comparison:
         notes: list[str] = []
+        has_checks = False
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
-        evaluations: list[tuple[Cell, Evaluation, dict[str, str]]] = []
+        evaluations: list[tuple[Cell, Evaluation, dict[str, str], str]] = []
         order: list[str] = []
         for run_id in dict.fromkeys(run_ids):
             run = self.runs.get(run_id)
@@ -441,14 +475,23 @@ class ComparisonService:
                     manual=score.score if score else None,
                     judge=judged.weighted_overall if judged else None,
                     judge_basis=bases.get(judged.evaluation_id) if judged else None,
+                    checks=(
+                        _checks_value(run_checks(prompt.checks, attempt.output_text or "").passed)
+                        if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
+                        else None
+                    ),
+                    checks_fp=_fingerprint(checks_json(prompt.checks)) if prompt.checks else None,
+                    reference_fp=_fingerprint(prompt.reference_text),
                 )
+                has_checks = has_checks or bool(prompt.checks)
                 item.slots.append(observation)
                 item.by_cell.setdefault(cell, []).append(observation)
             key_by_candidate = {c.id: c.candidate_key for c in candidates.values()}
             for evaluation in latest_evaluations(run_evaluations).values():
                 prompt = prompts[evaluation.prompt_id]
                 labels = {c.label: key_by_candidate[c.candidate_id] for c in evaluation.candidates}
-                evaluations.append(((prompt.content_hash, evaluation.trial_index), evaluation, labels))
+                cell_key = (prompt.content_hash, evaluation.trial_index)
+                evaluations.append((cell_key, evaluation, labels, _fingerprint(prompt.reference_text)))
 
         if not data:
             raise NotFoundError("No attempts found for the selected runs and candidates.")
@@ -463,8 +506,44 @@ class ComparisonService:
                 observations = [o for o in data[key].by_cell[cell] if o.attempt.status is AttemptStatus.SUCCEEDED]
                 _cell_values(observations, currency, values[key], cell)
         matched_set = set(matched)
-        for cell, evaluation, labels in evaluations:
-            if cell not in matched_set or len(evaluation.candidates) < 2 or evaluation.preferred is None:
+        # A cell repeated across runs must have been graded the same way (see the module docstring).
+        check_fps: dict[Cell, set[str | None]] = {}
+        reference_fps: dict[Cell, set[str]] = {}
+        for key in order:
+            for cell in matched:
+                for o in data[key].by_cell[cell]:
+                    if o.attempt.status is AttemptStatus.SUCCEEDED:
+                        check_fps.setdefault(cell, set()).add(o.checks_fp)  # None: that run had no checks
+                    if o.judge is not None:
+                        reference_fps.setdefault(cell, set()).add(o.reference_fp)
+        for cell, _evaluation, _labels, reference_fp in evaluations:
+            if cell in matched_set:
+                reference_fps.setdefault(cell, set()).add(reference_fp)
+        mixed_checks = {cell for cell, fps in check_fps.items() if len(fps) > 1 and fps != {None}}
+        mixed_references = {cell for cell, fps in reference_fps.items() if len(fps) > 1}
+        for value in values.values():
+            for cell in mixed_checks:
+                value.checks.pop(cell, None)
+            for cell in mixed_references:
+                value.judge.pop(cell, None)
+                value.judge_bases.pop(cell, None)
+        if mixed_checks:
+            many = len(mixed_checks) != 1
+            notes.append(
+                f"{len(mixed_checks)} cell{'s' if many else ''} used different checks in different runs and "
+                f"{'are' if many else 'is'} left out of the checks pass rate."
+            )
+        if mixed_references:
+            many = len(mixed_references) != 1
+            notes.append(
+                f"{len(mixed_references)} cell{'s' if many else ''} {'were' if many else 'was'} judged with different "
+                f"reference answers in different runs and {'are' if many else 'is'} left out of the judge scores and "
+                "win rates."
+            )
+        for cell, evaluation, labels, _reference_fp in evaluations:
+            if cell not in matched_set or cell in mixed_references:
+                continue
+            if len(evaluation.candidates) < 2 or evaluation.preferred is None:
                 continue
             for key in dict.fromkeys(labels.values()):
                 if key in values:
@@ -496,6 +575,7 @@ class ComparisonService:
         reasoning = _common_values({k: v.reasoning for k, v in values.items()}, matched)
         manual_scores = _common_values({k: v.manual for k, v in values.items()}, matched)
         judge_scores_by_key = _common_values({k: v.judge for k, v in values.items()}, matched)
+        checks_by_key = _common_values({k: v.checks for k, v in values.items()}, matched)
         wins = _common_values({k: v.wins for k, v in values.items()}, matched)
         prompt_values = _prompt_values(values, matched)
         judge_scale = self._judge_scale(basis_rubrics[next(iter(judge_bases))]) if len(judge_bases) == 1 else None
@@ -549,6 +629,8 @@ class ComparisonService:
                     win_cells=len(win_means),
                     win_rate=judge_wins / len(win_means) if win_means else None,
                     custom_rates=any(c.custom for c in costs[key]),
+                    avg_checks_passed=_mean(checks_by_key[key]),
+                    checks_cells=len(checks_by_key[key]),
                     **_intervals(prompt_values[key], judge_scale),
                     vs_baseline=(
                         _differences(prompt_values[key], prompt_values[baseline])
@@ -576,6 +658,7 @@ class ComparisonService:
             prompts_matched=len({cell[0] for cell in matched}),
             interval_min_prompts=stats.MIN_PROMPTS,
             baseline=baseline,
+            has_checks=has_checks,
             candidates=results,
             cells=cell_rows,
             notes=notes,

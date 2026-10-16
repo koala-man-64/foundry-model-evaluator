@@ -7,11 +7,12 @@ import sqlite3
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..credentials.redaction import REGISTRY, sanitize_error_text
 from ..db.database import Database
 from ..domain.generation import GenerationSettings
+from ..grading.checks import Check, checks_json, load_checks
 from ..money import Money, to_decimal, to_text
 from ..pricing.calculator import CostEstimate
 from ..timeutil import iso_now, new_id
@@ -33,6 +34,8 @@ class RunPrompt(BaseModel):
     system_text: str
     user_text: str
     content_hash: str
+    reference_text: str = ""
+    checks: list[Check] = Field(default_factory=list)
 
 
 class RunCandidate(BaseModel):
@@ -139,6 +142,8 @@ def _prompt(row: sqlite3.Row) -> RunPrompt:
         system_text=row["system_text"],
         user_text=row["user_text"],
         content_hash=row["content_hash"],
+        reference_text=row["reference_text"],
+        checks=load_checks(row["checks_json"]),
     )
 
 
@@ -371,12 +376,25 @@ class RunRepository:
         user_text: str,
         content_hash: str,
         suite_prompt_id: str | None = None,
+        reference_text: str = "",
+        checks: list[Check] | None = None,
     ) -> str:
         prompt_id = new_id()
         conn.execute(
             "INSERT INTO run_prompts (id, run_id, position, suite_prompt_id, title, system_text, user_text,"
-            " content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (prompt_id, run_id, position, suite_prompt_id, title, system_text, user_text, content_hash),
+            " content_hash, reference_text, checks_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                prompt_id,
+                run_id,
+                position,
+                suite_prompt_id,
+                title,
+                system_text,
+                user_text,
+                content_hash,
+                reference_text,
+                checks_json(checks or []),
+            ),
         )
         return prompt_id
 

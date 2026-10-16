@@ -44,6 +44,7 @@ function candidate(label: string, partial: Partial<ComparisonCandidate> = {}): C
     win_cells: 0,
     win_rate: null,
     custom_rates: false,
+    checks_cells: 0,
     ...partial,
   }
 }
@@ -58,6 +59,7 @@ function comparison(judgeBases: number, candidates: ComparisonCandidate[]): Comp
     prompts_matched: 1,
     interval_min_prompts: 3,
     baseline: null,
+    has_checks: false,
     candidates,
     cells: [],
     notes: [],
@@ -104,6 +106,22 @@ describe('ComparisonTable', () => {
     expect(screen.getByTestId('interval-note')).toHaveTextContent('4 matched prompts')
     // avg_cost 0.002 equals the per-prompt mean; no extra wording. A differing mean is named.
     expect(row).not.toHaveTextContent('around the per-prompt mean $0.002')
+  })
+
+  it('shows the checks pass rate only when the prompts have checks', () => {
+    state.data = {
+      ...comparison(1, [candidate('A', { avg_checks_passed: 0.75, checks_cells: 4 })]),
+      has_checks: true,
+    }
+    render(<ComparisonTable runIds={['r1']} charts={false} />)
+    expect(screen.getByRole('columnheader', { name: 'Checks passed' })).toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /^A/ })).toHaveTextContent('75%4 cells checked')
+  })
+
+  it('has no checks column without checks', () => {
+    state.data = comparison(1, [candidate('A')])
+    render(<ComparisonTable runIds={['r1']} charts={false} />)
+    expect(screen.queryByRole('columnheader', { name: 'Checks passed' })).not.toBeInTheDocument()
   })
 
   it('shows judge scores and the billed failures otherwise', () => {
