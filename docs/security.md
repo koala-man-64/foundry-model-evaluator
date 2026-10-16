@@ -16,6 +16,8 @@ without an explicit action.
 - **Accidental spending.** Nothing is retried automatically, double clicks don't pay twice, an optional budget limits
   each run, and unfinished work is never replayed after a restart.
 - **Synced folders.** Prompts, answers and history stay out of OneDrive and out of the repository.
+- **Exports.** Run exports leave out keys, the endpoint URL, request bodies and raw responses, and leave out prompt and
+  answer text unless you ask for it. In CSV files, text that could run as a spreadsheet formula is prefixed with `'`.
 
 **What it trusts:** other programs running as your Windows user. They can read your Credential Manager entries and the
 app's data folder, and they can call the local API (there is no per-launch token). Use the app on a machine and

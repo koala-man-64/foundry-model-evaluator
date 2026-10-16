@@ -604,6 +604,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Run
+         * @description Download a run as JSON or CSV. Read-only: stored data and frozen price snapshots only.
+         */
+        get: operations["export_run_api_runs__run_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/runs/{run_id}/progress": {
         parameters: {
             query?: never;
@@ -4147,6 +4167,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JudgePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_run_api_runs__run_id__export_get: {
+        parameters: {
+            query?: {
+                format?: "json" | "csv";
+                include_text?: boolean;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A file download: the run as an fme.run.v1 JSON document, or one CSV row per attempt. Request bodies, raw responses and keys are never included; prompt and answer text only with include_text=true. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/csv": unknown;
                 };
             };
             /** @description Validation Error */

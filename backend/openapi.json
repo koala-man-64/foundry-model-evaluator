@@ -8004,6 +8004,70 @@
         ]
       }
     },
+    "/api/runs/{run_id}/export": {
+      "get": {
+        "description": "Download a run as JSON or CSV. Read-only: stored data and frozen price snapshots only.",
+        "operationId": "export_run_api_runs__run_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "enum": [
+                "json",
+                "csv"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_text",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Text",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {},
+              "text/csv": {}
+            },
+            "description": "A file download: the run as an fme.run.v1 JSON document, or one CSV row per attempt. Request bodies, raw responses and keys are never included; prompt and answer text only with include_text=true."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Run",
+        "tags": [
+          "exports"
+        ]
+      }
+    },
     "/api/runs/{run_id}/progress": {
       "get": {
         "operationId": "get_progress_api_runs__run_id__progress_get",
