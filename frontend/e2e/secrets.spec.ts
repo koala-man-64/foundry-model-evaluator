@@ -64,5 +64,10 @@ test('the API key never reaches the page, browser storage, API responses, the da
   const files = filesUnder(dataDir)
   expect(files.some((file) => file.endsWith('.sqlite3'))).toBe(true)
   expect(files.some((file) => file.includes('logs'))).toBe(true)
-  for (const file of files) expect(readFileSync(file).includes(CANARY), file).toBe(false)
+  for (const file of files) {
+    // Windows denies reads of the live PID lock. Keep scanning every other file,
+    // including the database, WAL/SHM and logs; unexpected read errors still fail.
+    if (file === join(dataDir, 'instance.lock')) continue
+    expect(readFileSync(file).includes(CANARY), file).toBe(false)
+  }
 })

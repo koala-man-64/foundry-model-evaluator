@@ -47,11 +47,20 @@ jobs:
           diff -u openapi.json "$RUNNER_TEMP/openapi.json"
 
   frontend:
-    name: Frontend and browser tests (Linux)
-    runs-on: ubuntu-latest
+    name: Frontend and browser tests (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: Linux
+          - os: windows-latest
+            platform: Windows
     defaults:
       run:
+        shell: bash
         working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -86,7 +95,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.platform }}
           path: |
             frontend/playwright-report
             frontend/test-results
