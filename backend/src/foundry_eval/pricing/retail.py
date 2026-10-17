@@ -118,6 +118,16 @@ def raw_json(item: RetailItem) -> str:
     return json.dumps(_jsonable(item.raw), sort_keys=True)
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port or {"https": 443, "http": 80}.get(scheme)
+    except ValueError:  # a malformed port is never the same origin
+        return (scheme, "", -1)
+    return (scheme, (parts.hostname or "").lower(), port)
+
+
 class RetailPricesClient:
     def __init__(
         self,
@@ -141,8 +151,9 @@ class RetailPricesClient:
         return f"{self.base_url}?{query}"
 
     def _same_origin(self, url: str) -> bool:
-        a, b = urlsplit(url), urlsplit(self.base_url)
-        return (a.scheme, a.netloc) == (b.scheme, b.netloc)
+        """Scheme, host and effective port must match. The live API writes ``prices.azure.com:443`` in its
+        next-page links, which is the same origin as ``prices.azure.com``; any other host, scheme or port is not."""
+        return _origin(url) == _origin(self.base_url)
 
     async def fetch(
         self,

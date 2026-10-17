@@ -96,14 +96,42 @@ async def test_client_fails_when_every_filter_fails():
         await client.fetch("eastus2", "USD")
 
 
-async def test_client_refuses_next_link_to_other_host():
+@pytest.mark.parametrize(
+    "next_link",
+    [
+        "https://evil.example/next",
+        "http://prices.azure.com/api/retail/prices?$skip=100",  # another scheme
+        "https://prices.azure.com:8443/api/retail/prices?$skip=100",  # another port
+        "https://prices.azure.com.evil.example/api/retail/prices",
+        "https://prices.azure.com:notaport/api/retail/prices",
+    ],
+)
+async def test_client_refuses_next_link_to_other_origin(next_link):
     def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, content=b'{"Items": [], "NextPageLink": "https://evil.example/next"}')
+        body = '{"Items": [], "NextPageLink": "' + next_link + '"}'
+        return httpx2.Response(200, content=body.encode())
 
     with pytest.raises(RetailPricesError, match="another host"):
         await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch(
             "eastus2", "USD", ["serviceName eq 'X'"]
         )
+
+
+async def test_client_follows_the_live_apis_explicit_default_port():
+    # The live API writes its next-page links as https://prices.azure.com:443/..., the same origin.
+    seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(str(request.url))
+        if "skip" not in str(request.url):
+            link = "https://prices.azure.com:443/api/retail/prices?api-version=2023-01-01-preview&$skip=1000"
+            return httpx2.Response(200, content=('{"Items": [], "NextPageLink": "' + link + '"}').encode())
+        return httpx2.Response(200, content=b'{"Items": [], "NextPageLink": null}')
+
+    items, warnings = await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch(
+        "eastus2", "USD", ["serviceName eq 'X'"]
+    )
+    assert items == [] and warnings == [] and len(seen) == 2
 
 
 @pytest.mark.parametrize("region", ["East US 2", "eastus2'; drop", "", "x"])

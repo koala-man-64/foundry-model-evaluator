@@ -131,7 +131,7 @@ JSON as strings, and rounded only for display.
   unknown units are rejected. If a unit in the meter name disagrees with `unitOfMeasure`, the match is ambiguous.
 - **Residual matcher.** It normalizes each meter name and strips the recognized attribute tokens:
   - direction: `Inp`, `Outp`, `Opt`
-  - cache: `cached Inp`, `Cd Wr`
+  - cache: `cached Inp`, `Cd Inp`, `Cd Wr`
   - deployment type: `glbl`/`Gl`, `DZ`, `rgnl`
   - processing tier: `Std`, `PP` (no token means Standard)
   - context tier: `ShortCo`, `LongCo` (no token means a single tier)

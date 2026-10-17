@@ -45,20 +45,27 @@ automatically. Prices are shown per 1M tokens, together with the price as quoted
 Azure meter names are not consistent. Two examples:
 
 ```
-5.6 terra ShortCo cached Inp Std Gl        gpt-4o-0806-Outp-glbl        FW DeepSeek V4.1 Flash Inp DZ
+5.6 terra ShortCo Cd Inp Std Gl 1M Tokens        4.3 Cached Inp Glbl Tokens        4.1 mini pp cd Inp Gl Tokens
 ```
 
 So the matcher first removes the words it understands:
 
 - direction: `Inp`, `Outp`, `Opt`
-- cache: `cached`, `Cd Wr`
+- cache: `Cd Inp` or `Cached Inp` (cached input, a cache read), `Cd Wr` (cache write)
 - deployment type: `glbl`/`Gl`, `DZ`, `rgnl`
 - processing tier: `Std`, `PP`
 - context tier: `ShortCo`, `LongCo`
 - `Text`, and unit words
 
 What remains must equal the profile's **meter terms**, ignoring case, spaces and hyphens. For example, `5.6 terra`
-matches the terra meters but not `5.6 luna`, and `gpt-4o` does not match `gpt-4o mini`.
+matches the terra meters but not `5.6 luna`, and `gpt-4o` does not match `gpt-4o mini`. A word the matcher does not
+know stays in the remainder, so variants such as `54 mini Inp Flex Gl` or `4.3 Inp Glbl L Tokens` never stand in for
+the plain meters.
+
+The matcher is tested against real meter names captured from the live Retail Prices API
+(`backend/tests/fixtures/retail/live_eastus2_2026-10-16.json`), not only against hand-made examples. The live API's
+next-page links name the default port (`prices.azure.com:443`), which counts as the same origin; any other host,
+scheme or port is refused.
 
 A meter is never matched automatically when any of these holds:
 
