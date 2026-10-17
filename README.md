@@ -223,3 +223,7 @@ cd frontend && npm ci && npm run typecheck && npx vitest run && npm run build &&
 The browser tests start the app on a temporary data folder against a mock Foundry server
 (`python -m foundry_eval.devtools.mock_foundry`), so they make no paid calls. For UI work, run
 `uv run foundry-eval serve --dev` together with `npm run dev`.
+
+## Licence
+
+[MIT](LICENSE). Copyright (c) 2026 koala-man-64.

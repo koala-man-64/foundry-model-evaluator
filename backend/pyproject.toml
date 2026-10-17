@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local web app comparing Microsoft Foundry models on quality, token usage, latency, and estimated token cost."
 
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = "MIT"
 dependencies = [
     "anthropic>=1.14,<2",
     "fastapi>=0.143,<1",
