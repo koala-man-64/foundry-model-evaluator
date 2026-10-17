@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...domain.generation import validate_settings
 from ...domain.suites import Suite, SuiteIn
 from ...execution.runs import CandidateSpec, PromptSpec, RunPreview, RunRequest, candidate_labels
+from ...grading.checks import pattern_problems
 from ...money import MoneyInput
 from ...repos.endpoints import NotFoundError
 from ..deps import IdempotencyKey, ServicesDep
@@ -34,7 +35,7 @@ class SuiteArchiveIn(BaseModel):
 
 
 def _validate(services: ServicesDep, payload: SuiteIn) -> None:
-    problems: list[str] = []
+    problems = pattern_problems([p.checks for p in payload.prompts])
     for index, candidate in enumerate(payload.candidates, start=1):
         try:
             profile = services.profiles.get(candidate.profile_id)

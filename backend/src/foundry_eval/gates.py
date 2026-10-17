@@ -24,11 +24,12 @@ pass rate, a higher cost per answer) and the end of the interval nearest zero li
 tolerance, so with a zero tolerance the verdict alone decides. Without an interval (every paired
 difference the same) the difference itself is used. "Cannot tell" passes: there is data, and no
 regression shows. A metric with data but no verdict (too few paired prompts, values on one side
-only, judges that are not comparable, or the same bad difference on too few prompts for the sign
-test) is inconclusive and fails the gate, because missing evidence is not a pass. A metric neither
-run has (no judge, no checks) does not apply, but a gate on which no chosen metric applies, or whose
-comparison failed, fails. The baseline must stay frozen: a new run that measured the baseline
-candidate again would be pooled into it, so that fails as well.
+only, judges that are not comparable, the same bad difference on too few prompts for the sign test,
+or answers the comparison has not pattern-checked yet) is inconclusive and fails the gate, because
+missing evidence is not a pass. A metric neither run has (no judge, no checks) does not apply, but a
+gate on which no chosen metric applies, or whose comparison failed, fails. The baseline must stay
+frozen: a new run that measured the baseline candidate again would be pooled into it, so that fails
+as well.
 """
 
 from __future__ import annotations
@@ -218,6 +219,10 @@ def _number(value: Any) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
 
+def _answers(count: int) -> str:
+    return f"{count} answer{'' if count == 1 else 's'}"
+
+
 def assess_metric(
     metric: str,
     difference: dict[str, Any] | None,
@@ -229,12 +234,43 @@ def assess_metric(
     comparison: dict[str, Any],
 ) -> dict[str, Any]:
     """One metric of one candidate against the baseline: regressed, ok, inconclusive or not applicable."""
+    result = _assess_metric(
+        metric,
+        difference,
+        tolerance=tolerance,
+        applies=applies,
+        candidate=candidate,
+        baseline=baseline,
+        comparison=comparison,
+    )
+    unknown = comparison.get("checks_unknown", 0)
+    if metric == "checks" and unknown and result["status"] != "not_applicable":
+        verb = "is" if unknown == 1 else "are"
+        result["reason"] = f"{result['reason']}; {_answers(unknown)} could not be checked and {verb} left out"
+    return result
+
+
+def _assess_metric(
+    metric: str,
+    difference: dict[str, Any] | None,
+    *,
+    tolerance: Decimal,
+    applies: bool,
+    candidate: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    comparison: dict[str, Any],
+) -> dict[str, Any]:
     name = _NAMES[metric]
     result: dict[str, Any] = {"status": "inconclusive", "tolerance": to_text(tolerance)}
     if difference is not None:
         result.update({k: difference[k] for k in ("verdict", "mean", "low", "high", "prompts")})
     if metric == "judge" and comparison.get("judge_bases", 0) > 1:
         result["reason"] = "the judge scores come from different rubric versions, judges or judge settings"
+        return result
+    pending = comparison.get("checks_not_checked", 0)
+    if metric == "checks" and pending:
+        verb = "was" if pending == 1 else "were"
+        result["reason"] = f"{_answers(pending)} {verb} not pattern-checked yet; run the gate again to continue"
         return result
     if difference is None:
         mine = candidate.get(_CELLS[metric], 0)

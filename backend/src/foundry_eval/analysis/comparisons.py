@@ -48,7 +48,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..grading.checks import checks_json, run_checks
+from ..grading.checks import RegexBudget, checks_json, run_checks
 from ..judging.aggregate import RunJudgements, Slot, judge_run, win_outcome
 from ..judging.service import JudgeService, latest_attempts
 from ..money import Money, add, div
@@ -198,6 +198,11 @@ class Comparison(BaseModel):
     baseline: str | None
     # Whether any compared prompt has deterministic checks (the table shows the column only then).
     has_checks: bool = False
+    # Answers left out of the checks pass rate because this view ran out of time for pattern checks
+    # before checking them. Viewing again continues; a baseline gate is inconclusive until this is 0.
+    checks_not_checked: int = 0
+    # Answers left out of the checks pass rate because a check could not be evaluated on them.
+    checks_unknown: int = 0
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -214,6 +219,7 @@ class _Observation:
     judge_evaluation_ids: tuple[str, ...] = ()
     judge_spread: float | None = None
     checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None if unknown
+    checks_state: str | None = None  # why checks is None: "not_checked" (not checked yet) or "unknown"
     checks_fp: str | None = None  # which checks graded it (None: its prompt has no checks)
     reference_fp: str = ""  # which reference answer the judge saw for its prompt ("" for none)
 
@@ -479,6 +485,7 @@ class ComparisonService:
     ) -> Comparison:
         notes: list[str] = []
         has_checks = False
+        regex_budget = RegexBudget()
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
@@ -519,6 +526,14 @@ class ComparisonService:
                 item.runs.add(run.id)
                 score = manual.get(attempt.id)
                 answer, slot_judgement = answers.get(attempt.id, (None, None))
+                checked = (
+                    run_checks(prompt.checks, attempt.output_text or "", budget=regex_budget)
+                    if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
+                    else None
+                )
+                checks_state = None
+                if checked is not None and checked.passed is None:
+                    checks_state = "not_checked" if any(r.not_checked for r in checked.results) else "unknown"
                 observation = _Observation(
                     attempt=attempt,
                     run_id=run.id,
@@ -528,11 +543,8 @@ class ComparisonService:
                     judge_basis=slot_judgement.basis if slot_judgement else None,
                     judge_evaluation_ids=answer.evaluation_ids if answer else (),
                     judge_spread=answer.spread if answer else None,
-                    checks=(
-                        _checks_value(run_checks(prompt.checks, attempt.output_text or "").passed)
-                        if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
-                        else None
-                    ),
+                    checks=_checks_value(checked.passed) if checked is not None else None,
+                    checks_state=checks_state,
                     checks_fp=_fingerprint(checks_json(prompt.checks)) if prompt.checks else None,
                     reference_fp=_fingerprint(prompt.reference_text),
                 )
@@ -599,6 +611,31 @@ class ComparisonService:
             notes.append(
                 f"{len(mixed_checks)} cell{'s' if many else ''} used different checks in different runs and "
                 f"{'are' if many else 'is'} left out of the checks pass rate."
+            )
+        # Only answers the checks pass rate would otherwise use: succeeded, in matched cells graded one way.
+        unchecked = [
+            o.checks_state
+            for key in order
+            for cell in matched
+            if cell not in mixed_checks
+            for o in data[key].by_cell[cell]
+            if o.attempt.status is AttemptStatus.SUCCEEDED and o.checks_state is not None
+        ]
+        checks_not_checked = unchecked.count("not_checked")
+        checks_unknown = unchecked.count("unknown")
+        if checks_not_checked:
+            many = checks_not_checked != 1
+            notes.append(
+                f"{checks_not_checked} {'answers were' if many else 'answer was'} not pattern-checked yet (this view "
+                "ran out of time for pattern checks, or the pattern checker was busy) and "
+                f"{'are' if many else 'is'} left out of the checks pass rate; reload to continue."
+            )
+        if checks_unknown:
+            many = checks_unknown != 1
+            notes.append(
+                f"{checks_unknown} {'answers' if many else 'answer'} could not be checked (a check could not be "
+                f"evaluated on {'them' if many else 'it'}) and {'are' if many else 'is'} left out of the checks pass "
+                "rate."
             )
         if mixed_references:
             many = len(mixed_references) != 1
@@ -763,6 +800,8 @@ class ComparisonService:
             interval_min_prompts=stats.MIN_PROMPTS,
             baseline=baseline,
             has_checks=has_checks,
+            checks_not_checked=checks_not_checked,
+            checks_unknown=checks_unknown,
             candidates=results,
             cells=cell_rows,
             notes=notes,

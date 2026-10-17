@@ -8,7 +8,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from foundry_eval.grading.checks import load_checks, run_checks
+from foundry_eval.grading.checks import RegexBudget, load_checks, run_checks
 from foundry_eval.types import ApiStyle
 from tests.api_support import create_endpoint, create_profile, set_manual, wait_for_run
 
@@ -72,7 +72,7 @@ def test_checks_and_references_flow_through_runs_and_comparisons(client):
         assert attempt["status"] == "succeeded"
         outcome = detail["check_results"][attempt["id"]]
         checks = load_checks(json.dumps(prompts[attempt["prompt_id"]]["checks"]))
-        assert outcome == run_checks(checks, attempt["output_text"]).model_dump()
+        assert outcome == run_checks(checks, attempt["output_text"], budget=RegexBudget()).model_dump()
         assert outcome["results"][0]["passed"] is True
         expected[attempt["candidate_id"]] = outcome["passed"]
 
@@ -139,7 +139,8 @@ def test_the_judge_sees_the_reference_and_cells_ignore_reference_edits(client):
 @pytest.mark.parametrize(
     "check",
     [
-        {"kind": "regex", "pattern": "(a+)+$"},
+        {"kind": "regex", "pattern": "[unclosed"},
+        {"kind": "regex", "pattern": "(((a{200}){200}){200})"},  # takes seconds and gigabytes to compile
         {"kind": "json_schema", "schema": {"minimum": "5"}},
         {"kind": "json_schema", "schema": {"type": "object", "oneOf": []}},
         {"kind": "number", "value": 0.5},
@@ -152,6 +153,103 @@ def test_a_check_that_cannot_run_is_refused_when_the_suite_is_saved(client, chec
     payload = suite_payload([profile["id"]])
     payload["prompts"][0]["checks"] = [check]
     assert client.post("/api/suites", json=payload).status_code == 422
+
+
+def test_pattern_checks_run_in_the_worker_and_reads_never_vet(client, monkeypatch):
+    from foundry_eval.api.routes import exports
+    from foundry_eval.grading import checks as module
+
+    endpoint = create_endpoint(client)
+    profiles = [chat_profile(client, endpoint["id"], name) for name in ("deepseek-alpha", "deepseek-beta")]
+    payload = suite_payload([p["id"] for p in profiles])
+    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": r"\bYou asked: \S"}]  # "... You asked: ..."
+    created = client.post("/api/suites", json=payload)
+    assert created.status_code == 201, created.text
+    suite = created.json()
+    detail = run_suite(client, suite["id"], "idem-gt-pattern")
+    run_id = detail["run"]["id"]
+
+    ops: list[str] = []
+    ask = module._Worker.ask
+
+    def recording(self, request, wait):
+        ops.append(request["op"])
+        return ask(self, request, wait)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a pattern ran in the app process")
+
+    monkeypatch.setattr(module._Worker, "ask", recording)
+    for name in ("compile", "search", "match", "fullmatch", "finditer", "findall"):
+        monkeypatch.setattr(module.regex, name, refuse)
+    module._results.clear()
+    detail = client.get(f"/api/runs/{run_id}").json()
+    first = next(p["id"] for p in detail["prompts"] if p["position"] == 0)
+    outcomes = [detail["check_results"][a["id"]] for a in detail["attempts"] if a["prompt_id"] == first]
+    found = {"kind": "regex", "passed": True, "detail": "pattern found", "not_checked": False}
+    assert outcomes and all(o["results"][0] == found for o in outcomes)
+    assert client.get(f"/api/suites/{suite['id']}").status_code == 200
+    assert client.get("/api/comparisons", params={"run_id": run_id}).json()["has_checks"] is True
+    assert ops and set(ops) == {"search"}  # reads search in the worker and never vet
+
+    # A comparison that runs out of time for pattern checks says how many answers it left out.
+    monkeypatch.setattr(module, "REGEX_BUDGET", 0.0)
+    module._results.clear()
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    first_answers = sum(1 for a in detail["attempts"] if a["prompt_id"] == first)
+    assert comparison["checks_not_checked"] == first_answers
+    assert any("not pattern-checked yet" in note for note in comparison["notes"])
+    monkeypatch.setattr(module, "REGEX_BUDGET", 2.0)
+
+    # An export that runs out of time for pattern checks says which results it did not check.
+    monkeypatch.setattr(exports, "EXPORT_REGEX_BUDGET", 0.0)
+    module._results.clear()
+    plain = client.get(f"/api/runs/{run_id}/export", params={"format": "json"}).json()
+    unchecked = [a["checks"] for a in plain["attempts"] if a["prompt_id"] == first]
+    assert unchecked and all(c["passed"] is None and c["results"][0]["not_checked"] for c in unchecked)
+    csv_text = client.get(f"/api/runs/{run_id}/export", params={"format": "csv"}).text
+    header, *rows = csv_text.strip().split("\n")
+    columns = header.split(",")
+    cells = {r.split(",")[columns.index("checks_passed")] for r in rows if first in r}
+    assert cells == {"not_checked"}
+
+
+def test_a_bad_pattern_in_an_ad_hoc_run_is_refused_before_anything_runs(client):
+    endpoint = create_endpoint(client)
+    profile = chat_profile(client, endpoint["id"], "deepseek-pattern-preview")
+    request = {
+        "prompts": [{"user": "Hello there", "checks": [{"kind": "regex", "pattern": "(unclosed"}]}],
+        "candidates": [{"profile_id": profile["id"]}],
+    }
+    preview = client.post("/api/runs/preview", json=request).json()
+    assert preview["ok"] is False
+    assert any(e.startswith("Prompt 1, check 1: invalid regular expression") for e in preview["errors"])
+    response = client.post("/api/runs", json=request, headers={"Idempotency-Key": "idem-gt-bad-pattern"})
+    assert response.status_code == 422 and "invalid regular expression" in response.text
+    # Saying the prompt comes from a suite does not skip vetting.
+    request["prompts"][0]["suite_prompt_id"] = "not-a-suite-prompt"
+    preview = client.post("/api/runs/preview", json=request).json()
+    assert any("invalid regular expression" in e for e in preview["errors"])
+
+
+def test_a_busy_pattern_checker_asks_the_client_to_try_again(client, monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    endpoint = create_endpoint(client)
+    profile = chat_profile(client, endpoint["id"], "deepseek-pattern-busy")
+    payload = suite_payload([profile["id"]])
+    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": r"busy-\d+-new"}]
+    monkeypatch.setattr(module, "VET_SECONDS", 0.3)
+    assert module._checker._lock.acquire(timeout=5)  # another request has the worker
+    try:
+        response = client.post("/api/suites", json=payload)
+    finally:
+        module._checker._lock.release()
+    assert response.status_code == 503 and response.headers["Retry-After"] == "5"
+    assert response.json()["detail"] == (
+        "Pattern checks could not be vetted now: the pattern checker is busy. Try again in 5 s."
+    )
+    assert client.post("/api/suites", json=payload).status_code == 201  # nothing was remembered
 
 
 def test_ad_hoc_runs_accept_references_and_checks(client):

@@ -11,6 +11,7 @@ describe('check drafts', () => {
       { kind: 'contains', value: 'Paris', case_sensitive: true },
       { kind: 'not_contains', value: 'as an AI', case_sensitive: false },
       { kind: 'exact', value: '42', case_sensitive: false },
+      { kind: 'regex', pattern: '^[0-9]{4}$', case_sensitive: true },
       { kind: 'number', value: '3.14', tolerance: '0.01', which: 'any' },
       { kind: 'json_schema', schema: { type: 'object', required: ['answer'] } },
     ]
@@ -20,6 +21,7 @@ describe('check drafts', () => {
   it('says what to fix instead of saving a check that cannot run', () => {
     const draft = (patch: Partial<CheckDraft>): CheckDraft => ({ ...emptyCheck(), ...patch })
     expect(draftToCheck(draft({ kind: 'contains', text: '' }))).toBe('enter the text to look for')
+    expect(draftToCheck(draft({ kind: 'regex', text: '' }))).toBe('enter a pattern')
     expect(draftToCheck(draft({ kind: 'number', text: 'forty' }))).toMatch(/enter a number/)
     expect(draftToCheck(draft({ kind: 'number', text: '4', tolerance: '-1' }))).toMatch(/tolerance/)
     expect(draftToCheck(draft({ kind: 'json_schema', text: '{nope' }))).toBe('the schema is not valid JSON')

@@ -14,7 +14,7 @@ from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.generation import GenerationSettings, SettingIssue
 from ..domain.profiles import Endpoint, ModelProfile
-from ..grading.checks import MAX_CHECKS, Check
+from ..grading.checks import MAX_CHECKS, Check, PatternCheckerUnavailable, pattern_problems
 from ..money import Money, MoneyInput, add, mul, to_text
 from ..pricing.ratecard import CATEGORY_LABELS, RateStatus
 from ..pricing.service import PricingService
@@ -157,8 +157,14 @@ class RunService:
         # Checks an automatic-judging configuration (set by the judge service).
         self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
-    def preview(self, request: RunRequest) -> RunPreview:
-        errors: list[str] = []
+    def preview(self, request: RunRequest, *, pattern_errors: list[str] | None = None) -> RunPreview:
+        if pattern_errors is not None:
+            errors = list(pattern_errors)
+        else:
+            try:
+                errors = pattern_problems([p.checks for p in request.prompts])
+            except PatternCheckerUnavailable as exc:
+                errors = [f"Pattern checks could not be vetted now: {exc}; try again shortly."]
         warnings: list[str] = []
         profiles: dict[str, ModelProfile] = {}
         endpoints: dict[str, Endpoint] = {}
@@ -257,7 +263,8 @@ class RunService:
         existing = self.runs.by_idempotency_key(idempotency_key)
         if existing is not None:
             return existing.id, False
-        preview = self.preview(request)
+        # Vetted here so that a busy checker is answered 503, not refused as a problem with the run.
+        preview = self.preview(request, pattern_errors=pattern_problems([p.checks for p in request.prompts]))
         if not preview.ok:
             raise RunValidationError(preview)
         profiles = {s.profile_id: self.profiles.get(s.profile_id) for s in request.candidates}

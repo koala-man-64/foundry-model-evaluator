@@ -248,6 +248,7 @@ shown, so they cost nothing and always agree with the checks frozen into the run
 |---|---|
 | Contains / Does not contain | the answer contains (or does not contain) the text, case-insensitive unless set |
 | Equals | the whole answer equals the text, ignoring leading, trailing and repeated whitespace |
+| Matches pattern | the regular expression is found in the answer (case-insensitive unless set), within a time limit |
 | Number | the last number in the answer (or any number) is within the tolerance of the value; `1,234.5` reads as 1234.5 |
 | JSON schema | the answer, optionally inside one ``` fence, is JSON that matches the schema |
 
@@ -269,9 +270,29 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   the wrong type (such as `"minimum": "5"`), `NaN` or `Infinity` in `const` or `enum`, or a number given as a float.
   A schema is limited to 500 sub-schemas, 200 `enum` values and 200 `properties` per object, so checking a large answer
   stays fast.
-- There is **no regular-expression check**. Python's regular expressions have no time limit and block the whole app
-  while they run, so one slow pattern on one answer would freeze every view of a run whose checks are frozen. A
-  pattern check needs a regex engine with a time budget, which is a new dependency.
+- **Matches pattern** uses the `regex` package, not Python's `re`, because `re` has no time limit. Patterns are up
+  to 500 characters; lookarounds and backreferences work. A pattern can come from an imported prompt set and an
+  answer from any model, and a hostile pattern can take seconds and gigabytes to compile (`(((a{200}){200}){200})`)
+  or overflow the native stack while searching. So the app never compiles or searches a pattern itself; one worker
+  process does both, with its memory capped at 512 MB (a Windows job object, or `RLIMIT_AS` on Linux). Limits:
+  - When a suite is saved or a run is created, each new pattern is compiled once in the worker. A pattern that is
+    invalid, needs too much memory or takes more than 0.1 s of CPU time to compile is refused with a message
+    (ordinary patterns take well under a millisecond; on Windows the measurement moves in 15.6 ms steps, so the
+    limit is approximate). An invalid pattern is refused until the app restarts; one refused on timing is checked
+    again after a minute and one refused for memory after 10 minutes, in case the machine itself was busy or short
+    of memory. Vetting one save stops after 10 s. When the worker is busy with other requests or cannot start, the
+    save is answered 503 with `Retry-After` instead.
+  - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only. A worker that stops
+    answering, overflows its stack or reaches its memory cap is replaced, and only that answer is affected.
+  - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. Requests take
+    turns with the worker; a view does not wait for its turn longer than it has left, and a save not longer than its
+    10 s. When a view runs out, the remaining pattern checks show **not checked yet** (unknown). Results are kept per
+    answer and pattern while the app runs, so reloading continues where the last view stopped. A **could not check**
+    is tried again after 10 minutes, in case the machine was only busy.
+  - Nothing not checked yet is passed off as complete. The run page says **not checked yet** with "reload to
+    continue"; a comparison leaves those answers out of the checks pass rate with a note saying how many (and,
+    separately, how many could not be checked); a baseline gate on the checks pass rate is inconclusive while any
+    answer is not checked yet; an export marks them `not_checked`.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was

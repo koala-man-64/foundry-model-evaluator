@@ -4,13 +4,14 @@ version = "0.1.0"
 description = "Local web app comparing Microsoft Foundry models on quality, token usage, latency, and estimated token cost."
 
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = "MIT"
 dependencies = [
     "anthropic>=1.14,<2",
     "fastapi>=0.143,<1",
     "httpx2>=2.13,<3",
     "keyring>=25.7,<26",
     "pydantic>=2.14,<3",
+    "regex>=2025.9,<2028",
     "truststore>=0.10",
     "uvicorn>=0.54,<1",
 ]
@@ -26,6 +27,7 @@ dev = [
     "pytest-asyncio>=1.4",
     "pytest-cov>=6",
     "ruff>=0.17",
+    "types-regex>=2025.9",
 ]
 
 [build-system]

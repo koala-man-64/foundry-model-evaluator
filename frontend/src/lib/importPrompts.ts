@@ -22,12 +22,13 @@ export interface ImportResult {
 
 const MAX_PROMPTS = 500
 const KNOWN_FIELDS = new Set(['title', 'system', 'user', 'prompt', 'reference', 'expected', 'checks'])
-const CHECK_KINDS = new Set(['contains', 'not_contains', 'exact', 'number', 'json_schema'])
+const CHECK_KINDS = new Set(['contains', 'not_contains', 'exact', 'regex', 'number', 'json_schema'])
 
 const CHECK_FIELDS: Record<string, string[]> = {
   contains: ['kind', 'value', 'case_sensitive'],
   not_contains: ['kind', 'value', 'case_sensitive'],
   exact: ['kind', 'value', 'case_sensitive'],
+  regex: ['kind', 'pattern', 'case_sensitive'],
   number: ['kind', 'value', 'tolerance', 'which'],
   json_schema: ['kind', 'schema'],
 }
@@ -51,6 +52,8 @@ export function checkProblem(check: unknown): string | null {
     if (!exactNumber(c.value)) return 'give a number check value as a string (or a whole number), so it stays exact'
     if ('tolerance' in c && !exactNumber(c.tolerance)) return 'give the tolerance as a string (or a whole number)'
     if ('which' in c && c.which !== 'last' && c.which !== 'any') return 'which must be "last" or "any"'
+  } else if (c.kind === 'regex') {
+    if (typeof c.pattern !== 'string' || !c.pattern) return 'a regex check needs a pattern'
   } else if (typeof c.value !== 'string' || !c.value) {
     return `a ${c.kind} check needs a text value`
   }

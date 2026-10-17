@@ -1127,6 +1127,11 @@
             "title": "Kind",
             "type": "string"
           },
+          "not_checked": {
+            "default": false,
+            "title": "Not Checked",
+            "type": "boolean"
+          },
           "passed": {
             "anyOf": [
               {
@@ -1180,6 +1185,16 @@
           },
           "cells_total": {
             "title": "Cells Total",
+            "type": "integer"
+          },
+          "checks_not_checked": {
+            "default": 0,
+            "title": "Checks Not Checked",
+            "type": "integer"
+          },
+          "checks_unknown": {
+            "default": 0,
+            "title": "Checks Unknown",
             "type": "integer"
           },
           "currency": {
@@ -4526,7 +4541,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Input"
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -4539,6 +4555,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Input"
@@ -5250,6 +5269,34 @@
         "title": "RefreshOut",
         "type": "object"
       },
+      "RegexCheck": {
+        "additionalProperties": false,
+        "description": "The pattern is found in the answer (``regex`` syntax). A pattern is refused when saved if it is invalid\nor too slow to compile, and each search has a time limit.",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "regex",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pattern": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Pattern",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "pattern"
+        ],
+        "title": "RegexCheck",
+        "type": "object"
+      },
       "RetryOut": {
         "properties": {
           "attempt_ids": {
@@ -5788,7 +5835,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Output"
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -5801,6 +5849,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Output"
@@ -6465,7 +6516,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Output"
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -6478,6 +6530,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Output"
@@ -6537,7 +6592,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Input"
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -6550,6 +6606,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Input"

@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import math
+import sys
 from decimal import Decimal
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from foundry_eval.grading.checks import Check, run_check, run_checks, schema_error
+from foundry_eval.grading.checks import (
+    Check,
+    CheckResult,
+    RegexBudget,
+    load_checks,
+    pattern_problems,
+    run_check,
+    run_checks,
+    schema_error,
+)
 
 CHECK = TypeAdapter(Check)
 
@@ -92,7 +103,7 @@ def test_json_schema_check_round_trips_with_its_alias():
 @pytest.mark.parametrize(
     "definition",
     [
-        {"kind": "regex", "pattern": "x"},  # no regex check: Python's re has no time limit
+        {"kind": "regex", "pattern": "x" * 501},
         {"kind": "number", "value": "1e999999"},
         {"kind": "json_schema", "schema": {"minItems": "a"}},
         {"kind": "json_schema", "schema": {"minimum": "5"}},
@@ -130,9 +141,9 @@ def test_checks_that_cannot_run_as_written_are_refused(definition):
 
 def test_an_answer_passes_only_when_every_check_passes():
     checks = [check(kind="contains", value="Paris"), check(kind="not_contains", value="London")]
-    outcome = run_checks(checks, "Paris, not London")
+    outcome = run_checks(checks, "Paris, not London", budget=RegexBudget())
     assert not outcome.passed and [r.passed for r in outcome.results] == [True, False]
-    assert run_checks(checks, "Paris").passed
+    assert run_checks(checks, "Paris", budget=RegexBudget()).passed
 
 
 def test_const_and_enum_keep_json_types_apart():
@@ -146,9 +157,13 @@ def test_a_check_that_cannot_be_evaluated_is_unknown_not_a_failure_or_an_error()
     huge = '{"n": ' + "9" * 5000 + "}"  # valid JSON, but past Python's integer-digits limit
     result = run_check(check(kind="json_schema", schema={"type": "object"}), huge)
     assert result.passed is None and "could not be evaluated" in result.detail
-    outcome = run_checks([check(kind="contains", value="9"), check(kind="json_schema", schema={})], huge)
+    outcome = run_checks(
+        [check(kind="contains", value="9"), check(kind="json_schema", schema={})], huge, budget=RegexBudget()
+    )
     assert outcome.passed is None
-    failing = run_checks([check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge)
+    failing = run_checks(
+        [check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge, budget=RegexBudget()
+    )
     assert failing.passed is False  # a known failure wins over an unknown
 
 
@@ -179,3 +194,317 @@ def test_large_schemas_stay_fast_on_large_answers():
 def test_schema_numbers_compare_exactly():
     assert schema_error(Decimal("0.1"), {"type": "number", "maximum": 0.1}) is None
     assert schema_error(Decimal("0.30000000000000004"), {"maximum": 0.3}) is not None
+
+
+# --- pattern checks ----------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("definition", "answer", "passed"),
+    [
+        ({"kind": "regex", "pattern": r"^\d{4}-\d{2}-\d{2}$"}, "2026-10-16", True),
+        ({"kind": "regex", "pattern": r"\bparis\b"}, "It is Paris.", True),
+        ({"kind": "regex", "pattern": r"\bparis\b", "case_sensitive": True}, "It is Paris.", False),
+        ({"kind": "regex", "pattern": r"(?<=total: )\d+"}, "total: 42", True),  # lookbehind is supported
+    ],
+)
+def test_pattern_checks(definition, answer, passed):
+    assert run_check(check(**definition), answer).passed is passed
+
+
+@pytest.fixture
+def no_cached_results():
+    from foundry_eval.grading import checks as module
+
+    module._results.clear()
+    yield
+    module._results.clear()
+
+
+SLOW = r"(a|aa)+$"  # catastrophic backtracking on a long run of a's
+
+
+def hostile(n: int) -> str:
+    return "a" * (60 + n) + "!"
+
+
+def problems(*patterns: str) -> list[str]:
+    return pattern_problems([[check(kind="regex", pattern=p) for p in patterns]])
+
+
+def test_invalid_patterns_are_refused_with_the_reason():
+    assert problems(r"\d+-valid") == []
+    [problem] = problems("(")
+    assert problem.startswith("Prompt 1, check 1: invalid regular expression: missing )")
+
+
+@pytest.mark.parametrize("pattern", ["(((a{200}){200}){200})", "((((a{100}){100}){100}){100})", "x{99999999}"])
+def test_a_pattern_slow_or_hungry_to_compile_is_refused_without_freezing_the_app(pattern):
+    import itertools
+    import threading
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    module._refused.clear()
+    problems(r"\d+-warm-up")  # the worker's start-up is not what is measured
+    beats: list[float] = []
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.is_set():
+            beats.append(time.perf_counter())
+            time.sleep(0.01)
+
+    thread = threading.Thread(target=heartbeat)
+    thread.start()
+    start = time.perf_counter()
+    try:
+        [problem] = problems(pattern)
+    finally:
+        stop.set()
+        thread.join()
+    assert "compile" in problem or "too large or complex" in problem
+    # Refused within the worker's grace time, plus a new worker's start-up; the app's own threads kept running.
+    assert time.perf_counter() - start < module.COMPILE_LIMIT + module.WORKER_GRACE + 3
+    assert max(b - a for a, b in itertools.pairwise(beats)) < 0.5
+    # Refusals are remembered, so saving the same pattern again costs nothing; new patterns still work.
+    start = time.perf_counter()
+    assert problems(pattern) == [problem]
+    assert time.perf_counter() - start < 0.05
+    assert problems(r"\d+-after") == []
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS does not enforce RLIMIT_AS")
+def test_the_pattern_checker_caps_its_memory():
+    from foundry_eval.grading import checks as module
+
+    assert problems(r"\d+-memory-cap") == []  # a new pattern, so the worker runs
+    worker = module._checker._worker
+    assert worker is not None and worker.memory_limited
+
+
+def test_a_pattern_deep_enough_to_overflow_a_stack_never_takes_the_app_down(no_cached_results):
+    deep = "(?:ab|cd){41900}"  # overflowed a request thread's stack when it was compiled in the app
+    if not problems(deep):  # vetted with a small stack; if it still passes, searching it must answer
+        assert run_check(check(kind="regex", pattern=deep), "abcd" * 10).passed in (False, None)
+    assert run_check(check(kind="regex", pattern="ab"), "xaby").passed is True
+
+
+def test_reading_never_compiles_or_searches_a_pattern_in_this_process(monkeypatch, no_cached_results):
+    from foundry_eval.grading import checks as module
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a pattern ran in the app process")
+
+    for name in ("compile", "search", "match", "fullmatch", "finditer", "findall"):
+        monkeypatch.setattr(module.regex, name, refuse)
+    [loaded] = load_checks('[{"kind": "regex", "pattern": "stored-[0-9]+"}]')
+    assert run_checks([loaded], "a stored-42 answer", budget=RegexBudget()).passed is True
+
+
+def test_a_slow_answer_is_unknown_once_and_does_not_affect_other_answers(no_cached_results):
+    import time
+
+    slow = check(kind="regex", pattern=SLOW)
+    first = run_check(slow, hostile(0))
+    assert first.passed is None and "took longer than" in first.detail
+    start = time.perf_counter()
+    again = run_checks([slow], hostile(0), budget=RegexBudget())
+    assert again.results[0] == first and time.perf_counter() - start < 0.05  # cached per answer
+    assert run_check(slow, "aaa").passed is True  # no pattern-wide skip from one hostile answer
+
+
+def test_could_not_check_is_tried_again_later(monkeypatch, no_cached_results):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "RETRY_AFTER", 0.0)
+    slow = check(kind="regex", pattern=SLOW)
+    assert run_check(slow, hostile(1)).passed is None
+    start = time.perf_counter()
+    assert run_check(slow, hostile(1)).passed is None
+    assert time.perf_counter() - start >= module.REGEX_TIMEOUT * 0.8  # searched again, not served from the cache
+
+
+def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    run_check(slow, "warm-up")  # the worker's start-up is not what is measured
+    budget = RegexBudget(0.6)
+    start = time.perf_counter()
+    details = [run_checks([slow], hostile(n), budget=budget).results[0].detail for n in range(20)]
+    # At most one search runs past the budget.
+    assert time.perf_counter() - start < 0.6 + module.REGEX_TIMEOUT + 0.4
+    assert details[-1] == module.NOT_CHECKED_YET
+    assert sum("took longer than" in d for d in details) <= 4
+    # What was not checked is not cached as an outcome: the next view continues with it.
+    resumed = run_checks([slow], hostile(19), budget=RegexBudget())
+    assert "took longer than" in resumed.results[0].detail
+
+
+def test_a_busy_checker_never_holds_a_view_or_a_save_for_long(no_cached_results, monkeypatch):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "VET_SECONDS", 0.3)
+    slow = check(kind="regex", pattern=SLOW)
+    assert module._checker._lock.acquire(timeout=5)  # another request has the worker
+    try:
+        start = time.perf_counter()
+        outcome = run_checks([slow], "busy-aaa", budget=RegexBudget(0.4))
+        assert outcome.results[0].not_checked and "busy" in outcome.results[0].detail
+        assert time.perf_counter() - start < 0.4 + 0.3
+        start = time.perf_counter()
+        with pytest.raises(module.PatternCheckerBusy):  # the save is answered 503, not refused
+            problems(r"\d+-busy")
+        assert time.perf_counter() - start < 0.3 + 0.3
+    finally:
+        module._checker._lock.release()
+    # Neither was remembered: both work once the worker is free.
+    assert run_checks([slow], "busy-aaa", budget=RegexBudget()).passed is True
+    assert problems(r"\d+-busy") == []
+
+
+def test_a_busy_view_says_so_on_every_answer_it_leaves_unchecked(no_cached_results):
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    budget = RegexBudget(0.2)
+    assert module._checker._lock.acquire(timeout=5)
+    try:
+        details = [run_checks([slow], f"busy-{n}-aaa", budget=budget).results[0].detail for n in range(3)]
+    finally:
+        module._checker._lock.release()
+    assert all("the pattern checker is busy" in d for d in details), details
+
+
+def test_a_worker_that_cannot_finish_starting_is_stopped_and_backs_off(monkeypatch):
+    import threading
+
+    from foundry_eval.grading import checks as module
+
+    module._checker.close()
+    stopped: list[int] = []
+    stop = module._Worker.stop
+    start = threading.Thread.start
+
+    def failing_start(self):
+        if self.name == "pattern-checker-reader":
+            raise RuntimeError("can't start new thread")
+        return start(self)
+
+    def recording_stop(self):
+        stopped.append(self.process.pid)
+        return stop(self)
+
+    monkeypatch.setattr(threading.Thread, "start", failing_start)
+    monkeypatch.setattr(module._Worker, "stop", recording_stop)
+    monkeypatch.setattr(module._checker, "_failed_start", -math.inf)
+    with pytest.raises(module.PatternCheckerUnavailable):
+        problems(r"\d+-no-reader")
+    assert len(stopped) == 1  # the process it started was stopped, not left running
+    with pytest.raises(module.PatternCheckerUnavailable):
+        problems(r"\d+-no-reader-again")
+    assert len(stopped) == 1  # backing off: no second process
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(module._checker, "_failed_start", -math.inf)
+    assert problems(r"\d+-reader-back") == []
+
+
+def test_a_worker_that_stops_once_while_vetting_gets_another_try(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    ask = module._Worker.ask
+    calls: list[str] = []
+
+    def flaky(self, request, wait):
+        calls.append(request["op"])
+        return None if len(calls) == 1 else ask(self, request, wait)
+
+    monkeypatch.setattr(module._Worker, "ask", flaky)
+    assert problems(r"\d+-second-try") == []
+    assert calls == ["vet", "vet"]
+
+
+def test_refusals_that_depend_on_timing_are_vetted_again_later(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    ask = module._Worker.ask
+    vets: list[str] = []
+
+    def counting(self, request, wait):
+        vets.append(request["pattern"])
+        reply = ask(self, request, wait)
+        if request["pattern"].endswith("-timing"):
+            return {"seconds": 1.0}  # as on a busy machine
+        if request["pattern"].endswith("-memory"):
+            return {"memory": True}  # as on a machine short of memory
+        return reply
+
+    monkeypatch.setattr(module._Worker, "ask", counting)
+    monkeypatch.setattr(module, "REFUSAL_RETRY", 0.0)
+    monkeypatch.setattr(module, "MEMORY_REFUSAL_RETRY", 0.0)
+    for _ in range(2):
+        [problem] = problems(r"\d+-timing")
+        assert "takes too long to compile" in problem
+        [problem] = problems(r"\d+-memory")
+        assert "needs more than 512 MB" in problem
+    # Vetted again, not refused from memory.
+    assert vets == [r"\d+-timing", r"\d+-memory", r"\d+-timing", r"\d+-memory"]
+    # An invalid pattern is refused for good.
+    for _ in range(2):
+        [problem] = problems("(invalid-for-good")
+        assert "invalid regular expression" in problem
+    assert vets.count("(invalid-for-good") == 1
+
+
+def test_remembered_patterns_are_bounded(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "_accepted", module._Recent(3))
+    assert problems(*(rf"\d+-bounded-{i}" for i in range(5))) == []
+    assert len(module._accepted) == 3
+
+
+def test_a_worker_that_dies_mid_search_fails_only_that_answer_and_is_replaced(no_cached_results):
+    import threading
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    assert run_check(slow, "aaa").passed is True
+    worker = module._checker._worker
+    assert worker is not None
+    results: list[CheckResult] = []
+    thread = threading.Thread(target=lambda: results.append(run_check(slow, hostile(5))))
+    thread.start()
+    time.sleep(0.1)  # the search is running (it takes the full time limit)
+    worker.process.kill()
+    thread.join()
+    assert results[0].passed is None and "stopped" in results[0].detail
+    assert run_check(slow, "aa").passed is True  # a new worker took over
+    assert module._checker._worker is not worker
+
+
+def test_a_failure_after_asking_never_mixes_up_replies(no_cached_results, monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    assert run_check(check(kind="regex", pattern="warm"), "warm").passed is True  # the worker is running
+    reply = module._Worker._reply
+    calls: list[float] = []
+
+    def failing_once(self, wait):
+        calls.append(wait)
+        if len(calls) == 1:
+            raise ValueError("lost while waiting")  # the worker still answers this request
+        return reply(self, wait)
+
+    monkeypatch.setattr(module._Worker, "_reply", failing_once)
+    assert run_check(check(kind="regex", pattern="a"), "a").passed is None  # could not be evaluated
+    # The next request must get its own answer, not the late one for "a" in "a".
+    assert run_check(check(kind="regex", pattern="a"), "b").passed is False

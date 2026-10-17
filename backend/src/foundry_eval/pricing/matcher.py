@@ -119,6 +119,12 @@ def classify(item: CatalogItem, api_style: ApiStyle) -> MeterInfo:
         if word == "cd" and following in _READ:
             read, i = True, i + 2
             continue
+        if word == "cd" and following in _INPUT:
+            # "Cd Inp" / "cd Inp": cached input, which is how live meters name cache reads
+            # (for example "5.6 terra ShortCo Cd Inp Std Gl 1M Tokens"; only some say "Cached Inp").
+            cached, i = True, i + 2
+            directions.add("input")
+            continue
         if word == "data" and following == "zone":
             deployments.add("data_zone")
             i += 2

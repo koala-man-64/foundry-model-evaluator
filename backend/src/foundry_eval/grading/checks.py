@@ -11,23 +11,64 @@ Nothing is silently ignored or guessed:
 - A check that still cannot be evaluated on a particular answer reports ``passed = None``, "could not be
   evaluated". That is unknown, not a fail and not a pass, and it never raises.
 
-There is deliberately no regular-expression check: Python's ``re`` has no time limit and holds the
-interpreter lock, so a single slow pattern on one answer would freeze the app on every read of a run
-whose checks are frozen. Adding one needs a regex engine with a time budget (a new dependency).
+Pattern checks use the ``regex`` package, which can stop a search after a time limit. Patterns and
+answers are untrusted (a pattern may come from an imported prompt set, an answer from any model), and
+compiling or searching a hostile pattern can take minutes, gigabytes or the whole native stack. So this
+process never compiles or searches a pattern itself; one worker process does both:
+
+- When a check is saved, ``pattern_problems`` compiles its pattern once in the worker, on a thread with a
+  sixteenth of the stack searches get. A pattern that is invalid, needs more than ``WORKER_MEMORY`` or
+  takes longer than ``COMPILE_LIMIT`` is refused.
+- Each search has a time limit (``REGEX_TIMEOUT``). A worker that stops answering, overflows its stack or
+  reaches its memory cap (``WORKER_MEMORY``) is replaced, and only that answer reports "could not check".
+- Each view shares a ``RegexBudget``. Once it is spent, or when the worker is busy with other requests for
+  longer than what is left of it, the remaining pattern checks report "not checked yet". Results are cached
+  per answer and pattern (a "could not check" for ``RETRY_AFTER`` seconds only), so the next view continues
+  where this one stopped, and a slow answer never affects other answers.
 """
 
 from __future__ import annotations
 
+import atexit
+import contextlib
+import hashlib
 import json
+import logging
 import math
+import queue
 import re
+import subprocess
+import sys
+import threading
+import time
 import unicodedata
+from collections import OrderedDict
+from collections.abc import Sequence
 from decimal import Decimal, DecimalException, localcontext
 from typing import Annotated, Any, Literal
 
+import regex
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 MAX_CHECKS = 10
+MAX_PATTERN = 500
+# CPU seconds to compile a new pattern in the worker; ordinary ones take under a millisecond. Windows measures
+# thread CPU time in 15.6 ms steps, so the limit is several steps.
+COMPILE_LIMIT = 0.1
+WORKER_GRACE = 1.0  # seconds past its own limits before a worker that has not answered is replaced
+WORKER_START_WAIT = 10.0
+WORKER_MEMORY = 512 * 1024 * 1024  # bytes; past this the worker fails the pattern instead of growing
+VET_SECONDS = 10.0  # for vetting the new patterns of one save
+REGEX_TIMEOUT = 0.25  # seconds per search
+REGEX_BUDGET = 2.0  # seconds of pattern checks per view
+EXPORT_REGEX_BUDGET = 30.0  # an export is one explicit download, so it may take longer than a page view
+RETRY_AFTER = 600.0  # seconds before a pattern that could not be checked on an answer is tried again
+MAX_CACHED_RESULTS = 50_000
+MAX_ACCEPTED = 50_000  # vetted patterns remembered, by digest
+MAX_WAITING = 8  # requests that may wait for a turn with the worker at once
+START_BACKOFF = 30.0  # seconds before starting the worker again after it failed to start
+REFUSAL_RETRY = 60.0  # seconds a refusal that depends on timing is remembered (invalid ones: until restart)
+MEMORY_REFUSAL_RETRY = 600.0  # and one for memory, in case the machine itself was short of memory
 MAX_SCHEMA_DEPTH = 20
 # Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
 MAX_SCHEMA_NODES = 500
@@ -36,6 +77,8 @@ MAX_PROPERTIES = 200
 # Numbers whose exponent is further from zero than this are not read: they cannot be a plausible answer
 # and exact arithmetic on them is expensive or overflows.
 MAX_EXPONENT = 1000
+
+log = logging.getLogger(__name__)
 
 # A sign belongs to a number only when it does not follow a word character or a dot, so "10-20" reads
 # as 10 and 20, not 10 and -20. Decimals may start with a dot (".5"). U+2212 is normalised to "-".
@@ -66,6 +109,19 @@ class ExactCheck(_Check):
     kind: Literal["exact"]
     value: str = Field(min_length=1, max_length=20_000)
     case_sensitive: bool = False
+
+
+class RegexCheck(_Check):
+    """The pattern is found in the answer (``regex`` syntax). A pattern is refused when saved if it is invalid
+    or too slow to compile, and each search has a time limit."""
+
+    kind: Literal["regex"]
+    pattern: str = Field(min_length=1, max_length=MAX_PATTERN)
+    case_sensitive: bool = False
+
+    @property
+    def flags(self) -> int:
+        return 0 if self.case_sensitive else int(regex.IGNORECASE)
 
 
 class NumberCheck(_Check):
@@ -108,16 +164,21 @@ class JsonSchemaCheck(_Check):
 
 
 Check = Annotated[
-    ContainsCheck | NotContainsCheck | ExactCheck | NumberCheck | JsonSchemaCheck,
+    ContainsCheck | NotContainsCheck | ExactCheck | RegexCheck | NumberCheck | JsonSchemaCheck,
     Field(discriminator="kind"),
 ]
 
 
 class CheckResult(BaseModel):
+    model_config = ConfigDict(frozen=True)  # pattern results are cached and shared between views
+
     kind: str
     # None: the check could not be evaluated on this answer (unknown, neither pass nor fail).
     passed: bool | None
     detail: str
+    # True when the view ran out of time for pattern checks before this one ran (``passed`` is None).
+    # Results are kept, so viewing again continues.
+    not_checked: bool = False
 
 
 class CheckOutcome(BaseModel):
@@ -355,7 +416,462 @@ def _json_answer(text: str) -> Any:
     return json.loads(body, parse_float=Decimal, parse_constant=_no_constants)
 
 
-def _evaluate(check: Check, text: str) -> CheckResult:
+# --- pattern checks ----------------------------------------------------------------------------------
+# The worker process. It compiles and searches patterns for this process, which never does either itself.
+_WORKER_CODE = r"""
+import json, sys, threading, time
+
+import regex
+
+VET_STACK = 1024 * 1024
+SEARCH_STACK = 16 * 1024 * 1024
+KEEP = 8
+compiled = {}
+
+
+def limit_memory(limit):
+    # An allocation past the limit fails in this process (MemoryError) instead of exhausting the machine.
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class Basic(ctypes.Structure):
+                _fields_ = [
+                    ("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD),
+                ]
+
+            class Extended(ctypes.Structure):
+                _fields_ = [
+                    ("BasicLimitInformation", Basic),
+                    ("IoInfo", ctypes.c_uint64 * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t),
+                ]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+            kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+            kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            job = kernel32.CreateJobObjectW(None, None)
+            info = Extended()
+            info.BasicLimitInformation.LimitFlags = 0x100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            info.ProcessMemoryLimit = limit
+            return bool(
+                job
+                and kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
+                and kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess())
+            )
+        import resource
+
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        return True
+    except Exception:
+        return False
+
+
+def pattern(text, flags):
+    key = (text, flags)
+    found = compiled.pop(key, None)
+    if found is None:
+        found = regex.compile(text, flags, cache_pattern=False)
+    compiled[key] = found
+    while len(compiled) > KEEP:
+        del compiled[next(iter(compiled))]
+    return found
+
+
+def vet(request):
+    # CPU time of this thread, so a busy machine does not make a pattern look slow. A first measurement a little
+    # over the limit is taken again; one far over it is not.
+    limit = request["limit"]
+    best = None
+    for _ in range(2):
+        start = time.thread_time()
+        regex.compile(request["pattern"], request["flags"], cache_pattern=False)
+        took = time.thread_time() - start
+        best = took if best is None else min(best, took)
+        if best <= limit or best > 4 * limit:
+            break
+    return {"seconds": best}
+
+
+def search(request):
+    found = pattern(request["pattern"], request["flags"]).search(request["text"], timeout=request["timeout"])
+    return {"found": found is not None}
+
+
+def handle(work, request, stack):
+    reply = {}
+
+    def run():
+        for attempt in (1, 2):
+            try:
+                reply.update(work(request))
+            except TimeoutError:
+                reply["timeout"] = True
+            except regex.error as exc:
+                reply["error"] = "invalid regular expression: " + str(exc)
+            except MemoryError:
+                compiled.clear()  # the patterns kept for searches may be what filled the cap: try once without
+                if attempt == 1:
+                    continue
+                reply["memory"] = True
+            except Exception as exc:
+                reply["error"] = "the pattern cannot be used (" + type(exc).__name__ + ")"
+            return
+
+    # A pattern is vetted with a sixteenth of the stack searches get, so one that passes is far from overflowing.
+    threading.stack_size(stack)
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    return reply
+
+
+print(json.dumps({"ready": True, "memory_limited": limit_memory(int(sys.argv[1]))}), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    work, stack = (vet, VET_STACK) if request["op"] == "vet" else (search, SEARCH_STACK)
+    print(json.dumps(handle(work, request, stack)), flush=True)
+"""
+
+
+class PatternCheckerUnavailable(Exception):
+    """The worker process could not be started."""
+
+
+class PatternCheckerBusy(PatternCheckerUnavailable):
+    """No turn with the worker came in time, or too many requests are already waiting for one."""
+
+
+class _Worker:
+    """One worker process. Requests and replies are JSON lines; a reader thread queues the replies."""
+
+    def __init__(self) -> None:
+        try:
+            # A fixed command: this interpreter and the code above. Patterns and answers go over stdin as JSON.
+            self.process = subprocess.Popen(  # noqa: S603
+                [sys.executable, "-I", "-c", _WORKER_CODE, str(WORKER_MEMORY)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError as exc:
+            log.warning("The pattern checker did not start: %s", exc)
+            raise PatternCheckerUnavailable("the pattern checker did not start") from exc
+        try:
+            self._replies: queue.Queue[str | None] = queue.Queue()
+            threading.Thread(target=self._read, name="pattern-checker-reader", daemon=True).start()
+            ready = self._reply(WORKER_START_WAIT)
+        except BaseException:
+            self.stop()
+            raise
+        if ready is None or ready.get("ready") is not True:
+            self.stop()
+            raise PatternCheckerUnavailable("the pattern checker did not start")
+        self.memory_limited = ready.get("memory_limited") is True
+
+    def _read(self) -> None:
+        stdout = self.process.stdout
+        assert stdout is not None
+        for line in stdout:
+            self._replies.put(line)
+        self._replies.put(None)
+        stdout.close()
+
+    def _reply(self, wait: float) -> dict[str, Any] | None:
+        try:
+            line = self._replies.get(timeout=wait)
+        except queue.Empty:
+            return None
+        if line is None:
+            return None
+        try:
+            reply = json.loads(line)
+        except ValueError:
+            return None
+        return reply if isinstance(reply, dict) else None
+
+    def ask(self, request: dict[str, Any], wait: float) -> dict[str, Any] | None:
+        stdin = self.process.stdin
+        assert stdin is not None
+        try:
+            stdin.write(json.dumps(request) + "\n")
+            stdin.flush()
+        except OSError:
+            return None
+        return self._reply(wait)
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def stop(self) -> None:
+        self.process.kill()
+        self.process.wait()
+        if self.process.stdin is not None:
+            with contextlib.suppress(OSError):
+                self.process.stdin.close()
+
+
+class _PatternChecker:
+    """The one worker process, shared by every request and replaced whenever it stops answering in time.
+
+    Callers take turns. A caller waits at most ``turn_wait`` for its turn, and only ``MAX_WAITING`` may wait
+    at once, so pattern checks never tie up the server's threads behind a slow pattern.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._waiting_lock = threading.Lock()
+        self._waiting = 0
+        self._worker: _Worker | None = None
+        self._failed_start = -math.inf
+
+    def ask(self, request: dict[str, Any], wait: float, *, turn_wait: float) -> dict[str, Any] | None:
+        """The worker's reply, or None when it did not answer within ``wait`` or stopped; it is then replaced.
+
+        Raises ``PatternCheckerBusy`` when no turn comes in time, ``PatternCheckerUnavailable`` when the worker
+        cannot start.
+        """
+        with self._waiting_lock:
+            if self._waiting >= MAX_WAITING:
+                raise PatternCheckerBusy("the pattern checker is busy")
+            self._waiting += 1
+        try:
+            turn = self._lock.acquire(timeout=max(turn_wait, 0.0))
+        finally:
+            with self._waiting_lock:
+                self._waiting -= 1
+        if not turn:
+            raise PatternCheckerBusy("the pattern checker is busy")
+        try:
+            return self._ask(request, wait)
+        finally:
+            self._lock.release()
+
+    def _ask(self, request: dict[str, Any], wait: float) -> dict[str, Any] | None:
+        if self._worker is not None and not self._worker.alive():
+            log.warning("The pattern checker stopped (exit code %s); starting another", self._worker.process.returncode)
+            self._worker = None
+        if self._worker is None:
+            if time.monotonic() - self._failed_start < START_BACKOFF:
+                raise PatternCheckerUnavailable("the pattern checker did not start")
+            try:
+                self._worker = _Worker()
+            except Exception as exc:
+                self._failed_start = time.monotonic()
+                log.warning("The pattern checker did not start: %s", exc)
+                if isinstance(exc, PatternCheckerUnavailable):
+                    raise
+                raise PatternCheckerUnavailable("the pattern checker did not start") from exc
+            if not self._worker.memory_limited:
+                log.warning("The pattern checker runs without a memory cap on this system")
+        try:
+            reply = self._worker.ask(request, wait)
+        except BaseException:
+            # Its reply may still arrive and would be read as the answer to the next request: replace it.
+            self._worker.stop()
+            self._worker = None
+            raise
+        if reply is None:
+            log.warning("Replacing the pattern checker: no answer to a %s within %.2f s", request.get("op"), wait)
+            self._worker.stop()
+            self._worker = None
+        return reply
+
+    def close(self) -> None:
+        with self._lock:
+            if self._worker is not None:
+                self._worker.stop()
+                self._worker = None
+
+
+_checker = _PatternChecker()
+atexit.register(_checker.close)
+
+
+class _Recent[K, V]:
+    """A bounded map that keeps the most recently used entries."""
+
+    def __init__(self, size: int) -> None:
+        self._items: OrderedDict[K, V] = OrderedDict()
+        self._lock = threading.Lock()
+        self._size = size
+
+    def get(self, key: K) -> V | None:
+        with self._lock:
+            found = self._items.get(key)
+            if found is not None:
+                self._items.move_to_end(key)
+            return found
+
+    def put(self, key: K, value: V) -> None:
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while len(self._items) > self._size:
+                self._items.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+
+def _pattern_key(check: RegexCheck) -> bytes:
+    pattern = check.pattern.encode("utf-8", "surrogatepass")
+    return hashlib.blake2b(check.flags.to_bytes(4, "little") + pattern, digest_size=16).digest()
+
+
+# Vetted patterns, by digest. A pattern that drops out is simply vetted again.
+_accepted: _Recent[bytes, bool] = _Recent(MAX_ACCEPTED)
+# Recent refusals, so saving the same bad pattern again costs nothing: (problem, expires). An invalid pattern or one
+# that needs too much memory is refused for good; one refused on timing is vetted again after REFUSAL_RETRY.
+_refused: _Recent[bytes, tuple[str, float | None]] = _Recent(256)
+_SIMPLER = "use smaller repeat counts or less nesting"
+
+
+def pattern_problems(checks_by_prompt: Sequence[Sequence[Check]]) -> list[str]:
+    """What is wrong with the patterns of prompts about to be saved or run, one message per check.
+
+    Each new pattern is compiled once in the worker. Vetting stops after ``VET_SECONDS``, so a save with many
+    slow patterns stays bounded; the patterns left are refused as not checked. Raises
+    ``PatternCheckerUnavailable`` (or ``PatternCheckerBusy``) when the worker cannot vet them now.
+    """
+    problems: list[str] = []
+    deadline = time.monotonic() + VET_SECONDS
+    for prompt_number, checks in enumerate(checks_by_prompt, start=1):
+        for check_number, check in enumerate(checks, start=1):
+            if isinstance(check, RegexCheck) and (problem := _vet(check, deadline)):
+                problems.append(f"Prompt {prompt_number}, check {check_number}: {problem}")
+    return problems
+
+
+def _vet(check: RegexCheck, deadline: float) -> str | None:
+    key = _pattern_key(check)
+    if _accepted.get(key):
+        return None
+    refused = _refused.get(key)
+    if refused is not None and (refused[1] is None or refused[1] > time.monotonic()):
+        return refused[0]
+    request = {"op": "vet", "pattern": check.pattern, "flags": check.flags, "limit": COMPILE_LIMIT}
+    wait = 2 * COMPILE_LIMIT + WORKER_GRACE
+    reply: dict[str, Any] | None = None
+    for _ in range(2):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return "not checked: there are too many new patterns to check in one save; save fewer at a time"
+        asked = time.monotonic()
+        reply = _checker.ask(request, wait, turn_wait=left)
+        # A worker that stopped on the pattern at once gets one more try on a fresh worker; one that ran out of time
+        # does not, so a pattern that is slow to compile is refused within about a second.
+        if reply is not None or time.monotonic() - asked >= 0.9 * wait:
+            break
+    seconds = reply.get("seconds") if reply is not None else None
+    retry: float | None = REFUSAL_RETRY  # how long the refusal is remembered; None: until restart
+    if reply is None:
+        problem = f"the pattern is too large or complex to check safely; {_SIMPLER}"
+    elif reply.get("memory") is True:
+        problem = f"the pattern needs more than {WORKER_MEMORY // 2**20} MB to compile; {_SIMPLER}"
+        retry = MEMORY_REFUSAL_RETRY
+    elif "error" in reply:
+        problem, retry = str(reply["error"]), None  # invalid whatever the machine is doing
+    elif not isinstance(seconds, int | float) or isinstance(seconds, bool):
+        problem = "the pattern checker gave no answer for this pattern"
+    elif seconds > COMPILE_LIMIT:
+        limit = f"{COMPILE_LIMIT * 1000:.0f} ms"
+        took = f"{seconds * 1000:.0f} ms"
+        problem = f"the pattern takes too long to compile ({took}; the limit is {limit}); {_SIMPLER}"
+    else:
+        _accepted.put(key, True)
+        return None
+    _refused.put(key, (problem, None if retry is None else time.monotonic() + retry))
+    return problem
+
+
+class RegexBudget:
+    """Seconds of pattern checks that one view may spend, shared by every answer it shows."""
+
+    def __init__(self, seconds: float | None = None) -> None:
+        self.left = REGEX_BUDGET if seconds is None else seconds
+        self.reason: str | None = None  # why the view stopped early, when it was not the time
+
+
+# Results by (flags, pattern, answer), kept compact: (passed, detail, expires). A result that is not a pass
+# or fail expires, so it is tried again later in case the machine was only busy.
+_results: _Recent[bytes, tuple[bool | None, str, float | None]] = _Recent(MAX_CACHED_RESULTS)
+
+
+def _result_key(check: RegexCheck, text: str) -> bytes:
+    pattern = check.pattern.encode("utf-8", "surrogatepass")
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(check.flags.to_bytes(4, "little") + len(pattern).to_bytes(4, "little") + pattern)
+    digest.update(text.encode("utf-8", "surrogatepass"))
+    return digest.digest()
+
+
+NOT_CHECKED_YET = "not checked yet: this view ran out of time for pattern checks; reload to continue"
+
+
+def _not_checked_yet(check: RegexCheck, why: str | None = None) -> CheckResult:
+    detail = NOT_CHECKED_YET if why is None else f"not checked yet: {why}; reload to continue"
+    return CheckResult(kind=check.kind, passed=None, detail=detail, not_checked=True)
+
+
+def _search(check: RegexCheck, text: str, budget: RegexBudget) -> CheckResult:
+    key = _result_key(check, text)
+    cached = _results.get(key)
+    if cached is not None and (cached[2] is None or cached[2] > time.monotonic()):
+        return CheckResult(kind=check.kind, passed=cached[0], detail=cached[1])
+    if budget.left <= 0:
+        return _not_checked_yet(check, budget.reason)  # not cached: a later view runs it
+    request = {"op": "search", "pattern": check.pattern, "flags": check.flags, "text": text, "timeout": REGEX_TIMEOUT}
+    start = time.perf_counter()
+    try:
+        reply = _checker.ask(request, REGEX_TIMEOUT + COMPILE_LIMIT + WORKER_GRACE, turn_wait=budget.left)
+    except PatternCheckerUnavailable as exc:  # busy, or not started: this view stops; a later one continues
+        budget.left, budget.reason = 0, str(exc)
+        return _not_checked_yet(check, budget.reason)
+    finally:
+        budget.left -= time.perf_counter() - start
+    found = reply.get("found") if reply is not None else None
+    if isinstance(found, bool):
+        detail = "pattern found" if found else "pattern not found"
+        _results.put(key, (found, detail, None))
+        return CheckResult(kind=check.kind, passed=found, detail=detail)
+    if reply is None:
+        detail = "could not check: the pattern checker stopped on this answer"
+    elif reply.get("timeout") is True:
+        detail = f"could not check: the pattern took longer than {REGEX_TIMEOUT} s on this answer"
+    elif reply.get("memory") is True:
+        detail = f"could not check: searching this answer needs more than {WORKER_MEMORY // 2**20} MB"
+    else:
+        detail = f"could not be evaluated on this answer: {reply.get('error', 'no result from the pattern checker')}"
+    _results.put(key, (None, detail, time.monotonic() + RETRY_AFTER))
+    return CheckResult(kind=check.kind, passed=None, detail=detail)
+
+
+def _evaluate(check: Check, text: str, budget: RegexBudget) -> CheckResult:
+    if isinstance(check, RegexCheck):
+        return _search(check, text, budget)
     if isinstance(check, ContainsCheck | NotContainsCheck):
         present = _fold(check.value, check.case_sensitive) in _fold(text, check.case_sensitive)
         passed = present if isinstance(check, ContainsCheck) else not present
@@ -386,10 +902,10 @@ def _evaluate(check: Check, text: str) -> CheckResult:
     return CheckResult(kind=check.kind, passed=error is None, detail=error or "matches the schema")
 
 
-def run_check(check: Check, text: str) -> CheckResult:
+def run_check(check: Check, text: str, budget: RegexBudget | None = None) -> CheckResult:
     """Evaluate one check. Never raises: an answer it cannot be evaluated on gives ``passed = None``."""
     try:
-        return _evaluate(check, text)
+        return _evaluate(check, text, budget or RegexBudget())
     except (RecursionError, ArithmeticError, ValueError, TypeError) as exc:
         detail = f"could not be evaluated on this answer ({type(exc).__name__})"
         return CheckResult(kind=check.kind, passed=None, detail=detail)
@@ -406,8 +922,9 @@ def load_checks(raw: str | None) -> list[Check]:
     return CHECKS.validate_json(raw or "[]")
 
 
-def run_checks(checks: list[Check], text: str) -> CheckOutcome:
-    results = [run_check(check, text) for check in checks]
+def run_checks(checks: list[Check], text: str, *, budget: RegexBudget) -> CheckOutcome:
+    """Evaluate an answer's checks. Pass one ``budget`` for every answer of a view."""
+    results = [run_check(check, text, budget) for check in checks]
     if any(r.passed is False for r in results):
         passed: bool | None = False
     elif any(r.passed is None for r in results):
