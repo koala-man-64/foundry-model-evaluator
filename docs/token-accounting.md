@@ -287,7 +287,9 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. Requests take
     turns with the worker; a view does not wait for its turn longer than it has left, and a save not longer than its
     10 s. When a view runs out, the remaining pattern checks show **not checked yet** (unknown). Results are kept per
-    answer and pattern while the app runs, so reloading continues where the last view stopped. A **could not check**
+    answer and pattern while the app runs, so reloading continues where the last view stopped, even beyond 50,000
+    distinct results. A session-only temporary SQLite cache can spill to disk and is discarded when the app exits;
+    it stores result digests and outcomes rather than answer text. A **could not check**
     is tried again after 10 minutes, in case the machine was only busy.
   - Nothing not checked yet is passed off as complete. The run page says **not checked yet** with "reload to
     continue"; a comparison leaves those answers out of the checks pass rate with a note saying how many (and,

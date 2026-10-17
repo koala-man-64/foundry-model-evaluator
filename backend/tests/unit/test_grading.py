@@ -345,6 +345,45 @@ def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results
     assert "took longer than" in resumed.results[0].detail
 
 
+def test_reloading_finishes_checks_beyond_the_old_result_cache_limit(monkeypatch, no_cached_results):
+    import itertools
+    from types import SimpleNamespace
+
+    from foundry_eval.grading import checks as module
+
+    pattern = check(kind="regex", pattern="answer-")
+    answers = [f"answer-{n}" for n in range(50_004)]
+    # Reach the old 50,000-result boundary without doing paid calls or timing real searches.
+    for answer in answers[:50_000]:
+        module._results.put(module._result_key(pattern, answer), (True, "pattern found", None))
+    clock = itertools.count()
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: next(clock), monotonic=lambda: 0))
+    monkeypatch.setattr(module, "_checker", SimpleNamespace(ask=lambda *args, **kwargs: {"found": True}))
+
+    pending = []
+    for _ in range(2):
+        budget = RegexBudget(2)  # precisely two new results per view
+        pending.append(sum(run_checks([pattern], answer, budget=budget).results[0].not_checked for answer in answers))
+    assert pending == [2, 0]
+
+
+@pytest.mark.parametrize("operation", ["get", "put"])
+def test_result_storage_errors_are_unknown_instead_of_breaking_the_view(monkeypatch, no_cached_results, operation):
+    import sqlite3
+    from types import SimpleNamespace
+
+    from foundry_eval.grading import checks as module
+
+    def unavailable(*args):
+        raise sqlite3.OperationalError("temporary storage unavailable")
+
+    monkeypatch.setattr(module._results, operation, unavailable)
+    monkeypatch.setattr(module, "_checker", SimpleNamespace(ask=lambda *args, **kwargs: {"found": True}))
+    result = run_check(check(kind="regex", pattern="answer-"), "answer-1")
+    assert result.passed is None
+    assert "OperationalError" in result.detail
+
+
 def test_a_busy_checker_never_holds_a_view_or_a_save_for_long(no_cached_results, monkeypatch):
     import time
 

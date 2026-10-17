@@ -37,6 +37,7 @@ import logging
 import math
 import queue
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -49,6 +50,8 @@ from typing import Annotated, Any, Literal
 
 import regex
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+
+from .results import PatternResults
 
 MAX_CHECKS = 10
 MAX_PATTERN = 500
@@ -63,7 +66,6 @@ REGEX_TIMEOUT = 0.25  # seconds per search
 REGEX_BUDGET = 2.0  # seconds of pattern checks per view
 EXPORT_REGEX_BUDGET = 30.0  # an export is one explicit download, so it may take longer than a page view
 RETRY_AFTER = 600.0  # seconds before a pattern that could not be checked on an answer is tried again
-MAX_CACHED_RESULTS = 50_000
 MAX_ACCEPTED = 50_000  # vetted patterns remembered, by digest
 MAX_WAITING = 8  # requests that may wait for a turn with the worker at once
 START_BACKOFF = 30.0  # seconds before starting the worker again after it failed to start
@@ -817,7 +819,8 @@ class RegexBudget:
 
 # Results by (flags, pattern, answer), kept compact: (passed, detail, expires). A result that is not a pass
 # or fail expires, so it is tried again later in case the machine was only busy.
-_results: _Recent[bytes, tuple[bool | None, str, float | None]] = _Recent(MAX_CACHED_RESULTS)
+_results = PatternResults()
+atexit.register(_results.clear)
 
 
 def _result_key(check: RegexCheck, text: str) -> bytes:
@@ -906,7 +909,7 @@ def run_check(check: Check, text: str, budget: RegexBudget | None = None) -> Che
     """Evaluate one check. Never raises: an answer it cannot be evaluated on gives ``passed = None``."""
     try:
         return _evaluate(check, text, budget or RegexBudget())
-    except (RecursionError, ArithmeticError, ValueError, TypeError) as exc:
+    except (RecursionError, ArithmeticError, ValueError, TypeError, sqlite3.Error) as exc:
         detail = f"could not be evaluated on this answer ({type(exc).__name__})"
         return CheckResult(kind=check.kind, passed=None, detail=detail)
 
