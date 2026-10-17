@@ -48,7 +48,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..db.database import Database
-from ..grading.checks import checks_json, run_checks
+from ..grading.checks import RegexBudget, checks_json, run_checks
 from ..judging.aggregate import RunJudgements, Slot, judge_run, win_outcome
 from ..judging.service import JudgeService, latest_attempts
 from ..money import Money, add, div
@@ -479,6 +479,7 @@ class ComparisonService:
     ) -> Comparison:
         notes: list[str] = []
         has_checks = False
+        regex_budget = RegexBudget()
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
@@ -529,7 +530,7 @@ class ComparisonService:
                     judge_evaluation_ids=answer.evaluation_ids if answer else (),
                     judge_spread=answer.spread if answer else None,
                     checks=(
-                        _checks_value(run_checks(prompt.checks, attempt.output_text or "").passed)
+                        _checks_value(run_checks(prompt.checks, attempt.output_text or "", budget=regex_budget).passed)
                         if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
                         else None
                     ),

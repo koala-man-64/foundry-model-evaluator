@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...domain.generation import GenerationSettings
 from ...execution.runs import RunPreview, RunRequest
 from ...execution.totals import CostTotal, combine_totals, total_costs
-from ...grading.checks import CheckOutcome, run_checks
+from ...grading.checks import CheckOutcome, RegexBudget, run_checks
 from ...judging.service import JudgeAggregate, JudgeScore
 from ...money import Money
 from ...pricing.ratecard import RateCard
@@ -129,7 +129,7 @@ def judging_total(services: ServicesDep, run_id: str, currency: str) -> CostTota
     return services.judge.judging_total(run_id, currency)
 
 
-def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
+def run_detail(services: ServicesDep, run_id: str, regex_budget: RegexBudget | None = None) -> RunDetail:
     run = services.runs.get(run_id)
     currency = services.runs.run_currency(run_id, services.settings.get().currency)
     attempts = services.runs.attempts(run_id)
@@ -143,8 +143,9 @@ def run_detail(services: ServicesDep, run_id: str) -> RunDetail:
         evaluation_counts[evaluation.status] = evaluation_counts.get(evaluation.status, 0) + 1
     prompts = services.runs.prompts(run_id)
     checks = {p.id: p.checks for p in prompts if p.checks}
+    pattern_budget = regex_budget or RegexBudget()
     check_results = {
-        a.id: run_checks(checks[a.prompt_id], a.output_text or "")
+        a.id: run_checks(checks[a.prompt_id], a.output_text or "", budget=pattern_budget)
         for a in attempts
         if a.status is AttemptStatus.SUCCEEDED and a.prompt_id in checks
     }

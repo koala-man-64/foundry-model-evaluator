@@ -9,7 +9,7 @@ export const CHECK_KINDS: { value: CheckDraft['kind']; label: string; hint: stri
   {
     value: 'regex',
     label: 'Matches pattern',
-    hint: 'A regular expression is found in the answer. Each search has a time limit; a pattern that runs out of time shows "could not check".',
+    hint: 'A regular expression is found in the answer. Searches have a time limit; an answer it runs out of time on shows "could not check".',
   },
   { value: 'number', label: 'Number', hint: 'A number in the answer is within the tolerance of the value.' },
   { value: 'json_schema', label: 'JSON schema', hint: 'The answer is JSON that matches the schema.' },

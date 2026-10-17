@@ -271,9 +271,16 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   A schema is limited to 500 sub-schemas, 200 `enum` values and 200 `properties` per object, so checking a large answer
   stays fast.
 - **Matches pattern** uses the `regex` package, not Python's `re`, because `re` has no time limit and blocks the
-  whole app while it runs. Each search stops after 0.25 s and shows **could not check** (unknown). A pattern that runs
-  out of time three times is skipped until the app restarts, so a bad pattern costs at most about a second however
-  many answers it is checked against. Patterns are up to 500 characters; lookarounds and backreferences work.
+  whole app while it runs. Patterns are up to 500 characters; lookarounds and backreferences work. Three limits keep
+  a bad pattern or a hostile answer from stalling the app:
+  - When a check is saved, its pattern is compiled once in a separate worker process, since compiling blocks the
+    app and a short pattern with nested repeats such as `(((a{200}){200}){200})` can take seconds and gigabytes. A
+    pattern that takes longer than 0.1 s to compile is refused with a message (ordinary patterns take well under
+    a millisecond). Stored checks are not compiled again when a run or suite is loaded.
+  - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only.
+  - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. When that runs out,
+    the remaining pattern checks show **not checked yet** (unknown). Results are kept per answer and pattern while
+    the app runs, so reloading continues where the last view stopped.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was

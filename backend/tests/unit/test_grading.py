@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from foundry_eval.grading.checks import Check, run_check, run_checks, schema_error
+from foundry_eval.grading.checks import Check, RegexBudget, load_checks, run_check, run_checks, schema_error
 
 CHECK = TypeAdapter(Check)
 
@@ -131,9 +131,9 @@ def test_checks_that_cannot_run_as_written_are_refused(definition):
 
 def test_an_answer_passes_only_when_every_check_passes():
     checks = [check(kind="contains", value="Paris"), check(kind="not_contains", value="London")]
-    outcome = run_checks(checks, "Paris, not London")
+    outcome = run_checks(checks, "Paris, not London", budget=RegexBudget())
     assert not outcome.passed and [r.passed for r in outcome.results] == [True, False]
-    assert run_checks(checks, "Paris").passed
+    assert run_checks(checks, "Paris", budget=RegexBudget()).passed
 
 
 def test_const_and_enum_keep_json_types_apart():
@@ -147,9 +147,13 @@ def test_a_check_that_cannot_be_evaluated_is_unknown_not_a_failure_or_an_error()
     huge = '{"n": ' + "9" * 5000 + "}"  # valid JSON, but past Python's integer-digits limit
     result = run_check(check(kind="json_schema", schema={"type": "object"}), huge)
     assert result.passed is None and "could not be evaluated" in result.detail
-    outcome = run_checks([check(kind="contains", value="9"), check(kind="json_schema", schema={})], huge)
+    outcome = run_checks(
+        [check(kind="contains", value="9"), check(kind="json_schema", schema={})], huge, budget=RegexBudget()
+    )
     assert outcome.passed is None
-    failing = run_checks([check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge)
+    failing = run_checks(
+        [check(kind="contains", value="x"), check(kind="json_schema", schema={})], huge, budget=RegexBudget()
+    )
     assert failing.passed is False  # a known failure wins over an unknown
 
 
@@ -196,22 +200,95 @@ def test_pattern_checks(definition, answer, passed):
     assert run_check(check(**definition), answer).passed is passed
 
 
-def test_a_slow_pattern_is_unknown_within_the_time_limit_and_then_skipped(monkeypatch):
+@pytest.fixture
+def no_cached_results():
+    from foundry_eval.grading import checks as module
+
+    module._results.clear()
+    yield
+    module._results.clear()
+
+
+SLOW = r"(a|aa)+$"  # catastrophic backtracking on a long run of a's
+
+
+def hostile(n: int) -> str:
+    return "a" * (60 + n) + "!"
+
+
+@pytest.mark.parametrize("pattern", ["(((a{200}){200}){200})", "((((a{100}){100}){100}){100})"])
+def test_a_pattern_slow_to_compile_is_refused_without_freezing_the_app(pattern):
+    import itertools
+    import threading
     import time
 
     from foundry_eval.grading import checks as module
 
-    monkeypatch.setattr(module, "_slow_patterns", {})
-    slow = check(kind="regex", pattern=r"(a|aa)+$")  # catastrophic backtracking on a long run of a's
-    answer = "a" * 60 + "!"
-    for _ in range(module.MAX_REGEX_TIMEOUTS):
-        start = time.perf_counter()
-        result = run_check(slow, answer)
-        assert result.passed is None and "took longer than" in result.detail
-        assert time.perf_counter() - start < module.REGEX_TIMEOUT + 0.5
+    check(kind="regex", pattern=r"\d+-warm-up")  # the worker's start-up is not what is measured
+    beats: list[float] = []
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.is_set():
+            beats.append(time.perf_counter())
+            time.sleep(0.01)
+
+    thread = threading.Thread(target=heartbeat)
+    thread.start()
     start = time.perf_counter()
-    skipped = run_check(slow, answer)
-    assert skipped.passed is None and "is skipped" in skipped.detail
-    assert time.perf_counter() - start < 0.05  # no more time spent on a known-slow pattern
-    # Other patterns are unaffected.
-    assert run_check(check(kind="regex", pattern="a+!"), answer).passed is True
+    try:
+        with pytest.raises(ValidationError, match="takes too long to compile"):
+            check(kind="regex", pattern=pattern)
+    finally:
+        stop.set()
+        thread.join()
+    # Refused within the wait, plus a fresh worker's start-up; the app's own thread kept running.
+    assert time.perf_counter() - start < module.COMPILE_WAIT + 3
+    assert max(b - a for a, b in itertools.pairwise(beats)) < 0.5
+    # A refused pattern is not remembered as usable, and the next new pattern still works.
+    with pytest.raises(ValidationError):
+        check(kind="regex", pattern=pattern)
+    assert check(kind="regex", pattern=r"\d+-after").pattern == r"\d+-after"
+
+
+def test_stored_checks_are_not_compiled_again(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    def refuse(self, pattern, flags):
+        raise AssertionError("a stored pattern was sent to the worker")
+
+    monkeypatch.setattr(module._Worker, "ask", refuse)
+    [loaded] = load_checks('[{"kind": "regex", "pattern": "stored-[0-9]+", "case_sensitive": true}]')
+    assert loaded.pattern == "stored-[0-9]+"
+    # Validating it again, as a response model does, does not compile it either.
+    assert check(kind="regex", pattern="stored-[0-9]+", case_sensitive=True).case_sensitive
+
+
+def test_a_slow_answer_is_unknown_once_and_does_not_affect_other_answers(no_cached_results):
+    import time
+
+    slow = check(kind="regex", pattern=SLOW)
+    first = run_check(slow, hostile(0))
+    assert first.passed is None and "took longer than" in first.detail
+    start = time.perf_counter()
+    again = run_checks([slow], hostile(0), budget=RegexBudget())
+    assert again.results[0] == first and time.perf_counter() - start < 0.05  # cached per answer
+    assert run_check(slow, "aaa").passed is True  # no pattern-wide skip from one hostile answer
+
+
+def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    budget = RegexBudget(0.6)
+    start = time.perf_counter()
+    details = [run_checks([slow], hostile(n), budget=budget).results[0].detail for n in range(20)]
+    # At most one search runs past the budget.
+    assert time.perf_counter() - start < 0.6 + module.REGEX_TIMEOUT + 0.4
+    assert details[-1] == module.NOT_CHECKED_YET
+    assert sum("took longer than" in d for d in details) <= 4
+    # What was not checked is not cached as an outcome: the next view continues with it.
+    resumed = run_checks([slow], hostile(19), budget=RegexBudget())
+    assert "took longer than" in resumed.results[0].detail

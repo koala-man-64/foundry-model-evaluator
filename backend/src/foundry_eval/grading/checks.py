@@ -12,30 +12,49 @@ Nothing is silently ignored or guessed:
   evaluated". That is unknown, not a fail and not a pass, and it never raises.
 
 Pattern checks use the ``regex`` package, not Python's ``re``: ``re`` has no time limit and holds the
-interpreter lock, so one slow pattern on one answer would freeze every read of a run whose checks are
-frozen. Each search here has a time limit (``REGEX_TIMEOUT``) and releases the lock while it runs. A
-search that runs out of time reports "could not check" (unknown), and a pattern that runs out of time
-``MAX_REGEX_TIMEOUTS`` times is skipped for the rest of the process, so a bad pattern costs a bounded
-amount of time however many answers it is checked against.
+interpreter lock while it searches, so one slow pattern on one answer would freeze every read of a run.
+Three limits keep pattern checks bounded:
+
+- When a check is saved, its pattern is compiled once in a separate worker process, because compiling
+  holds the lock and a short pattern with nested repeats can take minutes and gigabytes. A pattern that
+  does not compile within ``COMPILE_LIMIT`` is refused. Stored checks are not compiled again on load.
+- Each search has a time limit (``REGEX_TIMEOUT``) and releases the lock while it runs. One that runs out
+  of time reports "could not check" (unknown) for that answer only.
+- Each view shares a ``RegexBudget``. Once it is spent, the remaining pattern checks report "not checked
+  yet" (unknown). Results are cached per answer and pattern, so the next view continues where this one
+  stopped, and a slow answer never makes the pattern unknown on other answers.
 """
 
 from __future__ import annotations
 
+import atexit
+import functools
+import hashlib
 import json
 import math
+import queue
 import re
+import subprocess
+import sys
 import threading
+import time
 import unicodedata
+from collections import OrderedDict
 from decimal import Decimal, DecimalException, localcontext
 from typing import Annotated, Any, Literal
 
 import regex
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationInfo, field_validator, model_validator
 
 MAX_CHECKS = 10
 MAX_PATTERN = 500
-REGEX_TIMEOUT = 0.25  # seconds per answer
-MAX_REGEX_TIMEOUTS = 3  # per pattern and process; after that the pattern is skipped
+COMPILE_LIMIT = 0.1  # seconds to compile a new pattern, measured in the worker
+COMPILE_WAIT = 1.0  # seconds to wait for the worker's answer before stopping it
+WORKER_START_WAIT = 30.0
+REGEX_TIMEOUT = 0.25  # seconds per search
+REGEX_BUDGET = 2.0  # seconds of pattern checks per view
+EXPORT_REGEX_BUDGET = 30.0  # an export is one explicit download, so it may take longer than a page view
+MAX_CACHED_RESULTS = 20_000
 MAX_SCHEMA_DEPTH = 20
 # Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
 MAX_SCHEMA_NODES = 500
@@ -83,14 +102,17 @@ class RegexCheck(_Check):
     pattern: str = Field(min_length=1, max_length=MAX_PATTERN)
     case_sensitive: bool = False
 
-    @field_validator("pattern")
-    @classmethod
-    def _compiles(cls, value: str) -> str:
-        try:
-            regex.compile(value)
-        except regex.error as exc:
-            raise ValueError(f"invalid regular expression: {exc}") from exc
-        return value
+    @property
+    def flags(self) -> int:
+        return 0 if self.case_sensitive else int(regex.IGNORECASE)
+
+    @model_validator(mode="after")
+    def _usable(self, info: ValidationInfo) -> RegexCheck:
+        if (info.context or {}).get("stored"):
+            _vetter.accept(self.pattern, self.flags)  # vetted when it was saved
+        else:
+            _vetter.vet(self.pattern, self.flags)
+        return self
 
 
 class NumberCheck(_Check):
@@ -139,6 +161,8 @@ Check = Annotated[
 
 
 class CheckResult(BaseModel):
+    model_config = ConfigDict(frozen=True)  # pattern results are cached and shared between views
+
     kind: str
     # None: the check could not be evaluated on this answer (unknown, neither pass nor fail).
     passed: bool | None
@@ -380,33 +404,200 @@ def _json_answer(text: str) -> Any:
     return json.loads(body, parse_float=Decimal, parse_constant=_no_constants)
 
 
-_slow_patterns: dict[tuple[str, bool], int] = {}
-_slow_lock = threading.Lock()
-
-
-def _search(check: RegexCheck, text: str) -> CheckResult:
-    key = (check.pattern, check.case_sensitive)
-    with _slow_lock:
-        timeouts = _slow_patterns.get(key, 0)
-    if timeouts >= MAX_REGEX_TIMEOUTS:
-        detail = f"could not check: the pattern ran out of time {timeouts} times and is skipped"
-        return CheckResult(kind=check.kind, passed=None, detail=detail)
-    flags = 0 if check.case_sensitive else regex.IGNORECASE
+# --- pattern checks ----------------------------------------------------------------------------------
+_WORKER_CODE = """
+import json, sys, time
+import regex
+print("ready", flush=True)
+for line in sys.stdin:
+    pattern, flags = json.loads(line)
+    start = time.perf_counter()
     try:
-        found = regex.search(check.pattern, text, flags, timeout=REGEX_TIMEOUT, concurrent=True)
+        regex.compile(pattern, flags)
+    except regex.error as exc:
+        answer = {"error": f"invalid regular expression: {exc}"}
+    except Exception as exc:
+        answer = {"error": f"the pattern cannot be compiled ({type(exc).__name__})"}
+    else:
+        answer = {"seconds": time.perf_counter() - start}
+    print(json.dumps(answer), flush=True)
+"""
+
+
+class _Worker:
+    """A child process that compiles patterns, so a pattern that is slow to compile cannot freeze the app."""
+
+    def __init__(self) -> None:
+        try:
+            # A fixed command: this interpreter and the code above. Patterns go over stdin as JSON.
+            self.process = subprocess.Popen(  # noqa: S603
+                [sys.executable, "-I", "-c", _WORKER_CODE],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError as exc:
+            raise ValueError(f"pattern checks are unavailable: the pattern worker did not start ({exc})") from exc
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        threading.Thread(target=self._read, name="regex-compile-reader", daemon=True).start()
+        if self.answer(WORKER_START_WAIT) != "ready":
+            self.stop()
+            raise ValueError("pattern checks are unavailable: the pattern worker did not start")
+
+    def _read(self) -> None:
+        assert self.process.stdout is not None
+        for line in self.process.stdout:
+            self._lines.put(line.strip())
+        self._lines.put(None)
+
+    def answer(self, wait: float) -> str | None:
+        try:
+            return self._lines.get(timeout=wait)
+        except queue.Empty:
+            return None
+
+    def ask(self, pattern: str, flags: int) -> str | None:
+        assert self.process.stdin is not None
+        try:
+            self.process.stdin.write(json.dumps([pattern, flags]) + "\n")
+            self.process.stdin.flush()
+        except OSError:
+            return None
+        return self.answer(COMPILE_WAIT)
+
+    def alive(self) -> bool:
+        return self.process.poll() is None
+
+    def stop(self) -> None:
+        self.process.kill()
+        self.process.wait()
+
+
+class _Vetter:
+    """Refuses new patterns that are invalid or slow to compile. One pattern is vetted at a time."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._worker: _Worker | None = None
+        # Patterns vetted or loaded from storage in this process. It grows only with distinct patterns
+        # that were saved or read, each at most MAX_PATTERN characters.
+        self._accepted: set[tuple[str, int]] = set()
+
+    def accept(self, pattern: str, flags: int) -> None:
+        with self._lock:
+            self._accepted.add((pattern, flags))
+
+    def vet(self, pattern: str, flags: int) -> None:
+        with self._lock:
+            if (pattern, flags) in self._accepted:
+                return
+            if self._worker is None or not self._worker.alive():
+                self._worker = _Worker()
+            raw = self._worker.ask(pattern, flags)
+            if raw is None:  # no answer in time, or the worker died: either way it cannot be used
+                self._worker.stop()
+                self._worker = None
+                raise ValueError(f"the pattern takes too long to compile (the limit is {COMPILE_LIMIT} s)")
+            answer = json.loads(raw)
+            if "error" in answer:
+                raise ValueError(answer["error"])
+            if answer["seconds"] > COMPILE_LIMIT:
+                took = f"{answer['seconds']:.2f} s"
+                raise ValueError(f"the pattern takes too long to compile ({took}; the limit is {COMPILE_LIMIT} s)")
+            self._accepted.add((pattern, flags))
+
+    def close(self) -> None:
+        with self._lock:
+            if self._worker is not None:
+                self._worker.stop()
+                self._worker = None
+
+
+_vetter = _Vetter()
+atexit.register(_vetter.close)
+
+
+class RegexBudget:
+    """Seconds of pattern checks that one view may spend, shared by every answer it shows."""
+
+    def __init__(self, seconds: float = REGEX_BUDGET) -> None:
+        self.left = seconds
+
+
+@functools.lru_cache(maxsize=256)
+def _compiled(pattern: str, flags: int) -> regex.Pattern[str]:
+    return regex.compile(pattern, flags)
+
+
+class _Results:
+    """Pattern results by (pattern, flags, answer), the most recently used kept."""
+
+    def __init__(self, size: int) -> None:
+        self._items: OrderedDict[bytes, CheckResult] = OrderedDict()
+        self._lock = threading.Lock()
+        self._size = size
+
+    def get(self, key: bytes) -> CheckResult | None:
+        with self._lock:
+            found = self._items.get(key)
+            if found is not None:
+                self._items.move_to_end(key)
+            return found
+
+    def put(self, key: bytes, result: CheckResult) -> None:
+        with self._lock:
+            self._items[key] = result
+            self._items.move_to_end(key)
+            while len(self._items) > self._size:
+                self._items.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+
+
+_results = _Results(MAX_CACHED_RESULTS)
+
+
+def _result_key(check: RegexCheck, text: str) -> bytes:
+    pattern = check.pattern.encode("utf-8", "surrogatepass")
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(check.flags.to_bytes(4, "little") + len(pattern).to_bytes(4, "little") + pattern)
+    digest.update(text.encode("utf-8", "surrogatepass"))
+    return digest.digest()
+
+
+NOT_CHECKED_YET = "not checked yet: this view ran out of time for pattern checks; reload to continue"
+
+
+def _search(check: RegexCheck, text: str, budget: RegexBudget) -> CheckResult:
+    key = _result_key(check, text)
+    cached = _results.get(key)
+    if cached is not None:
+        return cached
+    if budget.left <= 0:
+        return CheckResult(kind=check.kind, passed=None, detail=NOT_CHECKED_YET)  # not cached: a later view runs it
+    start = time.perf_counter()
+    try:
+        found = _compiled(check.pattern, check.flags).search(text, timeout=REGEX_TIMEOUT, concurrent=True)
     except TimeoutError:
-        with _slow_lock:
-            _slow_patterns[key] = _slow_patterns.get(key, 0) + 1
         detail = f"could not check: the pattern took longer than {REGEX_TIMEOUT} s on this answer"
-        return CheckResult(kind=check.kind, passed=None, detail=detail)
-    return CheckResult(
-        kind=check.kind, passed=found is not None, detail="pattern found" if found else "pattern not found"
-    )
+        result = CheckResult(kind=check.kind, passed=None, detail=detail)
+    else:
+        detail = "pattern found" if found else "pattern not found"
+        result = CheckResult(kind=check.kind, passed=found is not None, detail=detail)
+    finally:
+        budget.left -= time.perf_counter() - start
+    _results.put(key, result)
+    return result
 
 
-def _evaluate(check: Check, text: str) -> CheckResult:
+def _evaluate(check: Check, text: str, budget: RegexBudget) -> CheckResult:
     if isinstance(check, RegexCheck):
-        return _search(check, text)
+        return _search(check, text, budget)
     if isinstance(check, ContainsCheck | NotContainsCheck):
         present = _fold(check.value, check.case_sensitive) in _fold(text, check.case_sensitive)
         passed = present if isinstance(check, ContainsCheck) else not present
@@ -437,11 +628,11 @@ def _evaluate(check: Check, text: str) -> CheckResult:
     return CheckResult(kind=check.kind, passed=error is None, detail=error or "matches the schema")
 
 
-def run_check(check: Check, text: str) -> CheckResult:
+def run_check(check: Check, text: str, budget: RegexBudget | None = None) -> CheckResult:
     """Evaluate one check. Never raises: an answer it cannot be evaluated on gives ``passed = None``."""
     try:
-        return _evaluate(check, text)
-    except (RecursionError, ArithmeticError, ValueError, TypeError) as exc:
+        return _evaluate(check, text, budget or RegexBudget())
+    except (RecursionError, ArithmeticError, ValueError, TypeError, regex.error) as exc:
         detail = f"could not be evaluated on this answer ({type(exc).__name__})"
         return CheckResult(kind=check.kind, passed=None, detail=detail)
 
@@ -454,11 +645,13 @@ def checks_json(checks: list[Check]) -> str:
 
 
 def load_checks(raw: str | None) -> list[Check]:
-    return CHECKS.validate_json(raw or "[]")
+    """Checks as stored with a prompt. They were vetted when saved, so patterns are not compiled again here."""
+    return CHECKS.validate_json(raw or "[]", context={"stored": True})
 
 
-def run_checks(checks: list[Check], text: str) -> CheckOutcome:
-    results = [run_check(check, text) for check in checks]
+def run_checks(checks: list[Check], text: str, *, budget: RegexBudget) -> CheckOutcome:
+    """Evaluate an answer's checks. Pass one ``budget`` for every answer of a view."""
+    results = [run_check(check, text, budget) for check in checks]
     if any(r.passed is False for r in results):
         passed: bool | None = False
     elif any(r.passed is None for r in results):

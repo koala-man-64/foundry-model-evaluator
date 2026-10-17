@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Query, Response
 
 from ... import __version__
+from ...grading.checks import EXPORT_REGEX_BUDGET, RegexBudget
 from ...pricing.ratecard import RateCard
 from ...pricing.snapshots import load_snapshot
 from ...reporting.run_export import RunExportData, build_run_csv, build_run_json
@@ -37,7 +38,7 @@ def export_run(
     include_text: bool = False,
 ) -> Response:
     """Download a run as JSON or CSV. Read-only: stored data and frozen price snapshots only."""
-    detail = run_detail(services, run_id)
+    detail = run_detail(services, run_id, RegexBudget(EXPORT_REGEX_BUDGET))
     candidates = services.runs.candidates(run_id)
     cards: dict[str, RateCard] = {}
     with services.db.connect() as conn:

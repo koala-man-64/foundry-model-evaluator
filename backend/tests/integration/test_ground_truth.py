@@ -8,7 +8,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from foundry_eval.grading.checks import load_checks, run_checks
+from foundry_eval.grading.checks import RegexBudget, load_checks, run_checks
 from foundry_eval.types import ApiStyle
 from tests.api_support import create_endpoint, create_profile, set_manual, wait_for_run
 
@@ -72,7 +72,7 @@ def test_checks_and_references_flow_through_runs_and_comparisons(client):
         assert attempt["status"] == "succeeded"
         outcome = detail["check_results"][attempt["id"]]
         checks = load_checks(json.dumps(prompts[attempt["prompt_id"]]["checks"]))
-        assert outcome == run_checks(checks, attempt["output_text"]).model_dump()
+        assert outcome == run_checks(checks, attempt["output_text"], budget=RegexBudget()).model_dump()
         assert outcome["results"][0]["passed"] is True
         expected[attempt["candidate_id"]] = outcome["passed"]
 
@@ -140,6 +140,7 @@ def test_the_judge_sees_the_reference_and_cells_ignore_reference_edits(client):
     "check",
     [
         {"kind": "regex", "pattern": "[unclosed"},
+        {"kind": "regex", "pattern": "(((a{200}){200}){200})"},  # takes seconds and gigabytes to compile
         {"kind": "json_schema", "schema": {"minimum": "5"}},
         {"kind": "json_schema", "schema": {"type": "object", "oneOf": []}},
         {"kind": "number", "value": 0.5},
@@ -152,6 +153,37 @@ def test_a_check_that_cannot_run_is_refused_when_the_suite_is_saved(client, chec
     payload = suite_payload([profile["id"]])
     payload["prompts"][0]["checks"] = [check]
     assert client.post("/api/suites", json=payload).status_code == 422
+
+
+def test_pattern_checks_are_compiled_in_the_worker_when_saved_and_not_on_reads(client, monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    endpoint = create_endpoint(client)
+    profiles = [chat_profile(client, endpoint["id"], name) for name in ("deepseek-alpha", "deepseek-beta")]
+    payload = suite_payload([p["id"] for p in profiles])
+    pattern = r"\bYou asked: \S"  # the mock answers "Mock ... answer. You asked: ..."
+    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": pattern}]
+    created = client.post("/api/suites", json=payload)
+    assert created.status_code == 201, created.text
+    suite = created.json()
+    detail = run_suite(client, suite["id"], "idem-gt-pattern")
+    run_id = detail["run"]["id"]
+
+    asked: list[str] = []
+    monkeypatch.setattr(module._Worker, "ask", lambda self, p, flags: asked.append(p))
+    module._vetter._accepted.discard((pattern, int(module.regex.IGNORECASE)))  # as after a restart
+    module._results.clear()
+    detail = client.get(f"/api/runs/{run_id}").json()
+    first = next(p["id"] for p in detail["prompts"] if p["position"] == 0)
+    outcomes = [detail["check_results"][a["id"]] for a in detail["attempts"] if a["prompt_id"] == first]
+    assert outcomes and all(
+        o["results"][0] == {"kind": "regex", "passed": True, "detail": "pattern found"} for o in outcomes
+    )
+    assert client.get(f"/api/suites/{suite['id']}").status_code == 200
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    assert comparison["has_checks"] is True
+    assert client.get(f"/api/runs/{run_id}/export", params={"format": "csv"}).status_code == 200
+    assert asked == []
 
 
 def test_ad_hoc_runs_accept_references_and_checks(client):
