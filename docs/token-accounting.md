@@ -270,17 +270,20 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   the wrong type (such as `"minimum": "5"`), `NaN` or `Infinity` in `const` or `enum`, or a number given as a float.
   A schema is limited to 500 sub-schemas, 200 `enum` values and 200 `properties` per object, so checking a large answer
   stays fast.
-- **Matches pattern** uses the `regex` package, not Python's `re`, because `re` has no time limit and blocks the
-  whole app while it runs. Patterns are up to 500 characters; lookarounds and backreferences work. Three limits keep
-  a bad pattern or a hostile answer from stalling the app:
-  - When a check is saved, its pattern is compiled once in a separate worker process, since compiling blocks the
-    app and a short pattern with nested repeats such as `(((a{200}){200}){200})` can take seconds and gigabytes. A
-    pattern that takes longer than 0.1 s to compile is refused with a message (ordinary patterns take well under
-    a millisecond). Stored checks are not compiled again when a run or suite is loaded.
-  - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only.
+- **Matches pattern** uses the `regex` package, not Python's `re`, because `re` has no time limit. Patterns are up
+  to 500 characters; lookarounds and backreferences work. A pattern can come from an imported prompt set and an
+  answer from any model, and a hostile pattern can take seconds and gigabytes to compile (`(((a{200}){200}){200})`)
+  or overflow the native stack while searching. So the app never compiles or searches a pattern itself; one worker
+  process does both, with its memory capped at 512 MB (a Windows job object, or `RLIMIT_AS` on Linux). Limits:
+  - When a suite is saved or a run is created, each new pattern is compiled once in the worker. A pattern that is
+    invalid, needs too much memory or takes longer than 0.05 s to compile is refused with a message (ordinary
+    patterns take well under a millisecond). Vetting one save stops after 10 s.
+  - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only. A worker that stops
+    answering, overflows its stack or reaches its memory cap is replaced, and only that answer is affected.
   - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. When that runs out,
-    the remaining pattern checks show **not checked yet** (unknown). Results are kept per answer and pattern while
-    the app runs, so reloading continues where the last view stopped.
+    the remaining pattern checks show **not checked yet** (unknown); an export marks them `not_checked`. Results are
+    kept per answer and pattern while the app runs, so reloading continues where the last view stopped. A **could
+    not check** is tried again after 10 minutes, in case the machine was only busy.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was

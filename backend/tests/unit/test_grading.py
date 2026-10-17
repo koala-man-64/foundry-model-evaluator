@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import sys
 from decimal import Decimal
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from foundry_eval.grading.checks import Check, RegexBudget, load_checks, run_check, run_checks, schema_error
+from foundry_eval.grading.checks import (
+    Check,
+    CheckResult,
+    RegexBudget,
+    load_checks,
+    pattern_problems,
+    run_check,
+    run_checks,
+    schema_error,
+)
 
 CHECK = TypeAdapter(Check)
 
@@ -92,7 +102,6 @@ def test_json_schema_check_round_trips_with_its_alias():
 @pytest.mark.parametrize(
     "definition",
     [
-        {"kind": "regex", "pattern": "("},
         {"kind": "regex", "pattern": "x" * 501},
         {"kind": "number", "value": "1e999999"},
         {"kind": "json_schema", "schema": {"minItems": "a"}},
@@ -216,15 +225,26 @@ def hostile(n: int) -> str:
     return "a" * (60 + n) + "!"
 
 
-@pytest.mark.parametrize("pattern", ["(((a{200}){200}){200})", "((((a{100}){100}){100}){100})"])
-def test_a_pattern_slow_to_compile_is_refused_without_freezing_the_app(pattern):
+def problems(*patterns: str) -> list[str]:
+    return pattern_problems([[check(kind="regex", pattern=p) for p in patterns]])
+
+
+def test_invalid_patterns_are_refused_with_the_reason():
+    assert problems(r"\d+-valid") == []
+    [problem] = problems("(")
+    assert problem.startswith("Prompt 1, check 1: invalid regular expression: missing )")
+
+
+@pytest.mark.parametrize("pattern", ["(((a{200}){200}){200})", "((((a{100}){100}){100}){100})", "x{99999999}"])
+def test_a_pattern_slow_or_hungry_to_compile_is_refused_without_freezing_the_app(pattern):
     import itertools
     import threading
     import time
 
     from foundry_eval.grading import checks as module
 
-    check(kind="regex", pattern=r"\d+-warm-up")  # the worker's start-up is not what is measured
+    module._refused.clear()
+    problems(r"\d+-warm-up")  # the worker's start-up is not what is measured
     beats: list[float] = []
     stop = threading.Event()
 
@@ -237,31 +257,47 @@ def test_a_pattern_slow_to_compile_is_refused_without_freezing_the_app(pattern):
     thread.start()
     start = time.perf_counter()
     try:
-        with pytest.raises(ValidationError, match="takes too long to compile"):
-            check(kind="regex", pattern=pattern)
+        [problem] = problems(pattern)
     finally:
         stop.set()
         thread.join()
-    # Refused within the wait, plus a fresh worker's start-up; the app's own thread kept running.
-    assert time.perf_counter() - start < module.COMPILE_WAIT + 3
+    assert "compile" in problem or "memory" in problem
+    # Refused within the worker's grace time, plus a new worker's start-up; the app's own threads kept running.
+    assert time.perf_counter() - start < module.COMPILE_LIMIT + module.WORKER_GRACE + 3
     assert max(b - a for a, b in itertools.pairwise(beats)) < 0.5
-    # A refused pattern is not remembered as usable, and the next new pattern still works.
-    with pytest.raises(ValidationError):
-        check(kind="regex", pattern=pattern)
-    assert check(kind="regex", pattern=r"\d+-after").pattern == r"\d+-after"
+    # Refusals are remembered, so saving the same pattern again costs nothing; new patterns still work.
+    start = time.perf_counter()
+    assert problems(pattern) == [problem]
+    assert time.perf_counter() - start < 0.05
+    assert problems(r"\d+-after") == []
 
 
-def test_stored_checks_are_not_compiled_again(monkeypatch):
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS does not enforce RLIMIT_AS")
+def test_the_pattern_checker_caps_its_memory():
     from foundry_eval.grading import checks as module
 
-    def refuse(self, pattern, flags):
-        raise AssertionError("a stored pattern was sent to the worker")
+    assert problems(r"\d+-memory-cap") == []  # a new pattern, so the worker runs
+    worker = module._checker._worker
+    assert worker is not None and worker.memory_limited
 
-    monkeypatch.setattr(module._Worker, "ask", refuse)
-    [loaded] = load_checks('[{"kind": "regex", "pattern": "stored-[0-9]+", "case_sensitive": true}]')
-    assert loaded.pattern == "stored-[0-9]+"
-    # Validating it again, as a response model does, does not compile it either.
-    assert check(kind="regex", pattern="stored-[0-9]+", case_sensitive=True).case_sensitive
+
+def test_a_pattern_deep_enough_to_overflow_a_stack_never_takes_the_app_down(no_cached_results):
+    deep = "(?:ab|cd){41900}"  # overflowed a request thread's stack when it was compiled in the app
+    if not problems(deep):  # vetted with a small stack; if it still passes, searching it must answer
+        assert run_check(check(kind="regex", pattern=deep), "abcd" * 10).passed in (False, None)
+    assert run_check(check(kind="regex", pattern="ab"), "xaby").passed is True
+
+
+def test_reading_never_compiles_or_searches_a_pattern_in_this_process(monkeypatch, no_cached_results):
+    from foundry_eval.grading import checks as module
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a pattern ran in the app process")
+
+    for name in ("compile", "search", "match", "fullmatch", "finditer", "findall"):
+        monkeypatch.setattr(module.regex, name, refuse)
+    [loaded] = load_checks('[{"kind": "regex", "pattern": "stored-[0-9]+"}]')
+    assert run_checks([loaded], "a stored-42 answer", budget=RegexBudget()).passed is True
 
 
 def test_a_slow_answer_is_unknown_once_and_does_not_affect_other_answers(no_cached_results):
@@ -276,12 +312,26 @@ def test_a_slow_answer_is_unknown_once_and_does_not_affect_other_answers(no_cach
     assert run_check(slow, "aaa").passed is True  # no pattern-wide skip from one hostile answer
 
 
+def test_could_not_check_is_tried_again_later(monkeypatch, no_cached_results):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "RETRY_AFTER", 0.0)
+    slow = check(kind="regex", pattern=SLOW)
+    assert run_check(slow, hostile(1)).passed is None
+    start = time.perf_counter()
+    assert run_check(slow, hostile(1)).passed is None
+    assert time.perf_counter() - start >= module.REGEX_TIMEOUT * 0.8  # searched again, not served from the cache
+
+
 def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results):
     import time
 
     from foundry_eval.grading import checks as module
 
     slow = check(kind="regex", pattern=SLOW)
+    run_check(slow, "warm-up")  # the worker's start-up is not what is measured
     budget = RegexBudget(0.6)
     start = time.perf_counter()
     details = [run_checks([slow], hostile(n), budget=budget).results[0].detail for n in range(20)]
@@ -292,3 +342,24 @@ def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results
     # What was not checked is not cached as an outcome: the next view continues with it.
     resumed = run_checks([slow], hostile(19), budget=RegexBudget())
     assert "took longer than" in resumed.results[0].detail
+
+
+def test_a_worker_that_dies_mid_search_fails_only_that_answer_and_is_replaced(no_cached_results):
+    import threading
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    assert run_check(slow, "aaa").passed is True
+    worker = module._checker._worker
+    assert worker is not None
+    results: list[CheckResult] = []
+    thread = threading.Thread(target=lambda: results.append(run_check(slow, hostile(5))))
+    thread.start()
+    time.sleep(0.1)  # the search is running (it takes the full time limit)
+    worker.process.kill()
+    thread.join()
+    assert results[0].passed is None and "stopped" in results[0].detail
+    assert run_check(slow, "aa").passed is True  # a new worker took over
+    assert module._checker._worker is not worker

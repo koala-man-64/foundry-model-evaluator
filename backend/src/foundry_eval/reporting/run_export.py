@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import Any
 
 from ..execution.totals import CostTotal
-from ..grading.checks import CheckOutcome, checks_json
+from ..grading.checks import CheckOutcome, checks_json, not_checked
 from ..judging.service import JudgeScore
 from ..money import to_text
 from ..pricing.calculator import CostEstimate
@@ -244,7 +244,13 @@ def _checks_json(outcome: CheckOutcome | None, include_text: bool) -> dict[str, 
     return {
         "passed": outcome.passed,
         "results": [
-            {"kind": r.kind, "passed": r.passed, **({"detail": r.detail} if include_text else {})}
+            {
+                "kind": r.kind,
+                "passed": r.passed,
+                # The export ran out of time for pattern checks before this one; downloading again continues.
+                **({"not_checked": True} if not_checked(r) else {}),
+                **({"detail": r.detail} if include_text else {}),
+            }
             for r in outcome.results
         ],
     }
@@ -424,10 +430,13 @@ def _cost_cells(cost: CostEstimate | None) -> dict[str, str]:
 
 
 def _passed_cell(outcome: CheckOutcome | None) -> str | None:
-    """ "true", "false", "unknown" (a check could not be evaluated) or empty (the prompt has no checks)."""
+    """ "true", "false", "unknown" (a check could not be evaluated), "not_checked" (the export ran out of time
+    for pattern checks; downloading again continues) or empty (the prompt has no checks)."""
     if outcome is None:
         return None
-    return "unknown" if outcome.passed is None else ("true" if outcome.passed else "false")
+    if outcome.passed is None:
+        return "not_checked" if any(not_checked(r) for r in outcome.results) else "unknown"
+    return "true" if outcome.passed else "false"
 
 
 def build_run_csv(data: RunExportData, *, include_text: bool) -> str:

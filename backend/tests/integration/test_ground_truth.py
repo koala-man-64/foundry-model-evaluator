@@ -155,35 +155,68 @@ def test_a_check_that_cannot_run_is_refused_when_the_suite_is_saved(client, chec
     assert client.post("/api/suites", json=payload).status_code == 422
 
 
-def test_pattern_checks_are_compiled_in_the_worker_when_saved_and_not_on_reads(client, monkeypatch):
+def test_pattern_checks_run_in_the_worker_and_reads_never_vet(client, monkeypatch):
+    from foundry_eval.api.routes import exports
     from foundry_eval.grading import checks as module
 
     endpoint = create_endpoint(client)
     profiles = [chat_profile(client, endpoint["id"], name) for name in ("deepseek-alpha", "deepseek-beta")]
     payload = suite_payload([p["id"] for p in profiles])
-    pattern = r"\bYou asked: \S"  # the mock answers "Mock ... answer. You asked: ..."
-    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": pattern}]
+    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": r"\bYou asked: \S"}]  # "... You asked: ..."
     created = client.post("/api/suites", json=payload)
     assert created.status_code == 201, created.text
     suite = created.json()
     detail = run_suite(client, suite["id"], "idem-gt-pattern")
     run_id = detail["run"]["id"]
 
-    asked: list[str] = []
-    monkeypatch.setattr(module._Worker, "ask", lambda self, p, flags: asked.append(p))
-    module._vetter._accepted.discard((pattern, int(module.regex.IGNORECASE)))  # as after a restart
+    ops: list[str] = []
+    ask = module._Worker.ask
+
+    def recording(self, request, wait):
+        ops.append(request["op"])
+        return ask(self, request, wait)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a pattern ran in the app process")
+
+    monkeypatch.setattr(module._Worker, "ask", recording)
+    for name in ("compile", "search", "match", "fullmatch", "finditer", "findall"):
+        monkeypatch.setattr(module.regex, name, refuse)
     module._results.clear()
     detail = client.get(f"/api/runs/{run_id}").json()
     first = next(p["id"] for p in detail["prompts"] if p["position"] == 0)
     outcomes = [detail["check_results"][a["id"]] for a in detail["attempts"] if a["prompt_id"] == first]
-    assert outcomes and all(
-        o["results"][0] == {"kind": "regex", "passed": True, "detail": "pattern found"} for o in outcomes
-    )
+    found = {"kind": "regex", "passed": True, "detail": "pattern found"}
+    assert outcomes and all(o["results"][0] == found for o in outcomes)
     assert client.get(f"/api/suites/{suite['id']}").status_code == 200
-    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
-    assert comparison["has_checks"] is True
-    assert client.get(f"/api/runs/{run_id}/export", params={"format": "csv"}).status_code == 200
-    assert asked == []
+    assert client.get("/api/comparisons", params={"run_id": run_id}).json()["has_checks"] is True
+    assert ops and set(ops) == {"search"}  # reads search in the worker and never vet
+
+    # An export that runs out of time for pattern checks says which results it did not check.
+    monkeypatch.setattr(exports, "EXPORT_REGEX_BUDGET", 0.0)
+    module._results.clear()
+    plain = client.get(f"/api/runs/{run_id}/export", params={"format": "json"}).json()
+    unchecked = [a["checks"] for a in plain["attempts"] if a["prompt_id"] == first]
+    assert unchecked and all(c["passed"] is None and c["results"][0]["not_checked"] for c in unchecked)
+    csv_text = client.get(f"/api/runs/{run_id}/export", params={"format": "csv"}).text
+    header, *rows = csv_text.strip().split("\n")
+    columns = header.split(",")
+    cells = {r.split(",")[columns.index("checks_passed")] for r in rows if first in r}
+    assert cells == {"not_checked"}
+
+
+def test_a_bad_pattern_in_an_ad_hoc_run_is_refused_before_anything_runs(client):
+    endpoint = create_endpoint(client)
+    profile = chat_profile(client, endpoint["id"], "deepseek-pattern-preview")
+    request = {
+        "prompts": [{"user": "Hello there", "checks": [{"kind": "regex", "pattern": "(unclosed"}]}],
+        "candidates": [{"profile_id": profile["id"]}],
+    }
+    preview = client.post("/api/runs/preview", json=request).json()
+    assert preview["ok"] is False
+    assert any(e.startswith("Prompt 1, check 1: invalid regular expression") for e in preview["errors"])
+    response = client.post("/api/runs", json=request, headers={"Idempotency-Key": "idem-gt-bad-pattern"})
+    assert response.status_code == 422 and "invalid regular expression" in response.text
 
 
 def test_ad_hoc_runs_accept_references_and_checks(client):

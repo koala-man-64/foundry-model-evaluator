@@ -2558,7 +2558,8 @@ export interface components {
         };
         /**
          * RegexCheck
-         * @description The pattern is found in the answer (``regex`` syntax, searched with a time limit).
+         * @description The pattern is found in the answer (``regex`` syntax). A pattern is refused when saved if it is invalid
+         *     or too slow to compile, and each search has a time limit.
          */
         RegexCheck: {
             /**

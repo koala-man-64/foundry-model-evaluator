@@ -14,7 +14,7 @@ from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.generation import GenerationSettings, SettingIssue
 from ..domain.profiles import Endpoint, ModelProfile
-from ..grading.checks import MAX_CHECKS, Check
+from ..grading.checks import MAX_CHECKS, Check, pattern_problems
 from ..money import Money, MoneyInput, add, mul, to_text
 from ..pricing.ratecard import CATEGORY_LABELS, RateStatus
 from ..pricing.service import PricingService
@@ -158,7 +158,7 @@ class RunService:
         self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
     def preview(self, request: RunRequest) -> RunPreview:
-        errors: list[str] = []
+        errors = pattern_problems([p.checks for p in request.prompts])
         warnings: list[str] = []
         profiles: dict[str, ModelProfile] = {}
         endpoints: dict[str, Endpoint] = {}

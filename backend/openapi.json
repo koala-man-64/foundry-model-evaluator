@@ -5256,7 +5256,7 @@
       },
       "RegexCheck": {
         "additionalProperties": false,
-        "description": "The pattern is found in the answer (``regex`` syntax, searched with a time limit).",
+        "description": "The pattern is found in the answer (``regex`` syntax). A pattern is refused when saved if it is invalid\nor too slow to compile, and each search has a time limit.",
         "properties": {
           "case_sensitive": {
             "default": false,

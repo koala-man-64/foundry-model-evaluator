@@ -178,7 +178,8 @@ the price snapshots frozen with the run, so it never makes a call to a model.
 - **Costs** are exact decimal strings. An empty cell or `null` means *not reported*, and `cost_status` says why
   (`complete`, `incomplete` with a lower bound, `not_sent`, or `pending`). An unknown cost is never written as 0.
 - **Checks.** Each attempt carries its check outcome (`checks_passed` in the CSV: `true`, `false`, `unknown` when a
-  check could not be evaluated, or empty when the prompt has no checks). Each prompt says whether it has a reference
+  check could not be evaluated, `not_checked` when the export ran out of time for pattern checks and downloading
+  again continues, or empty when the prompt has no checks). Each prompt says whether it has a reference
   answer and how many checks; the reference text, the check definitions and the per-check details (which can quote
   the answer) come only with the text included.
 - **Retries.** Every attempt is listed. `superseded` is true for an attempt that a later retry replaced
