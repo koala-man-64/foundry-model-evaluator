@@ -108,6 +108,8 @@ async def test_client_fails_when_every_filter_fails():
         "https://user:secret@prices.azure.com/api/retail/prices",  # credentials in the link
         "https://user@prices.azure.com/api/retail/prices",
         "https://[prices.azure.com/api/retail/prices",  # urlsplit refuses it
+        "  https://prices.azure.com/api/retail/prices",  # httpx2 would request it as a relative path
+        "https:///api/retail/prices",  # no host
         5,  # not text
     ],
 )

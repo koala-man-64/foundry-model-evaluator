@@ -119,16 +119,16 @@ def raw_json(item: RetailItem) -> str:
 
 
 def _origin(url: object) -> tuple[str, str, int | None] | None:
-    """Scheme, host and effective port; None for a link that is never the same origin (not text, a malformed
-    port, or credentials in it)."""
-    if not isinstance(url, str):
+    """Scheme, host and effective port; None for a link that is never the same origin (not text, surrounding
+    whitespace, no host, a malformed port, or credentials in it)."""
+    if not isinstance(url, str) or url != url.strip():  # urlsplit strips whitespace that httpx2 keeps
         return None
     try:
         parts = urlsplit(url)
         port = parts.port
     except ValueError:
         return None
-    if parts.username is not None or parts.password is not None:
+    if parts.username is not None or parts.password is not None or not parts.hostname:
         return None
     scheme = parts.scheme.lower()
     if port is None:

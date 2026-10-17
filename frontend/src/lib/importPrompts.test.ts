@@ -53,14 +53,17 @@ describe('importPrompts', () => {
       '{"user": "c", "checks": [{"kind": "number", "value": "1", "tolerance": null}]}',
       '{"user": "e", "checks": [{"kind": "regex", "value": "x"}]}',
       '{"user": "d", "checks": [{"kind": "number", "value": "1", "tolerance": "0.5", "which": "any"}]}',
+      '{"user": "f", "checks": [{"kind": "regex", "pattern": ""}]}',
+      '{"user": "g", "checks": [{"kind": "regex", "pattern": "^[0-9]+$", "case_sensitive": true}]}',
     ].join('\n')
     const result = importPrompts('set.jsonl', jsonl)
-    expect(result.prompts.map((p) => p.user)).toEqual(['d'])
+    expect(result.prompts.map((p) => p.user)).toEqual(['d', 'g'])
     expect(result.errors).toEqual([
       'Line 1: check 1: which must be "last" or "any".',
       'Line 2: check 1: unknown field casesensitive for a contains check.',
       'Line 3: check 1: give the tolerance as a string (or a whole number).',
       'Line 4: check 1: unknown field value for a regex check.',
+      'Line 6: check 1: a regex check needs a pattern.',
     ])
   })
 

@@ -115,6 +115,28 @@ def chosen(catalog: PriceCatalog, terms: str, category: Category, context: str =
             },
         ),
         (
+            "6-astra",
+            "global",
+            "standard",
+            "long",
+            {
+                Category.INPUT_UNCACHED: "6-astra LongCo Inp Std Gl 1M Tokens",
+                Category.CACHE_READ: "6-astra LongCo Cd Inp Std Gl 1M Tokens",
+                Category.OUTPUT: "6-astra LongCo Opt Std Gl 1M Tokens",
+            },
+        ),
+        (
+            "6-astra",
+            "data_zone",
+            "standard",
+            "base",
+            {
+                Category.INPUT_UNCACHED: "6-astra ShortCo Inp Std DZ 1M Tokens",
+                Category.CACHE_READ: "6-astra ShortCo Cd Inp Std DZ 1M Tokens",
+                Category.OUTPUT: "6-astra ShortCo Opt Std DZ 1M Tokens",
+            },
+        ),
+        (
             "4.3",
             "global",
             "standard",
@@ -148,7 +170,7 @@ def test_variants_without_a_plain_meter_stay_unmatched(live, terms, deployment, 
 def test_batch_flex_and_fine_tuned_meters_never_stand_in_for_standard_ones(live):
     names = {
         chosen(live, terms, category, deployment=deployment, tier=tier)
-        for terms in ("5.4 mini", "4.1 mini", "5.6 terra", "4.3")
+        for terms in ("5.4 mini", "4.1 mini", "5.6 terra", "6-astra", "4.3")
         for deployment in ("global", "data_zone")
         for tier in ("standard", "priority")
         for category in TEXT_CATEGORIES
