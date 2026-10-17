@@ -52,7 +52,9 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 MAX_CHECKS = 10
 MAX_PATTERN = 500
-COMPILE_LIMIT = 0.05  # seconds to compile a new pattern in the worker; ordinary ones take under a millisecond
+# CPU seconds to compile a new pattern in the worker; ordinary ones take under a millisecond. Windows measures
+# thread CPU time in 15.6 ms steps, so the limit is several steps.
+COMPILE_LIMIT = 0.1
 WORKER_GRACE = 1.0  # seconds past its own limits before a worker that has not answered is replaced
 WORKER_START_WAIT = 10.0
 WORKER_MEMORY = 512 * 1024 * 1024  # bytes; past this the worker fails the pattern instead of growing
@@ -66,6 +68,7 @@ MAX_ACCEPTED = 50_000  # vetted patterns remembered, by digest
 MAX_WAITING = 8  # requests that may wait for a turn with the worker at once
 START_BACKOFF = 30.0  # seconds before starting the worker again after it failed to start
 REFUSAL_RETRY = 60.0  # seconds a refusal that depends on timing is remembered (invalid ones: until restart)
+MEMORY_REFUSAL_RETRY = 600.0  # and one for memory, in case the machine itself was short of memory
 MAX_SCHEMA_DEPTH = 20
 # Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
 MAX_SCHEMA_NODES = 500
@@ -570,10 +573,15 @@ class _Worker:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError as exc:
-            raise PatternCheckerUnavailable(f"the pattern checker did not start ({exc})") from exc
-        self._replies: queue.Queue[str | None] = queue.Queue()
-        threading.Thread(target=self._read, name="pattern-checker-reader", daemon=True).start()
-        ready = self._reply(WORKER_START_WAIT)
+            log.warning("The pattern checker did not start: %s", exc)
+            raise PatternCheckerUnavailable("the pattern checker did not start") from exc
+        try:
+            self._replies: queue.Queue[str | None] = queue.Queue()
+            threading.Thread(target=self._read, name="pattern-checker-reader", daemon=True).start()
+            ready = self._reply(WORKER_START_WAIT)
+        except BaseException:
+            self.stop()
+            raise
         if ready is None or ready.get("ready") is not True:
             self.stop()
             raise PatternCheckerUnavailable("the pattern checker did not start")
@@ -663,13 +671,15 @@ class _PatternChecker:
             self._worker = None
         if self._worker is None:
             if time.monotonic() - self._failed_start < START_BACKOFF:
-                raise PatternCheckerUnavailable("the pattern checker did not start; it is tried again shortly")
+                raise PatternCheckerUnavailable("the pattern checker did not start")
             try:
                 self._worker = _Worker()
-            except PatternCheckerUnavailable:
+            except Exception as exc:
                 self._failed_start = time.monotonic()
-                log.warning("The pattern checker did not start")
-                raise
+                log.warning("The pattern checker did not start: %s", exc)
+                if isinstance(exc, PatternCheckerUnavailable):
+                    raise
+                raise PatternCheckerUnavailable("the pattern checker did not start") from exc
             if not self._worker.memory_limited:
                 log.warning("The pattern checker runs without a memory cap on this system")
         try:
@@ -776,23 +786,24 @@ def _vet(check: RegexCheck, deadline: float) -> str | None:
         if reply is not None or time.monotonic() - asked >= 0.9 * wait:
             break
     seconds = reply.get("seconds") if reply is not None else None
-    lasting = True  # whether the refusal holds whatever the machine is doing
+    retry: float | None = REFUSAL_RETRY  # how long the refusal is remembered; None: until restart
     if reply is None:
-        problem, lasting = f"the pattern is too large or complex to check safely; {_SIMPLER}", False
+        problem = f"the pattern is too large or complex to check safely; {_SIMPLER}"
     elif reply.get("memory") is True:
         problem = f"the pattern needs more than {WORKER_MEMORY // 2**20} MB to compile; {_SIMPLER}"
+        retry = MEMORY_REFUSAL_RETRY
     elif "error" in reply:
-        problem = str(reply["error"])
+        problem, retry = str(reply["error"]), None  # invalid whatever the machine is doing
     elif not isinstance(seconds, int | float) or isinstance(seconds, bool):
-        problem, lasting = "the pattern checker gave no answer for this pattern", False
+        problem = "the pattern checker gave no answer for this pattern"
     elif seconds > COMPILE_LIMIT:
         limit = f"{COMPILE_LIMIT * 1000:.0f} ms"
         took = f"{seconds * 1000:.0f} ms"
-        problem, lasting = f"the pattern takes too long to compile ({took}; the limit is {limit}); {_SIMPLER}", False
+        problem = f"the pattern takes too long to compile ({took}; the limit is {limit}); {_SIMPLER}"
     else:
         _accepted.put(key, True)
         return None
-    _refused.put(key, (problem, None if lasting else time.monotonic() + REFUSAL_RETRY))
+    _refused.put(key, (problem, None if retry is None else time.monotonic() + retry))
     return problem
 
 
@@ -801,6 +812,7 @@ class RegexBudget:
 
     def __init__(self, seconds: float | None = None) -> None:
         self.left = REGEX_BUDGET if seconds is None else seconds
+        self.reason: str | None = None  # why the view stopped early, when it was not the time
 
 
 # Results by (flags, pattern, answer), kept compact: (passed, detail, expires). A result that is not a pass
@@ -830,14 +842,14 @@ def _search(check: RegexCheck, text: str, budget: RegexBudget) -> CheckResult:
     if cached is not None and (cached[2] is None or cached[2] > time.monotonic()):
         return CheckResult(kind=check.kind, passed=cached[0], detail=cached[1])
     if budget.left <= 0:
-        return _not_checked_yet(check)  # not cached: a later view runs it
+        return _not_checked_yet(check, budget.reason)  # not cached: a later view runs it
     request = {"op": "search", "pattern": check.pattern, "flags": check.flags, "text": text, "timeout": REGEX_TIMEOUT}
     start = time.perf_counter()
     try:
         reply = _checker.ask(request, REGEX_TIMEOUT + COMPILE_LIMIT + WORKER_GRACE, turn_wait=budget.left)
     except PatternCheckerUnavailable as exc:  # busy, or not started: this view stops; a later one continues
-        budget.left = 0
-        return _not_checked_yet(check, str(exc))
+        budget.left, budget.reason = 0, str(exc)
+        return _not_checked_yet(check, budget.reason)
     finally:
         budget.left -= time.perf_counter() - start
     found = reply.get("found") if reply is not None else None

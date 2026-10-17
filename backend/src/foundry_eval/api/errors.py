@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from ..credentials.redaction import sanitize_error_text
 from ..credentials.store import CredentialStoreError
 from ..execution.runs import RunValidationError
-from ..grading.checks import PatternCheckerUnavailable
+from ..grading.checks import START_BACKOFF, PatternCheckerBusy, PatternCheckerUnavailable
 from ..instance_lock import InstanceLockError
 from ..judging.service import JudgeValidationError
 from ..pricing.retail import RetailPricesError
@@ -47,8 +47,9 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(PatternCheckerUnavailable)
     async def pattern_checker_unavailable(_: Request, exc: PatternCheckerUnavailable) -> JSONResponse:
-        detail = f"Pattern checks could not be vetted: {exc}. Try again shortly."
-        return JSONResponse({"detail": detail}, status_code=503, headers={"Retry-After": "5"})
+        retry = 5 if isinstance(exc, PatternCheckerBusy) else round(START_BACKOFF)
+        detail = f"Pattern checks could not be vetted now: {exc}. Try again in {retry} s."
+        return JSONResponse({"detail": detail}, status_code=503, headers={"Retry-After": str(retry)})
 
     @app.exception_handler(InstanceLockError)
     async def locked(_: Request, exc: InstanceLockError) -> JSONResponse:

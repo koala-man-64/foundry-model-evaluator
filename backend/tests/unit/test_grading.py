@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from decimal import Decimal
 
@@ -368,6 +369,52 @@ def test_a_busy_checker_never_holds_a_view_or_a_save_for_long(no_cached_results,
     assert problems(r"\d+-busy") == []
 
 
+def test_a_busy_view_says_so_on_every_answer_it_leaves_unchecked(no_cached_results):
+    from foundry_eval.grading import checks as module
+
+    slow = check(kind="regex", pattern=SLOW)
+    budget = RegexBudget(0.2)
+    assert module._checker._lock.acquire(timeout=5)
+    try:
+        details = [run_checks([slow], f"busy-{n}-aaa", budget=budget).results[0].detail for n in range(3)]
+    finally:
+        module._checker._lock.release()
+    assert all("the pattern checker is busy" in d for d in details), details
+
+
+def test_a_worker_that_cannot_finish_starting_is_stopped_and_backs_off(monkeypatch):
+    import threading
+
+    from foundry_eval.grading import checks as module
+
+    module._checker.close()
+    stopped: list[int] = []
+    stop = module._Worker.stop
+    start = threading.Thread.start
+
+    def failing_start(self):
+        if self.name == "pattern-checker-reader":
+            raise RuntimeError("can't start new thread")
+        return start(self)
+
+    def recording_stop(self):
+        stopped.append(self.process.pid)
+        return stop(self)
+
+    monkeypatch.setattr(threading.Thread, "start", failing_start)
+    monkeypatch.setattr(module._Worker, "stop", recording_stop)
+    monkeypatch.setattr(module._checker, "_failed_start", -math.inf)
+    with pytest.raises(module.PatternCheckerUnavailable):
+        problems(r"\d+-no-reader")
+    assert len(stopped) == 1  # the process it started was stopped, not left running
+    with pytest.raises(module.PatternCheckerUnavailable):
+        problems(r"\d+-no-reader-again")
+    assert len(stopped) == 1  # backing off: no second process
+    monkeypatch.setattr(threading.Thread, "start", start)
+    monkeypatch.setattr(module._checker, "_failed_start", -math.inf)
+    assert problems(r"\d+-reader-back") == []
+
+
 def test_a_worker_that_stops_once_while_vetting_gets_another_try(monkeypatch):
     from foundry_eval.grading import checks as module
 
@@ -392,14 +439,22 @@ def test_refusals_that_depend_on_timing_are_vetted_again_later(monkeypatch):
     def counting(self, request, wait):
         vets.append(request["pattern"])
         reply = ask(self, request, wait)
-        return {"seconds": 1.0} if request["pattern"].endswith("-timing") else reply  # as on a busy machine
+        if request["pattern"].endswith("-timing"):
+            return {"seconds": 1.0}  # as on a busy machine
+        if request["pattern"].endswith("-memory"):
+            return {"memory": True}  # as on a machine short of memory
+        return reply
 
     monkeypatch.setattr(module._Worker, "ask", counting)
     monkeypatch.setattr(module, "REFUSAL_RETRY", 0.0)
+    monkeypatch.setattr(module, "MEMORY_REFUSAL_RETRY", 0.0)
     for _ in range(2):
         [problem] = problems(r"\d+-timing")
         assert "takes too long to compile" in problem
-    assert vets == [r"\d+-timing", r"\d+-timing"]  # vetted again, not refused from memory
+        [problem] = problems(r"\d+-memory")
+        assert "needs more than 512 MB" in problem
+    # Vetted again, not refused from memory.
+    assert vets == [r"\d+-timing", r"\d+-memory", r"\d+-timing", r"\d+-memory"]
     # An invalid pattern is refused for good.
     for _ in range(2):
         [problem] = problems("(invalid-for-good")

@@ -246,7 +246,9 @@ def test_a_busy_pattern_checker_asks_the_client_to_try_again(client, monkeypatch
     finally:
         module._checker._lock.release()
     assert response.status_code == 503 and response.headers["Retry-After"] == "5"
-    assert "try again" in response.json()["detail"].lower()
+    assert response.json()["detail"] == (
+        "Pattern checks could not be vetted now: the pattern checker is busy. Try again in 5 s."
+    )
     assert client.post("/api/suites", json=payload).status_code == 201  # nothing was remembered
 
 

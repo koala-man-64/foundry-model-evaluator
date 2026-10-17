@@ -157,11 +157,14 @@ class RunService:
         # Checks an automatic-judging configuration (set by the judge service).
         self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
-    def preview(self, request: RunRequest) -> RunPreview:
-        try:
-            errors = pattern_problems([p.checks for p in request.prompts])
-        except PatternCheckerUnavailable as exc:
-            errors = [f"Pattern checks could not be vetted: {exc}; try again shortly."]
+    def preview(self, request: RunRequest, *, pattern_errors: list[str] | None = None) -> RunPreview:
+        if pattern_errors is not None:
+            errors = list(pattern_errors)
+        else:
+            try:
+                errors = pattern_problems([p.checks for p in request.prompts])
+            except PatternCheckerUnavailable as exc:
+                errors = [f"Pattern checks could not be vetted now: {exc}; try again shortly."]
         warnings: list[str] = []
         profiles: dict[str, ModelProfile] = {}
         endpoints: dict[str, Endpoint] = {}
@@ -260,8 +263,8 @@ class RunService:
         existing = self.runs.by_idempotency_key(idempotency_key)
         if existing is not None:
             return existing.id, False
-        pattern_problems([p.checks for p in request.prompts])  # a busy checker is a 503 here, not a refusal
-        preview = self.preview(request)
+        # Vetted here so that a busy checker is answered 503, not refused as a problem with the run.
+        preview = self.preview(request, pattern_errors=pattern_problems([p.checks for p in request.prompts]))
         if not preview.ok:
             raise RunValidationError(preview)
         profiles = {s.profile_id: self.profiles.get(s.profile_id) for s in request.candidates}
