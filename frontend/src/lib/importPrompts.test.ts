@@ -38,7 +38,7 @@ describe('importPrompts', () => {
     const result = importPrompts('set.jsonl', jsonl)
     expect(result.prompts).toEqual([{ title: '', system: '', user: '6*3?', reference: '18', checks: [] }])
     expect(result.errors).toEqual([
-      'Line 2: check 1: unknown check kind "equals" (use contains, not_contains, exact, number, json_schema).',
+      'Line 2: check 1: unknown check kind "equals" (use contains, not_contains, exact, regex, number, json_schema).',
       'Line 3: check 1: case_sensitive must be true or false.',
       'Line 4: check 1: give a number check value as a string (or a whole number), so it stays exact.',
       'Line 5: "title" must be text.',
@@ -51,6 +51,7 @@ describe('importPrompts', () => {
       '{"user": "a", "checks": [{"kind": "number", "value": "1", "which": "first"}]}',
       '{"user": "b", "checks": [{"kind": "contains", "value": "X", "casesensitive": true}]}',
       '{"user": "c", "checks": [{"kind": "number", "value": "1", "tolerance": null}]}',
+      '{"user": "e", "checks": [{"kind": "regex", "value": "x"}]}',
       '{"user": "d", "checks": [{"kind": "number", "value": "1", "tolerance": "0.5", "which": "any"}]}',
     ].join('\n')
     const result = importPrompts('set.jsonl', jsonl)
@@ -59,6 +60,7 @@ describe('importPrompts', () => {
       'Line 1: check 1: which must be "last" or "any".',
       'Line 2: check 1: unknown field casesensitive for a contains check.',
       'Line 3: check 1: give the tolerance as a string (or a whole number).',
+      'Line 4: check 1: unknown field value for a regex check.',
     ])
   })
 

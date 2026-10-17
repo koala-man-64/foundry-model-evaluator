@@ -11,9 +11,12 @@ Nothing is silently ignored or guessed:
 - A check that still cannot be evaluated on a particular answer reports ``passed = None``, "could not be
   evaluated". That is unknown, not a fail and not a pass, and it never raises.
 
-There is deliberately no regular-expression check: Python's ``re`` has no time limit and holds the
-interpreter lock, so a single slow pattern on one answer would freeze the app on every read of a run
-whose checks are frozen. Adding one needs a regex engine with a time budget (a new dependency).
+Pattern checks use the ``regex`` package, not Python's ``re``: ``re`` has no time limit and holds the
+interpreter lock, so one slow pattern on one answer would freeze every read of a run whose checks are
+frozen. Each search here has a time limit (``REGEX_TIMEOUT``) and releases the lock while it runs. A
+search that runs out of time reports "could not check" (unknown), and a pattern that runs out of time
+``MAX_REGEX_TIMEOUTS`` times is skipped for the rest of the process, so a bad pattern costs a bounded
+amount of time however many answers it is checked against.
 """
 
 from __future__ import annotations
@@ -21,13 +24,18 @@ from __future__ import annotations
 import json
 import math
 import re
+import threading
 import unicodedata
 from decimal import Decimal, DecimalException, localcontext
 from typing import Annotated, Any, Literal
 
+import regex
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 MAX_CHECKS = 10
+MAX_PATTERN = 500
+REGEX_TIMEOUT = 0.25  # seconds per answer
+MAX_REGEX_TIMEOUTS = 3  # per pattern and process; after that the pattern is skipped
 MAX_SCHEMA_DEPTH = 20
 # Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
 MAX_SCHEMA_NODES = 500
@@ -66,6 +74,23 @@ class ExactCheck(_Check):
     kind: Literal["exact"]
     value: str = Field(min_length=1, max_length=20_000)
     case_sensitive: bool = False
+
+
+class RegexCheck(_Check):
+    """The pattern is found in the answer (``regex`` syntax, searched with a time limit)."""
+
+    kind: Literal["regex"]
+    pattern: str = Field(min_length=1, max_length=MAX_PATTERN)
+    case_sensitive: bool = False
+
+    @field_validator("pattern")
+    @classmethod
+    def _compiles(cls, value: str) -> str:
+        try:
+            regex.compile(value)
+        except regex.error as exc:
+            raise ValueError(f"invalid regular expression: {exc}") from exc
+        return value
 
 
 class NumberCheck(_Check):
@@ -108,7 +133,7 @@ class JsonSchemaCheck(_Check):
 
 
 Check = Annotated[
-    ContainsCheck | NotContainsCheck | ExactCheck | NumberCheck | JsonSchemaCheck,
+    ContainsCheck | NotContainsCheck | ExactCheck | RegexCheck | NumberCheck | JsonSchemaCheck,
     Field(discriminator="kind"),
 ]
 
@@ -355,7 +380,33 @@ def _json_answer(text: str) -> Any:
     return json.loads(body, parse_float=Decimal, parse_constant=_no_constants)
 
 
+_slow_patterns: dict[tuple[str, bool], int] = {}
+_slow_lock = threading.Lock()
+
+
+def _search(check: RegexCheck, text: str) -> CheckResult:
+    key = (check.pattern, check.case_sensitive)
+    with _slow_lock:
+        timeouts = _slow_patterns.get(key, 0)
+    if timeouts >= MAX_REGEX_TIMEOUTS:
+        detail = f"could not check: the pattern ran out of time {timeouts} times and is skipped"
+        return CheckResult(kind=check.kind, passed=None, detail=detail)
+    flags = 0 if check.case_sensitive else regex.IGNORECASE
+    try:
+        found = regex.search(check.pattern, text, flags, timeout=REGEX_TIMEOUT, concurrent=True)
+    except TimeoutError:
+        with _slow_lock:
+            _slow_patterns[key] = _slow_patterns.get(key, 0) + 1
+        detail = f"could not check: the pattern took longer than {REGEX_TIMEOUT} s on this answer"
+        return CheckResult(kind=check.kind, passed=None, detail=detail)
+    return CheckResult(
+        kind=check.kind, passed=found is not None, detail="pattern found" if found else "pattern not found"
+    )
+
+
 def _evaluate(check: Check, text: str) -> CheckResult:
+    if isinstance(check, RegexCheck):
+        return _search(check, text)
     if isinstance(check, ContainsCheck | NotContainsCheck):
         present = _fold(check.value, check.case_sensitive) in _fold(text, check.case_sensitive)
         passed = present if isinstance(check, ContainsCheck) else not present

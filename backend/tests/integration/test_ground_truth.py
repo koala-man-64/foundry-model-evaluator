@@ -139,7 +139,7 @@ def test_the_judge_sees_the_reference_and_cells_ignore_reference_edits(client):
 @pytest.mark.parametrize(
     "check",
     [
-        {"kind": "regex", "pattern": "(a+)+$"},
+        {"kind": "regex", "pattern": "[unclosed"},
         {"kind": "json_schema", "schema": {"minimum": "5"}},
         {"kind": "json_schema", "schema": {"type": "object", "oneOf": []}},
         {"kind": "number", "value": 0.5},

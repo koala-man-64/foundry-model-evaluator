@@ -27,6 +27,7 @@ const CHECK_LABELS: Record<string, string> = {
   contains: 'contains',
   not_contains: 'does not contain',
   exact: 'equals',
+  regex: 'pattern',
   number: 'number',
   json_schema: 'JSON schema',
 }

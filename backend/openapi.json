@@ -4526,7 +4526,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Input"
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -4539,6 +4540,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Input"
@@ -5250,6 +5254,34 @@
         "title": "RefreshOut",
         "type": "object"
       },
+      "RegexCheck": {
+        "additionalProperties": false,
+        "description": "The pattern is found in the answer (``regex`` syntax, searched with a time limit).",
+        "properties": {
+          "case_sensitive": {
+            "default": false,
+            "title": "Case Sensitive",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "regex",
+            "title": "Kind",
+            "type": "string"
+          },
+          "pattern": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Pattern",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "pattern"
+        ],
+        "title": "RegexCheck",
+        "type": "object"
+      },
       "RetryOut": {
         "properties": {
           "attempt_ids": {
@@ -5788,7 +5820,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Output"
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -5801,6 +5834,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Output"
@@ -6465,7 +6501,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Output"
+                  "number": "#/components/schemas/NumberCheck-Output",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -6478,6 +6515,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Output"
@@ -6537,7 +6577,8 @@
                   "exact": "#/components/schemas/ExactCheck",
                   "json_schema": "#/components/schemas/JsonSchemaCheck",
                   "not_contains": "#/components/schemas/NotContainsCheck",
-                  "number": "#/components/schemas/NumberCheck-Input"
+                  "number": "#/components/schemas/NumberCheck-Input",
+                  "regex": "#/components/schemas/RegexCheck"
                 },
                 "propertyName": "kind"
               },
@@ -6550,6 +6591,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ExactCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RegexCheck"
                 },
                 {
                   "$ref": "#/components/schemas/NumberCheck-Input"

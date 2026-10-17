@@ -248,6 +248,7 @@ shown, so they cost nothing and always agree with the checks frozen into the run
 |---|---|
 | Contains / Does not contain | the answer contains (or does not contain) the text, case-insensitive unless set |
 | Equals | the whole answer equals the text, ignoring leading, trailing and repeated whitespace |
+| Matches pattern | the regular expression is found in the answer (case-insensitive unless set), within a time limit |
 | Number | the last number in the answer (or any number) is within the tolerance of the value; `1,234.5` reads as 1234.5 |
 | JSON schema | the answer, optionally inside one ``` fence, is JSON that matches the schema |
 
@@ -269,9 +270,10 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   the wrong type (such as `"minimum": "5"`), `NaN` or `Infinity` in `const` or `enum`, or a number given as a float.
   A schema is limited to 500 sub-schemas, 200 `enum` values and 200 `properties` per object, so checking a large answer
   stays fast.
-- There is **no regular-expression check**. Python's regular expressions have no time limit and block the whole app
-  while they run, so one slow pattern on one answer would freeze every view of a run whose checks are frozen. A
-  pattern check needs a regex engine with a time budget, which is a new dependency.
+- **Matches pattern** uses the `regex` package, not Python's `re`, because `re` has no time limit and blocks the
+  whole app while it runs. Each search stops after 0.25 s and shows **could not check** (unknown). A pattern that runs
+  out of time three times is skipped until the app restarts, so a bad pattern costs at most about a second however
+  many answers it is checked against. Patterns are up to 500 characters; lookarounds and backreferences work.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was

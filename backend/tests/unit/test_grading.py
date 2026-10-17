@@ -92,7 +92,8 @@ def test_json_schema_check_round_trips_with_its_alias():
 @pytest.mark.parametrize(
     "definition",
     [
-        {"kind": "regex", "pattern": "x"},  # no regex check: Python's re has no time limit
+        {"kind": "regex", "pattern": "("},
+        {"kind": "regex", "pattern": "x" * 501},
         {"kind": "number", "value": "1e999999"},
         {"kind": "json_schema", "schema": {"minItems": "a"}},
         {"kind": "json_schema", "schema": {"minimum": "5"}},
@@ -179,3 +180,38 @@ def test_large_schemas_stay_fast_on_large_answers():
 def test_schema_numbers_compare_exactly():
     assert schema_error(Decimal("0.1"), {"type": "number", "maximum": 0.1}) is None
     assert schema_error(Decimal("0.30000000000000004"), {"maximum": 0.3}) is not None
+
+
+# --- pattern checks ----------------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("definition", "answer", "passed"),
+    [
+        ({"kind": "regex", "pattern": r"^\d{4}-\d{2}-\d{2}$"}, "2026-10-16", True),
+        ({"kind": "regex", "pattern": r"\bparis\b"}, "It is Paris.", True),
+        ({"kind": "regex", "pattern": r"\bparis\b", "case_sensitive": True}, "It is Paris.", False),
+        ({"kind": "regex", "pattern": r"(?<=total: )\d+"}, "total: 42", True),  # lookbehind is supported
+    ],
+)
+def test_pattern_checks(definition, answer, passed):
+    assert run_check(check(**definition), answer).passed is passed
+
+
+def test_a_slow_pattern_is_unknown_within_the_time_limit_and_then_skipped(monkeypatch):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "_slow_patterns", {})
+    slow = check(kind="regex", pattern=r"(a|aa)+$")  # catastrophic backtracking on a long run of a's
+    answer = "a" * 60 + "!"
+    for _ in range(module.MAX_REGEX_TIMEOUTS):
+        start = time.perf_counter()
+        result = run_check(slow, answer)
+        assert result.passed is None and "took longer than" in result.detail
+        assert time.perf_counter() - start < module.REGEX_TIMEOUT + 0.5
+    start = time.perf_counter()
+    skipped = run_check(slow, answer)
+    assert skipped.passed is None and "is skipped" in skipped.detail
+    assert time.perf_counter() - start < 0.05  # no more time spent on a known-slow pattern
+    # Other patterns are unaffected.
+    assert run_check(check(kind="regex", pattern="a+!"), answer).passed is True
