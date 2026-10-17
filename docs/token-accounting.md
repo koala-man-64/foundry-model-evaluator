@@ -276,8 +276,10 @@ shown, so they cost nothing and always agree with the checks frozen into the run
   or overflow the native stack while searching. So the app never compiles or searches a pattern itself; one worker
   process does both, with its memory capped at 512 MB (a Windows job object, or `RLIMIT_AS` on Linux). Limits:
   - When a suite is saved or a run is created, each new pattern is compiled once in the worker. A pattern that is
-    invalid, needs too much memory or takes longer than 0.05 s to compile is refused with a message (ordinary
-    patterns take well under a millisecond). Vetting one save stops after 10 s.
+    invalid, needs too much memory or takes more than 0.05 s of CPU time to compile is refused with a message
+    (ordinary patterns take well under a millisecond). An invalid pattern is refused until the app restarts; one
+    refused on timing is checked again after a minute, in case the machine was only busy. Vetting one save stops
+    after 10 s. When the worker is busy with other requests, the save is answered 503 with `Retry-After` instead.
   - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only. A worker that stops
     answering, overflows its stack or reaches its memory cap is replaced, and only that answer is affected.
   - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. Requests take

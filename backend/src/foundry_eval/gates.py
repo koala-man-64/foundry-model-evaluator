@@ -219,6 +219,10 @@ def _number(value: Any) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
 
+def _answers(count: int) -> str:
+    return f"{count} answer{'' if count == 1 else 's'}"
+
+
 def assess_metric(
     metric: str,
     difference: dict[str, Any] | None,
@@ -230,6 +234,32 @@ def assess_metric(
     comparison: dict[str, Any],
 ) -> dict[str, Any]:
     """One metric of one candidate against the baseline: regressed, ok, inconclusive or not applicable."""
+    result = _assess_metric(
+        metric,
+        difference,
+        tolerance=tolerance,
+        applies=applies,
+        candidate=candidate,
+        baseline=baseline,
+        comparison=comparison,
+    )
+    unknown = comparison.get("checks_unknown", 0)
+    if metric == "checks" and unknown and result["status"] != "not_applicable":
+        verb = "is" if unknown == 1 else "are"
+        result["reason"] = f"{result['reason']}; {_answers(unknown)} could not be checked and {verb} left out"
+    return result
+
+
+def _assess_metric(
+    metric: str,
+    difference: dict[str, Any] | None,
+    *,
+    tolerance: Decimal,
+    applies: bool,
+    candidate: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    comparison: dict[str, Any],
+) -> dict[str, Any]:
     name = _NAMES[metric]
     result: dict[str, Any] = {"status": "inconclusive", "tolerance": to_text(tolerance)}
     if difference is not None:
@@ -239,7 +269,8 @@ def assess_metric(
         return result
     pending = comparison.get("checks_not_checked", 0)
     if metric == "checks" and pending:
-        result["reason"] = f"{pending} answers were not pattern-checked yet; run the gate again to continue"
+        verb = "was" if pending == 1 else "were"
+        result["reason"] = f"{_answers(pending)} {verb} not pattern-checked yet; run the gate again to continue"
         return result
     if difference is None:
         mine = candidate.get(_CELLS[metric], 0)

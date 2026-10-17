@@ -139,6 +139,10 @@ def test_missing_evidence_is_inconclusive_and_absent_metrics_do_not_apply():
     assert "4 incomplete cost estimates" in unpriced["reason"]
     pending = assess("checks", difference("higher", 0.2), comparison={**COMPARISON, "checks_not_checked": 2})
     assert pending["status"] == "inconclusive" and "2 answers were not pattern-checked yet" in pending["reason"]
+    one = assess("checks", difference("higher", 0.2), comparison={**COMPARISON, "checks_not_checked": 1})
+    assert "1 answer was not pattern-checked yet" in one["reason"]
+    unknown = assess("checks", difference("higher", 0.2), comparison={**COMPARISON, "checks_unknown": 3})
+    assert unknown["status"] == "ok" and unknown["reason"].endswith("; 3 answers could not be checked and are left out")
     assert (
         assess("judge", difference("higher", 0.2), comparison={**COMPARISON, "checks_not_checked": 2})["status"] == "ok"
     )

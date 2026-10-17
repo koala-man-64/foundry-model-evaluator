@@ -1171,6 +1171,11 @@ export interface components {
              * @default 0
              */
             checks_not_checked: number;
+            /**
+             * Checks Unknown
+             * @default 0
+             */
+            checks_unknown: number;
             /** Currency */
             currency: string;
             /**

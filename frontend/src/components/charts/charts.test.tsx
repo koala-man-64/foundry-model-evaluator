@@ -59,6 +59,7 @@ function comparison(candidates: ComparisonCandidate[], judgeBases = 1): Comparis
     baseline: null,
     has_checks: false,
     checks_not_checked: 0,
+    checks_unknown: 0,
     candidates,
     cells: [],
     notes: [],

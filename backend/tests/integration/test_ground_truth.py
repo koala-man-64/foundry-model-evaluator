@@ -226,6 +226,28 @@ def test_a_bad_pattern_in_an_ad_hoc_run_is_refused_before_anything_runs(client):
     assert any(e.startswith("Prompt 1, check 1: invalid regular expression") for e in preview["errors"])
     response = client.post("/api/runs", json=request, headers={"Idempotency-Key": "idem-gt-bad-pattern"})
     assert response.status_code == 422 and "invalid regular expression" in response.text
+    # Saying the prompt comes from a suite does not skip vetting.
+    request["prompts"][0]["suite_prompt_id"] = "not-a-suite-prompt"
+    preview = client.post("/api/runs/preview", json=request).json()
+    assert any("invalid regular expression" in e for e in preview["errors"])
+
+
+def test_a_busy_pattern_checker_asks_the_client_to_try_again(client, monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    endpoint = create_endpoint(client)
+    profile = chat_profile(client, endpoint["id"], "deepseek-pattern-busy")
+    payload = suite_payload([profile["id"]])
+    payload["prompts"][0]["checks"] = [{"kind": "regex", "pattern": r"busy-\d+-new"}]
+    monkeypatch.setattr(module, "VET_SECONDS", 0.3)
+    assert module._checker._lock.acquire(timeout=5)  # another request has the worker
+    try:
+        response = client.post("/api/suites", json=payload)
+    finally:
+        module._checker._lock.release()
+    assert response.status_code == 503 and response.headers["Retry-After"] == "5"
+    assert "try again" in response.json()["detail"].lower()
+    assert client.post("/api/suites", json=payload).status_code == 201  # nothing was remembered
 
 
 def test_ad_hoc_runs_accept_references_and_checks(client):

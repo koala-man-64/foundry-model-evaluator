@@ -1192,6 +1192,11 @@
             "title": "Checks Not Checked",
             "type": "integer"
           },
+          "checks_unknown": {
+            "default": 0,
+            "title": "Checks Unknown",
+            "type": "integer"
+          },
           "currency": {
             "title": "Currency",
             "type": "string"

@@ -63,6 +63,7 @@ function comparison(judgeBases: number, candidates: ComparisonCandidate[]): Comp
     baseline: null,
     has_checks: false,
     checks_not_checked: 0,
+    checks_unknown: 0,
     candidates,
     cells: [],
     notes: [],

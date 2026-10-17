@@ -201,6 +201,8 @@ class Comparison(BaseModel):
     # Answers left out of the checks pass rate because this view ran out of time for pattern checks
     # before checking them. Viewing again continues; a baseline gate is inconclusive until this is 0.
     checks_not_checked: int = 0
+    # Answers left out of the checks pass rate because a check could not be evaluated on them.
+    checks_unknown: int = 0
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -217,6 +219,7 @@ class _Observation:
     judge_evaluation_ids: tuple[str, ...] = ()
     judge_spread: float | None = None
     checks: float | None = None  # 1.0 when the answer passes every check, 0.0 when not, None if unknown
+    checks_state: str | None = None  # why checks is None: "not_checked" (not checked yet) or "unknown"
     checks_fp: str | None = None  # which checks graded it (None: its prompt has no checks)
     reference_fp: str = ""  # which reference answer the judge saw for its prompt ("" for none)
 
@@ -483,8 +486,6 @@ class ComparisonService:
         notes: list[str] = []
         has_checks = False
         regex_budget = RegexBudget()
-        checks_not_checked = 0  # answers left out of the checks pass rate: not pattern-checked yet
-        checks_unknown = 0  # and answers a check could not be evaluated on
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
@@ -530,11 +531,9 @@ class ComparisonService:
                     if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
                     else None
                 )
+                checks_state = None
                 if checked is not None and checked.passed is None:
-                    if any(r.not_checked for r in checked.results):
-                        checks_not_checked += 1
-                    else:
-                        checks_unknown += 1
+                    checks_state = "not_checked" if any(r.not_checked for r in checked.results) else "unknown"
                 observation = _Observation(
                     attempt=attempt,
                     run_id=run.id,
@@ -545,6 +544,7 @@ class ComparisonService:
                     judge_evaluation_ids=answer.evaluation_ids if answer else (),
                     judge_spread=answer.spread if answer else None,
                     checks=_checks_value(checked.passed) if checked is not None else None,
+                    checks_state=checks_state,
                     checks_fp=_fingerprint(checks_json(prompt.checks)) if prompt.checks else None,
                     reference_fp=_fingerprint(prompt.reference_text),
                 )
@@ -612,12 +612,23 @@ class ComparisonService:
                 f"{len(mixed_checks)} cell{'s' if many else ''} used different checks in different runs and "
                 f"{'are' if many else 'is'} left out of the checks pass rate."
             )
+        # Only answers the checks pass rate would otherwise use: succeeded, in matched cells graded one way.
+        unchecked = [
+            o.checks_state
+            for key in order
+            for cell in matched
+            if cell not in mixed_checks
+            for o in data[key].by_cell[cell]
+            if o.attempt.status is AttemptStatus.SUCCEEDED and o.checks_state is not None
+        ]
+        checks_not_checked = unchecked.count("not_checked")
+        checks_unknown = unchecked.count("unknown")
         if checks_not_checked:
             many = checks_not_checked != 1
             notes.append(
                 f"{checks_not_checked} {'answers were' if many else 'answer was'} not pattern-checked yet (this view "
-                f"ran out of time for pattern checks) and {'are' if many else 'is'} left out of the checks pass rate; "
-                "reload to continue."
+                "ran out of time for pattern checks, or the pattern checker was busy) and "
+                f"{'are' if many else 'is'} left out of the checks pass rate; reload to continue."
             )
         if checks_unknown:
             many = checks_unknown != 1
@@ -790,6 +801,7 @@ class ComparisonService:
             baseline=baseline,
             has_checks=has_checks,
             checks_not_checked=checks_not_checked,
+            checks_unknown=checks_unknown,
             candidates=results,
             cells=cell_rows,
             notes=notes,

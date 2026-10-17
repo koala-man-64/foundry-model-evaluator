@@ -14,7 +14,7 @@ from ..credentials.store import CredentialStore
 from ..db.database import Database
 from ..domain.generation import GenerationSettings, SettingIssue
 from ..domain.profiles import Endpoint, ModelProfile
-from ..grading.checks import MAX_CHECKS, Check, pattern_problems
+from ..grading.checks import MAX_CHECKS, Check, PatternCheckerUnavailable, pattern_problems
 from ..money import Money, MoneyInput, add, mul, to_text
 from ..pricing.ratecard import CATEGORY_LABELS, RateStatus
 from ..pricing.service import PricingService
@@ -158,8 +158,10 @@ class RunService:
         self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
     def preview(self, request: RunRequest) -> RunPreview:
-        # A suite's prompts were vetted when the suite was saved, so only new prompts are vetted here.
-        errors = pattern_problems([[] if p.suite_prompt_id else p.checks for p in request.prompts])
+        try:
+            errors = pattern_problems([p.checks for p in request.prompts])
+        except PatternCheckerUnavailable as exc:
+            errors = [f"Pattern checks could not be vetted: {exc}; try again shortly."]
         warnings: list[str] = []
         profiles: dict[str, ModelProfile] = {}
         endpoints: dict[str, Endpoint] = {}
@@ -258,6 +260,7 @@ class RunService:
         existing = self.runs.by_idempotency_key(idempotency_key)
         if existing is not None:
             return existing.id, False
+        pattern_problems([p.checks for p in request.prompts])  # a busy checker is a 503 here, not a refusal
         preview = self.preview(request)
         if not preview.ok:
             raise RunValidationError(preview)

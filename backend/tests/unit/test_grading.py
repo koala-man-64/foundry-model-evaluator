@@ -355,11 +355,12 @@ def test_a_busy_checker_never_holds_a_view_or_a_save_for_long(no_cached_results,
     try:
         start = time.perf_counter()
         outcome = run_checks([slow], "busy-aaa", budget=RegexBudget(0.4))
-        assert outcome.results[0].not_checked and outcome.results[0].detail == module.NOT_CHECKED_YET
+        assert outcome.results[0].not_checked and "busy" in outcome.results[0].detail
         assert time.perf_counter() - start < 0.4 + 0.3
         start = time.perf_counter()
-        [problem] = problems(r"\d+-busy")
-        assert "busy" in problem and time.perf_counter() - start < 0.3 + 0.3
+        with pytest.raises(module.PatternCheckerBusy):  # the save is answered 503, not refused
+            problems(r"\d+-busy")
+        assert time.perf_counter() - start < 0.3 + 0.3
     finally:
         module._checker._lock.release()
     # Neither was remembered: both work once the worker is free.
@@ -380,6 +381,30 @@ def test_a_worker_that_stops_once_while_vetting_gets_another_try(monkeypatch):
     monkeypatch.setattr(module._Worker, "ask", flaky)
     assert problems(r"\d+-second-try") == []
     assert calls == ["vet", "vet"]
+
+
+def test_refusals_that_depend_on_timing_are_vetted_again_later(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    ask = module._Worker.ask
+    vets: list[str] = []
+
+    def counting(self, request, wait):
+        vets.append(request["pattern"])
+        reply = ask(self, request, wait)
+        return {"seconds": 1.0} if request["pattern"].endswith("-timing") else reply  # as on a busy machine
+
+    monkeypatch.setattr(module._Worker, "ask", counting)
+    monkeypatch.setattr(module, "REFUSAL_RETRY", 0.0)
+    for _ in range(2):
+        [problem] = problems(r"\d+-timing")
+        assert "takes too long to compile" in problem
+    assert vets == [r"\d+-timing", r"\d+-timing"]  # vetted again, not refused from memory
+    # An invalid pattern is refused for good.
+    for _ in range(2):
+        [problem] = problems("(invalid-for-good")
+        assert "invalid regular expression" in problem
+    assert vets.count("(invalid-for-good") == 1
 
 
 def test_remembered_patterns_are_bounded(monkeypatch):
@@ -409,3 +434,22 @@ def test_a_worker_that_dies_mid_search_fails_only_that_answer_and_is_replaced(no
     assert results[0].passed is None and "stopped" in results[0].detail
     assert run_check(slow, "aa").passed is True  # a new worker took over
     assert module._checker._worker is not worker
+
+
+def test_a_failure_after_asking_never_mixes_up_replies(no_cached_results, monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    assert run_check(check(kind="regex", pattern="warm"), "warm").passed is True  # the worker is running
+    reply = module._Worker._reply
+    calls: list[float] = []
+
+    def failing_once(self, wait):
+        calls.append(wait)
+        if len(calls) == 1:
+            raise ValueError("lost while waiting")  # the worker still answers this request
+        return reply(self, wait)
+
+    monkeypatch.setattr(module._Worker, "_reply", failing_once)
+    assert run_check(check(kind="regex", pattern="a"), "a").passed is None  # could not be evaluated
+    # The next request must get its own answer, not the late one for "a" in "a".
+    assert run_check(check(kind="regex", pattern="a"), "b").passed is False
