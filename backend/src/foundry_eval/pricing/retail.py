@@ -118,13 +118,21 @@ def raw_json(item: RetailItem) -> str:
     return json.dumps(_jsonable(item.raw), sort_keys=True)
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
+def _origin(url: object) -> tuple[str, str, int | None] | None:
+    """Scheme, host and effective port; None for a link that is never the same origin (not text, a malformed
+    port, or credentials in it)."""
+    if not isinstance(url, str):
+        return None
     try:
-        port = parts.port or {"https": 443, "http": 80}.get(scheme)
-    except ValueError:  # a malformed port is never the same origin
-        return (scheme, "", -1)
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    scheme = parts.scheme.lower()
+    if port is None:
+        port = {"https": 443, "http": 80}.get(scheme)
     return (scheme, (parts.hostname or "").lower(), port)
 
 
@@ -150,10 +158,11 @@ class RetailPricesClient:
         )
         return f"{self.base_url}?{query}"
 
-    def _same_origin(self, url: str) -> bool:
+    def _same_origin(self, url: object) -> bool:
         """Scheme, host and effective port must match. The live API writes ``prices.azure.com:443`` in its
         next-page links, which is the same origin as ``prices.azure.com``; any other host, scheme or port is not."""
-        return _origin(url) == _origin(self.base_url)
+        origin = _origin(url)
+        return origin is not None and origin == _origin(self.base_url)
 
     async def fetch(
         self,
@@ -204,7 +213,7 @@ class RetailPricesClient:
                         if next_link and not self._same_origin(next_link):
                             raise RetailPricesError("Retail Prices API returned a next-page link on another host")
                         url = next_link or None
-                except (httpx2.HTTPError, RetailPricesError, ValueError) as exc:
+                except (httpx2.HTTPError, httpx2.InvalidURL, RetailPricesError, ValueError) as exc:
                     failures.append(f"Filter {clause!r} failed: {exc}")
         if failures:
             raise RetailPricesError("; ".join(failures))

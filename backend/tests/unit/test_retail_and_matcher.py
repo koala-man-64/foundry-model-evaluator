@@ -104,14 +104,32 @@ async def test_client_fails_when_every_filter_fails():
         "https://prices.azure.com:8443/api/retail/prices?$skip=100",  # another port
         "https://prices.azure.com.evil.example/api/retail/prices",
         "https://prices.azure.com:notaport/api/retail/prices",
+        "https://prices.azure.com:0/api/retail/prices",  # port 0 is not the default port
+        "https://user:secret@prices.azure.com/api/retail/prices",  # credentials in the link
+        "https://user@prices.azure.com/api/retail/prices",
+        "https://[prices.azure.com/api/retail/prices",  # urlsplit refuses it
+        5,  # not text
     ],
 )
 async def test_client_refuses_next_link_to_other_origin(next_link):
     def handler(request: httpx2.Request) -> httpx2.Response:
-        body = '{"Items": [], "NextPageLink": "' + next_link + '"}'
+        body = json.dumps({"Items": [], "NextPageLink": next_link})
         return httpx2.Response(200, content=body.encode())
 
     with pytest.raises(RetailPricesError, match="another host"):
+        await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch(
+            "eastus2", "USD", ["serviceName eq 'X'"]
+        )
+
+
+async def test_a_next_link_the_client_cannot_request_fails_the_fetch_cleanly():
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        link = "https://prices.azure.com/api/retail/prices?$skip=1" + chr(0)  # same origin, not a valid URL
+        if "skip" in str(request.url):
+            return httpx2.Response(200, content=b'{"Items": []}')
+        return httpx2.Response(200, content=json.dumps({"Items": [], "NextPageLink": link}).encode())
+
+    with pytest.raises(RetailPricesError, match="failed"):
         await RetailPricesClient(transport=httpx2.MockTransport(handler)).fetch(
             "eastus2", "USD", ["serviceName eq 'X'"]
         )
