@@ -186,11 +186,20 @@ def test_pattern_checks_run_in_the_worker_and_reads_never_vet(client, monkeypatc
     detail = client.get(f"/api/runs/{run_id}").json()
     first = next(p["id"] for p in detail["prompts"] if p["position"] == 0)
     outcomes = [detail["check_results"][a["id"]] for a in detail["attempts"] if a["prompt_id"] == first]
-    found = {"kind": "regex", "passed": True, "detail": "pattern found"}
+    found = {"kind": "regex", "passed": True, "detail": "pattern found", "not_checked": False}
     assert outcomes and all(o["results"][0] == found for o in outcomes)
     assert client.get(f"/api/suites/{suite['id']}").status_code == 200
     assert client.get("/api/comparisons", params={"run_id": run_id}).json()["has_checks"] is True
     assert ops and set(ops) == {"search"}  # reads search in the worker and never vet
+
+    # A comparison that runs out of time for pattern checks says how many answers it left out.
+    monkeypatch.setattr(module, "REGEX_BUDGET", 0.0)
+    module._results.clear()
+    comparison = client.get("/api/comparisons", params={"run_id": run_id}).json()
+    first_answers = sum(1 for a in detail["attempts"] if a["prompt_id"] == first)
+    assert comparison["checks_not_checked"] == first_answers
+    assert any("not pattern-checked yet" in note for note in comparison["notes"])
+    monkeypatch.setattr(module, "REGEX_BUDGET", 2.0)
 
     # An export that runs out of time for pattern checks says which results it did not check.
     monkeypatch.setattr(exports, "EXPORT_REGEX_BUDGET", 0.0)

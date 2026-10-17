@@ -35,15 +35,22 @@ const CHECK_LABELS: Record<string, string> = {
 /** The deterministic checks of an answer: passed or not, with what each check found. */
 export function CheckResultsLine({ outcome }: { outcome: CheckOutcome }) {
   const passed = outcome.results.filter((r) => r.passed).length
+  const pending = outcome.passed === null && outcome.results.some((r) => r.not_checked)
   return (
     <details className="small" data-testid="check-results">
       <summary>
         Checks{' '}
         <Badge tone={outcome.passed === true ? 'ok' : outcome.passed === false ? 'warn' : 'neutral'}>
-          {outcome.passed === true ? 'passed' : outcome.passed === false ? 'failed' : 'could not check'}
+          {outcome.passed === true
+            ? 'passed'
+            : outcome.passed === false
+              ? 'failed'
+              : pending
+                ? 'not checked yet'
+                : 'could not check'}
         </Badge>{' '}
         <span className="muted">
-          {passed} of {outcome.results.length}
+          {pending ? 'reload to continue' : `${passed} of ${outcome.results.length}`}
         </span>
       </summary>
       <ul>

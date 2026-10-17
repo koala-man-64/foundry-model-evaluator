@@ -261,7 +261,7 @@ def test_a_pattern_slow_or_hungry_to_compile_is_refused_without_freezing_the_app
     finally:
         stop.set()
         thread.join()
-    assert "compile" in problem or "memory" in problem
+    assert "compile" in problem or "too large or complex" in problem
     # Refused within the worker's grace time, plus a new worker's start-up; the app's own threads kept running.
     assert time.perf_counter() - start < module.COMPILE_LIMIT + module.WORKER_GRACE + 3
     assert max(b - a for a, b in itertools.pairwise(beats)) < 0.5
@@ -342,6 +342,52 @@ def test_a_view_stops_checking_patterns_when_its_time_is_spent(no_cached_results
     # What was not checked is not cached as an outcome: the next view continues with it.
     resumed = run_checks([slow], hostile(19), budget=RegexBudget())
     assert "took longer than" in resumed.results[0].detail
+
+
+def test_a_busy_checker_never_holds_a_view_or_a_save_for_long(no_cached_results, monkeypatch):
+    import time
+
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "VET_SECONDS", 0.3)
+    slow = check(kind="regex", pattern=SLOW)
+    assert module._checker._lock.acquire(timeout=5)  # another request has the worker
+    try:
+        start = time.perf_counter()
+        outcome = run_checks([slow], "busy-aaa", budget=RegexBudget(0.4))
+        assert outcome.results[0].not_checked and outcome.results[0].detail == module.NOT_CHECKED_YET
+        assert time.perf_counter() - start < 0.4 + 0.3
+        start = time.perf_counter()
+        [problem] = problems(r"\d+-busy")
+        assert "busy" in problem and time.perf_counter() - start < 0.3 + 0.3
+    finally:
+        module._checker._lock.release()
+    # Neither was remembered: both work once the worker is free.
+    assert run_checks([slow], "busy-aaa", budget=RegexBudget()).passed is True
+    assert problems(r"\d+-busy") == []
+
+
+def test_a_worker_that_stops_once_while_vetting_gets_another_try(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    ask = module._Worker.ask
+    calls: list[str] = []
+
+    def flaky(self, request, wait):
+        calls.append(request["op"])
+        return None if len(calls) == 1 else ask(self, request, wait)
+
+    monkeypatch.setattr(module._Worker, "ask", flaky)
+    assert problems(r"\d+-second-try") == []
+    assert calls == ["vet", "vet"]
+
+
+def test_remembered_patterns_are_bounded(monkeypatch):
+    from foundry_eval.grading import checks as module
+
+    monkeypatch.setattr(module, "_accepted", module._Recent(3))
+    assert problems(*(rf"\d+-bounded-{i}" for i in range(5))) == []
+    assert len(module._accepted) == 3
 
 
 def test_a_worker_that_dies_mid_search_fails_only_that_answer_and_is_replaced(no_cached_results):

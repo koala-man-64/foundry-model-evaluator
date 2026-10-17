@@ -1146,6 +1146,11 @@ export interface components {
             detail: string;
             /** Kind */
             kind: string;
+            /**
+             * Not Checked
+             * @default false
+             */
+            not_checked: boolean;
             /** Passed */
             passed: boolean | null;
         };
@@ -1161,6 +1166,11 @@ export interface components {
             cells_matched: number;
             /** Cells Total */
             cells_total: number;
+            /**
+             * Checks Not Checked
+             * @default 0
+             */
+            checks_not_checked: number;
             /** Currency */
             currency: string;
             /**

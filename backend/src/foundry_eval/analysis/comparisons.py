@@ -198,6 +198,9 @@ class Comparison(BaseModel):
     baseline: str | None
     # Whether any compared prompt has deterministic checks (the table shows the column only then).
     has_checks: bool = False
+    # Answers left out of the checks pass rate because this view ran out of time for pattern checks
+    # before checking them. Viewing again continues; a baseline gate is inconclusive until this is 0.
+    checks_not_checked: int = 0
     candidates: list[ComparisonCandidate]
     cells: list[ComparisonCell]
     notes: list[str]
@@ -480,6 +483,8 @@ class ComparisonService:
         notes: list[str] = []
         has_checks = False
         regex_budget = RegexBudget()
+        checks_not_checked = 0  # answers left out of the checks pass rate: not pattern-checked yet
+        checks_unknown = 0  # and answers a check could not be evaluated on
         basis_rubrics: dict[str, str] = {}
         data: dict[str, _CandidateData] = {}
         titles: dict[Cell, str] = {}
@@ -520,6 +525,16 @@ class ComparisonService:
                 item.runs.add(run.id)
                 score = manual.get(attempt.id)
                 answer, slot_judgement = answers.get(attempt.id, (None, None))
+                checked = (
+                    run_checks(prompt.checks, attempt.output_text or "", budget=regex_budget)
+                    if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
+                    else None
+                )
+                if checked is not None and checked.passed is None:
+                    if any(r.not_checked for r in checked.results):
+                        checks_not_checked += 1
+                    else:
+                        checks_unknown += 1
                 observation = _Observation(
                     attempt=attempt,
                     run_id=run.id,
@@ -529,11 +544,7 @@ class ComparisonService:
                     judge_basis=slot_judgement.basis if slot_judgement else None,
                     judge_evaluation_ids=answer.evaluation_ids if answer else (),
                     judge_spread=answer.spread if answer else None,
-                    checks=(
-                        _checks_value(run_checks(prompt.checks, attempt.output_text or "", budget=regex_budget).passed)
-                        if prompt.checks and attempt.status is AttemptStatus.SUCCEEDED
-                        else None
-                    ),
+                    checks=_checks_value(checked.passed) if checked is not None else None,
                     checks_fp=_fingerprint(checks_json(prompt.checks)) if prompt.checks else None,
                     reference_fp=_fingerprint(prompt.reference_text),
                 )
@@ -600,6 +611,20 @@ class ComparisonService:
             notes.append(
                 f"{len(mixed_checks)} cell{'s' if many else ''} used different checks in different runs and "
                 f"{'are' if many else 'is'} left out of the checks pass rate."
+            )
+        if checks_not_checked:
+            many = checks_not_checked != 1
+            notes.append(
+                f"{checks_not_checked} {'answers were' if many else 'answer was'} not pattern-checked yet (this view "
+                f"ran out of time for pattern checks) and {'are' if many else 'is'} left out of the checks pass rate; "
+                "reload to continue."
+            )
+        if checks_unknown:
+            many = checks_unknown != 1
+            notes.append(
+                f"{checks_unknown} {'answers' if many else 'answer'} could not be checked (a check could not be "
+                f"evaluated on {'them' if many else 'it'}) and {'are' if many else 'is'} left out of the checks pass "
+                "rate."
             )
         if mixed_references:
             many = len(mixed_references) != 1
@@ -764,6 +789,7 @@ class ComparisonService:
             interval_min_prompts=stats.MIN_PROMPTS,
             baseline=baseline,
             has_checks=has_checks,
+            checks_not_checked=checks_not_checked,
             candidates=results,
             cells=cell_rows,
             notes=notes,

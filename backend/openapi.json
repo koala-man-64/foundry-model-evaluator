@@ -1127,6 +1127,11 @@
             "title": "Kind",
             "type": "string"
           },
+          "not_checked": {
+            "default": false,
+            "title": "Not Checked",
+            "type": "boolean"
+          },
           "passed": {
             "anyOf": [
               {
@@ -1180,6 +1185,11 @@
           },
           "cells_total": {
             "title": "Cells Total",
+            "type": "integer"
+          },
+          "checks_not_checked": {
+            "default": 0,
+            "title": "Checks Not Checked",
             "type": "integer"
           },
           "currency": {

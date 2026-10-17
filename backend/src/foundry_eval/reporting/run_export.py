@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import Any
 
 from ..execution.totals import CostTotal
-from ..grading.checks import CheckOutcome, checks_json, not_checked
+from ..grading.checks import CheckOutcome, checks_json
 from ..judging.service import JudgeScore
 from ..money import to_text
 from ..pricing.calculator import CostEstimate
@@ -248,7 +248,7 @@ def _checks_json(outcome: CheckOutcome | None, include_text: bool) -> dict[str, 
                 "kind": r.kind,
                 "passed": r.passed,
                 # The export ran out of time for pattern checks before this one; downloading again continues.
-                **({"not_checked": True} if not_checked(r) else {}),
+                **({"not_checked": True} if r.not_checked else {}),
                 **({"detail": r.detail} if include_text else {}),
             }
             for r in outcome.results
@@ -435,7 +435,7 @@ def _passed_cell(outcome: CheckOutcome | None) -> str | None:
     if outcome is None:
         return None
     if outcome.passed is None:
-        return "not_checked" if any(not_checked(r) for r in outcome.results) else "unknown"
+        return "not_checked" if any(r.not_checked for r in outcome.results) else "unknown"
     return "true" if outcome.passed else "false"
 
 

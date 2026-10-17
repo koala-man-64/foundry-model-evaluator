@@ -280,10 +280,15 @@ shown, so they cost nothing and always agree with the checks frozen into the run
     patterns take well under a millisecond). Vetting one save stops after 10 s.
   - Each search stops after 0.25 s and shows **could not check** (unknown) for that answer only. A worker that stops
     answering, overflows its stack or reaches its memory cap is replaced, and only that answer is affected.
-  - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. When that runs out,
-    the remaining pattern checks show **not checked yet** (unknown); an export marks them `not_checked`. Results are
-    kept per answer and pattern while the app runs, so reloading continues where the last view stopped. A **could
-    not check** is tried again after 10 minutes, in case the machine was only busy.
+  - Each view (run detail, comparison) has 2 s for pattern checks in total, and an export 30 s. Requests take
+    turns with the worker; a view does not wait for its turn longer than it has left, and a save not longer than its
+    10 s. When a view runs out, the remaining pattern checks show **not checked yet** (unknown). Results are kept per
+    answer and pattern while the app runs, so reloading continues where the last view stopped. A **could not check**
+    is tried again after 10 minutes, in case the machine was only busy.
+  - Nothing not checked yet is passed off as complete. The run page says **not checked yet** with "reload to
+    continue"; a comparison leaves those answers out of the checks pass rate with a note saying how many (and,
+    separately, how many could not be checked); a baseline gate on the checks pass rate is inconclusive while any
+    answer is not checked yet; an export marks them `not_checked`.
 - A **reference answer** is shown to the judge as a separate, delimited part of the task, with the instruction that it
   may be imperfect and that a correct answer need not match its wording. The reference and the checks are not part of
   a prompt's identity, so editing them keeps cells matched across runs; a run keeps the reference and checks it was

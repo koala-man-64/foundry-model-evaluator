@@ -21,9 +21,10 @@ process never compiles or searches a pattern itself; one worker process does bot
   takes longer than ``COMPILE_LIMIT`` is refused.
 - Each search has a time limit (``REGEX_TIMEOUT``). A worker that stops answering, overflows its stack or
   reaches its memory cap (``WORKER_MEMORY``) is replaced, and only that answer reports "could not check".
-- Each view shares a ``RegexBudget``. Once it is spent, the remaining pattern checks report "not checked
-  yet". Results are cached per answer and pattern (a "could not check" for ``RETRY_AFTER`` seconds only),
-  so the next view continues where this one stopped, and a slow answer never affects other answers.
+- Each view shares a ``RegexBudget``. Once it is spent, or when the worker is busy with other requests for
+  longer than what is left of it, the remaining pattern checks report "not checked yet". Results are cached
+  per answer and pattern (a "could not check" for ``RETRY_AFTER`` seconds only), so the next view continues
+  where this one stopped, and a slow answer never affects other answers.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ import atexit
 import contextlib
 import hashlib
 import json
+import logging
 import math
 import queue
 import re
@@ -59,7 +61,10 @@ REGEX_TIMEOUT = 0.25  # seconds per search
 REGEX_BUDGET = 2.0  # seconds of pattern checks per view
 EXPORT_REGEX_BUDGET = 30.0  # an export is one explicit download, so it may take longer than a page view
 RETRY_AFTER = 600.0  # seconds before a pattern that could not be checked on an answer is tried again
-MAX_CACHED_RESULTS = 20_000
+MAX_CACHED_RESULTS = 50_000
+MAX_ACCEPTED = 50_000  # vetted patterns remembered, by digest
+MAX_WAITING = 8  # requests that may wait for a turn with the worker at once
+START_BACKOFF = 30.0  # seconds before starting the worker again after it failed to start
 MAX_SCHEMA_DEPTH = 20
 # Size limits keep the work per answer bounded: a schema is checked against every item of an answer.
 MAX_SCHEMA_NODES = 500
@@ -68,6 +73,8 @@ MAX_PROPERTIES = 200
 # Numbers whose exponent is further from zero than this are not read: they cannot be a plausible answer
 # and exact arithmetic on them is expensive or overflows.
 MAX_EXPONENT = 1000
+
+log = logging.getLogger(__name__)
 
 # A sign belongs to a number only when it does not follow a word character or a dot, so "10-20" reads
 # as 10 and 20, not 10 and -20. Decimals may start with a dot (".5"). U+2212 is normalised to "-".
@@ -165,6 +172,9 @@ class CheckResult(BaseModel):
     # None: the check could not be evaluated on this answer (unknown, neither pass nor fail).
     passed: bool | None
     detail: str
+    # True when the view ran out of time for pattern checks before this one ran (``passed`` is None).
+    # Results are kept, so viewing again continues.
+    not_checked: bool = False
 
 
 class CheckOutcome(BaseModel):
@@ -411,7 +421,7 @@ import regex
 
 VET_STACK = 1024 * 1024
 SEARCH_STACK = 16 * 1024 * 1024
-KEEP = 16
+KEEP = 8
 compiled = {}
 
 
@@ -472,11 +482,7 @@ def pattern(text, flags):
     key = (text, flags)
     found = compiled.pop(key, None)
     if found is None:
-        try:
-            found = regex.compile(text, flags, cache_pattern=False)
-        except MemoryError:
-            compiled.clear()  # make room, then try once more
-            found = regex.compile(text, flags, cache_pattern=False)
+        found = regex.compile(text, flags, cache_pattern=False)
     compiled[key] = found
     while len(compiled) > KEEP:
         del compiled[next(iter(compiled))]
@@ -484,9 +490,16 @@ def pattern(text, flags):
 
 
 def vet(request):
-    start = time.perf_counter()
-    regex.compile(request["pattern"], request["flags"], cache_pattern=False)
-    return {"seconds": time.perf_counter() - start}
+    # A slow first measurement is measured again, so a busy moment does not refuse a pattern.
+    best = None
+    for _ in range(2):
+        start = time.perf_counter()
+        regex.compile(request["pattern"], request["flags"], cache_pattern=False)
+        took = time.perf_counter() - start
+        best = took if best is None else min(best, took)
+        if best <= request["limit"]:
+            break
+    return {"seconds": best}
 
 
 def search(request):
@@ -498,17 +511,21 @@ def handle(work, request, stack):
     reply = {}
 
     def run():
-        try:
-            reply.update(work(request))
-        except TimeoutError:
-            reply["timeout"] = True
-        except regex.error as exc:
-            reply["error"] = "invalid regular expression: " + str(exc)
-        except MemoryError:
-            compiled.clear()
-            reply["error"] = "the pattern needs too much memory"
-        except Exception as exc:
-            reply["error"] = "the pattern cannot be used (" + type(exc).__name__ + ")"
+        for attempt in (1, 2):
+            try:
+                reply.update(work(request))
+            except TimeoutError:
+                reply["timeout"] = True
+            except regex.error as exc:
+                reply["error"] = "invalid regular expression: " + str(exc)
+            except MemoryError:
+                compiled.clear()  # the patterns kept for searches may be what filled the cap: try once without
+                if attempt == 1:
+                    continue
+                reply["memory"] = True
+            except Exception as exc:
+                reply["error"] = "the pattern cannot be used (" + type(exc).__name__ + ")"
+            return
 
     # A pattern is vetted with a sixteenth of the stack searches get, so one that passes is far from overflowing.
     threading.stack_size(stack)
@@ -528,6 +545,10 @@ for line in sys.stdin:
 
 class PatternCheckerUnavailable(Exception):
     """The worker process could not be started."""
+
+
+class PatternCheckerBusy(PatternCheckerUnavailable):
+    """No turn with the worker came in time, or too many requests are already waiting for one."""
 
 
 class _Worker:
@@ -598,22 +619,62 @@ class _Worker:
 
 
 class _PatternChecker:
-    """The one worker process, shared by every request and replaced whenever it stops answering in time."""
+    """The one worker process, shared by every request and replaced whenever it stops answering in time.
+
+    Callers take turns. A caller waits at most ``turn_wait`` for its turn, and only ``MAX_WAITING`` may wait
+    at once, so pattern checks never tie up the server's threads behind a slow pattern.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._waiting_lock = threading.Lock()
+        self._waiting = 0
         self._worker: _Worker | None = None
+        self._failed_start = -math.inf
 
-    def ask(self, request: dict[str, Any], wait: float) -> dict[str, Any] | None:
-        """The worker's reply, or None when it did not answer within ``wait`` or stopped; it is then replaced."""
-        with self._lock:
-            if self._worker is None or not self._worker.alive():
+    def ask(self, request: dict[str, Any], wait: float, *, turn_wait: float) -> dict[str, Any] | None:
+        """The worker's reply, or None when it did not answer within ``wait`` or stopped; it is then replaced.
+
+        Raises ``PatternCheckerBusy`` when no turn comes in time, ``PatternCheckerUnavailable`` when the worker
+        cannot start.
+        """
+        with self._waiting_lock:
+            if self._waiting >= MAX_WAITING:
+                raise PatternCheckerBusy("the pattern checker is busy")
+            self._waiting += 1
+        try:
+            turn = self._lock.acquire(timeout=max(turn_wait, 0.0))
+        finally:
+            with self._waiting_lock:
+                self._waiting -= 1
+        if not turn:
+            raise PatternCheckerBusy("the pattern checker is busy")
+        try:
+            return self._ask(request, wait)
+        finally:
+            self._lock.release()
+
+    def _ask(self, request: dict[str, Any], wait: float) -> dict[str, Any] | None:
+        if self._worker is not None and not self._worker.alive():
+            log.warning("The pattern checker stopped (exit code %s); starting another", self._worker.process.returncode)
+            self._worker = None
+        if self._worker is None:
+            if time.monotonic() - self._failed_start < START_BACKOFF:
+                raise PatternCheckerUnavailable("the pattern checker did not start; it is tried again shortly")
+            try:
                 self._worker = _Worker()
-            reply = self._worker.ask(request, wait)
-            if reply is None:
-                self._worker.stop()
-                self._worker = None
-            return reply
+            except PatternCheckerUnavailable:
+                self._failed_start = time.monotonic()
+                log.warning("The pattern checker did not start")
+                raise
+            if not self._worker.memory_limited:
+                log.warning("The pattern checker runs without a memory cap on this system")
+        reply = self._worker.ask(request, wait)
+        if reply is None:
+            log.warning("Replacing the pattern checker: no answer to a %s within %.2f s", request.get("op"), wait)
+            self._worker.stop()
+            self._worker = None
+        return reply
 
     def close(self) -> None:
         with self._lock:
@@ -648,15 +709,23 @@ class _Recent[K, V]:
             while len(self._items) > self._size:
                 self._items.popitem(last=False)
 
+    def __len__(self) -> int:
+        return len(self._items)
+
     def clear(self) -> None:
         with self._lock:
             self._items.clear()
 
 
-# Patterns vetted in this process. Set membership and add are atomic, so nothing waits on a lock to read it.
-# It grows only with distinct saved patterns, each at most MAX_PATTERN characters.
-_accepted: set[tuple[str, int]] = set()
-_refused: _Recent[tuple[str, int], str] = _Recent(256)  # saving the same bad pattern again costs nothing
+def _pattern_key(check: RegexCheck) -> bytes:
+    pattern = check.pattern.encode("utf-8", "surrogatepass")
+    return hashlib.blake2b(check.flags.to_bytes(4, "little") + pattern, digest_size=16).digest()
+
+
+# Vetted patterns, by digest. A pattern that drops out is simply vetted again.
+_accepted: _Recent[bytes, bool] = _Recent(MAX_ACCEPTED)
+_refused: _Recent[bytes, str] = _Recent(256)  # saving the same bad pattern again costs nothing
+_SIMPLER = "use smaller repeat counts or less nesting"
 
 
 def pattern_problems(checks_by_prompt: Sequence[Sequence[Check]]) -> list[str]:
@@ -675,29 +744,38 @@ def pattern_problems(checks_by_prompt: Sequence[Sequence[Check]]) -> list[str]:
 
 
 def _vet(check: RegexCheck, deadline: float) -> str | None:
-    key = (check.pattern, check.flags)
-    if key in _accepted:
+    key = _pattern_key(check)
+    if _accepted.get(key):
         return None
     refused = _refused.get(key)
     if refused is not None:
         return refused
-    if time.monotonic() > deadline:
-        return "not checked: there are too many new patterns to check in one save; save fewer at a time"
-    try:
-        reply = _checker.ask(
-            {"op": "vet", "pattern": check.pattern, "flags": check.flags}, COMPILE_LIMIT + WORKER_GRACE
-        )
-    except PatternCheckerUnavailable as exc:
-        return f"pattern checks are unavailable: {exc}"
+    request = {"op": "vet", "pattern": check.pattern, "flags": check.flags, "limit": COMPILE_LIMIT}
+    reply: dict[str, Any] | None = None
+    for _ in range(2):  # a worker that stops on a pattern gets one more try, on a fresh worker
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return "not checked: there are too many new patterns to check in one save; save fewer at a time"
+        try:
+            reply = _checker.ask(request, 2 * COMPILE_LIMIT + WORKER_GRACE, turn_wait=left)
+        except PatternCheckerUnavailable as exc:
+            return f"not checked: {exc}; try again"
+        if reply is not None:
+            break
     seconds = reply.get("seconds") if reply is not None else None
     if reply is None:
-        problem = f"the pattern could not be compiled within {COMPILE_LIMIT} s; the pattern checker was stopped"
+        problem = f"the pattern is too large or complex to check safely; {_SIMPLER}"
+    elif reply.get("memory") is True:
+        problem = f"the pattern needs more than {WORKER_MEMORY // 2**20} MB to compile; {_SIMPLER}"
     elif "error" in reply:
         problem = str(reply["error"])
-    elif not isinstance(seconds, int | float) or seconds > COMPILE_LIMIT:
-        problem = f"the pattern takes too long to compile ({seconds} s; the limit is {COMPILE_LIMIT} s)"
+    elif not isinstance(seconds, int | float) or isinstance(seconds, bool):
+        problem = "the pattern checker gave no answer for this pattern"
+    elif seconds > COMPILE_LIMIT:
+        limit = f"{COMPILE_LIMIT * 1000:.0f} ms"
+        problem = f"the pattern takes too long to compile ({seconds * 1000:.0f} ms; the limit is {limit}); {_SIMPLER}"
     else:
-        _accepted.add(key)
+        _accepted.put(key, True)
         return None
     _refused.put(key, problem)
     return problem
@@ -706,13 +784,13 @@ def _vet(check: RegexCheck, deadline: float) -> str | None:
 class RegexBudget:
     """Seconds of pattern checks that one view may spend, shared by every answer it shows."""
 
-    def __init__(self, seconds: float = REGEX_BUDGET) -> None:
-        self.left = seconds
+    def __init__(self, seconds: float | None = None) -> None:
+        self.left = REGEX_BUDGET if seconds is None else seconds
 
 
-# Results by (flags, pattern, answer). A result that is not a pass or fail expires, so it is tried again later
-# in case the machine was only busy.
-_results: _Recent[bytes, tuple[CheckResult, float | None]] = _Recent(MAX_CACHED_RESULTS)
+# Results by (flags, pattern, answer), kept compact: (passed, detail, expires). A result that is not a pass
+# or fail expires, so it is tried again later in case the machine was only busy.
+_results: _Recent[bytes, tuple[bool | None, str, float | None]] = _Recent(MAX_CACHED_RESULTS)
 
 
 def _result_key(check: RegexCheck, text: str) -> bytes:
@@ -726,40 +804,44 @@ def _result_key(check: RegexCheck, text: str) -> bytes:
 NOT_CHECKED_YET = "not checked yet: this view ran out of time for pattern checks; reload to continue"
 
 
-def not_checked(result: CheckResult) -> bool:
-    """The view ran out of time before this pattern check ran (see ``RegexBudget``)."""
-    return result.passed is None and result.detail == NOT_CHECKED_YET
+def _not_checked_yet(check: RegexCheck) -> CheckResult:
+    return CheckResult(kind=check.kind, passed=None, detail=NOT_CHECKED_YET, not_checked=True)
 
 
 def _search(check: RegexCheck, text: str, budget: RegexBudget) -> CheckResult:
     key = _result_key(check, text)
     cached = _results.get(key)
-    if cached is not None and (cached[1] is None or cached[1] > time.monotonic()):
-        return cached[0]
+    if cached is not None and (cached[2] is None or cached[2] > time.monotonic()):
+        return CheckResult(kind=check.kind, passed=cached[0], detail=cached[1])
     if budget.left <= 0:
-        return CheckResult(kind=check.kind, passed=None, detail=NOT_CHECKED_YET)  # not cached: a later view runs it
+        return _not_checked_yet(check)  # not cached: a later view runs it
     request = {"op": "search", "pattern": check.pattern, "flags": check.flags, "text": text, "timeout": REGEX_TIMEOUT}
     start = time.perf_counter()
     try:
-        reply = _checker.ask(request, REGEX_TIMEOUT + COMPILE_LIMIT + WORKER_GRACE)
+        reply = _checker.ask(request, REGEX_TIMEOUT + COMPILE_LIMIT + WORKER_GRACE, turn_wait=budget.left)
+    except PatternCheckerBusy:
+        budget.left = 0  # this view stops checking patterns; a later view continues
+        return _not_checked_yet(check)
     except PatternCheckerUnavailable as exc:
+        budget.left = 0
         return CheckResult(kind=check.kind, passed=None, detail=f"could not check: {exc}")  # not cached
     finally:
         budget.left -= time.perf_counter() - start
     found = reply.get("found") if reply is not None else None
     if isinstance(found, bool):
-        result = CheckResult(kind=check.kind, passed=found, detail="pattern found" if found else "pattern not found")
-        _results.put(key, (result, None))
-        return result
+        detail = "pattern found" if found else "pattern not found"
+        _results.put(key, (found, detail, None))
+        return CheckResult(kind=check.kind, passed=found, detail=detail)
     if reply is None:
         detail = "could not check: the pattern checker stopped on this answer"
     elif reply.get("timeout") is True:
         detail = f"could not check: the pattern took longer than {REGEX_TIMEOUT} s on this answer"
+    elif reply.get("memory") is True:
+        detail = f"could not check: searching this answer needs more than {WORKER_MEMORY // 2**20} MB"
     else:
         detail = f"could not be evaluated on this answer: {reply.get('error', 'no result from the pattern checker')}"
-    result = CheckResult(kind=check.kind, passed=None, detail=detail)
-    _results.put(key, (result, time.monotonic() + RETRY_AFTER))
-    return result
+    _results.put(key, (None, detail, time.monotonic() + RETRY_AFTER))
+    return CheckResult(kind=check.kind, passed=None, detail=detail)
 
 
 def _evaluate(check: Check, text: str, budget: RegexBudget) -> CheckResult:

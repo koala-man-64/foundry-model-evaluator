@@ -158,7 +158,8 @@ class RunService:
         self.judge_config_validator: Callable[[dict[str, Any]], list[str]] | None = None
 
     def preview(self, request: RunRequest) -> RunPreview:
-        errors = pattern_problems([p.checks for p in request.prompts])
+        # A suite's prompts were vetted when the suite was saved, so only new prompts are vetted here.
+        errors = pattern_problems([[] if p.suite_prompt_id else p.checks for p in request.prompts])
         warnings: list[str] = []
         profiles: dict[str, ModelProfile] = {}
         endpoints: dict[str, Endpoint] = {}
