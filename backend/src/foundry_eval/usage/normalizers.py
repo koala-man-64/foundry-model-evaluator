@@ -318,61 +318,26 @@ def _check_claude_cli_fields(
 ) -> None:
     iterations = usage.get("iterations")
     if isinstance(iterations, list) and iterations:
-        iter_in = 0
-        iter_out = 0
-        has_counts = False
-        for idx, item in enumerate(iterations):
-            if not isinstance(item, Mapping):
-                continue
-            i_in = _int(item.get("input_tokens"))
-            i_out = _int(item.get("output_tokens"))
-            if i_in is not None:
-                iter_in += i_in
-                has_counts = True
-            if i_out is not None:
-                iter_out += i_out
-                has_counts = True
-            for k, v in item.items():
-                if k in (
-                    "input_tokens",
-                    "output_tokens",
-                    "cache_read_input_tokens",
-                    "cache_creation_input_tokens",
-                    "cache_creation",
-                    "output_tokens_details",
-                    "type",
-                ):
-                    continue
-                num = _int(v)
-                if num and ("token" in k or "request" in k):
-                    c.unrecognized[f"iterations[{idx}].{k}"] = num
-        if has_counts and uncached is not None and iter_in != uncached:
+        iter_in = sum(_int(i.get("input_tokens")) or 0 for i in iterations if isinstance(i, Mapping))
+        iter_out = sum(_int(i.get("output_tokens")) or 0 for i in iterations if isinstance(i, Mapping))
+        if uncached is not None and iter_in != uncached:
             c.anomalies.append(f"iterations input_tokens sum ({iter_in}) differs from input_tokens ({uncached})")
-        if has_counts and output is not None and iter_out != output:
+        if output is not None and iter_out != output:
             c.anomalies.append(f"iterations output_tokens sum ({iter_out}) differs from output_tokens ({output})")
 
     model_usage = usage.get("_model_usage")
     requested = str(usage.get("_requested_model") or "").strip().lower()
     if isinstance(model_usage, Mapping) and len(model_usage) > 1:
-        # Identify primary model (matching requested alias/name, else first entry) and flag any
-        # secondary model token spend as unrecognized so cost is marked incomplete.
         keys = [str(k) for k in model_usage]
-        primary = keys[0]
-        if requested:
-            for k in keys:
-                if requested in k.lower():
-                    primary = k
-                    break
+        primary = next((k for k in keys if requested and requested in k.lower()), keys[0])
         for k, entry in model_usage.items():
-            if str(k) == primary or not isinstance(entry, Mapping):
-                continue
-            sec_tokens = 0
-            for tk in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"):
-                val = _int(entry.get(tk))
-                if val:
-                    sec_tokens += val
-            if sec_tokens > 0:
-                c.unrecognized[f"modelUsage.{k}.tokens"] = sec_tokens
+            if str(k) != primary and isinstance(entry, Mapping):
+                sec_tokens = sum(
+                    _int(entry.get(tk)) or 0
+                    for tk in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")
+                )
+                if sec_tokens > 0:
+                    c.unrecognized[f"modelUsage.{k}.tokens"] = sec_tokens
 
 
 class CodexCliUsageNormalizer:
@@ -383,62 +348,33 @@ class CodexCliUsageNormalizer:
             return None
         if not isinstance(usage, Mapping):
             return UsageFacts(api_style=self.api_style, anomalies=["usage is not an object"])
-        c = _Collector(usage)
-        total_in = c.take("input_tokens")
-        output = c.take("output_tokens")
-        provider_total = c.take("total_tokens")
-        cached = c.take("cached_input_tokens")
-        if cached is None:
-            cached = c.take("input_tokens_details.cached_tokens")
-        cache_write = c.take("cache_write_input_tokens")
-        if cache_write is None:
-            cache_write = c.take("input_tokens_details.cache_write_tokens")
-        reasoning = c.take("reasoning_output_tokens")
-        if reasoning is None:
-            reasoning = c.take("output_tokens_details.reasoning_tokens")
-        c.scan_unknown(
-            {
-                "input_tokens": True,
-                "output_tokens": True,
-                "total_tokens": True,
-                "cached_input_tokens": True,
-                "cache_write_input_tokens": True,
-                "reasoning_output_tokens": True,
-                "input_tokens_details": {"cached_tokens": True, "cache_write_tokens": True},
-                "output_tokens_details": {"reasoning_tokens": True},
-            }
+        remapped = dict(usage)
+        in_details = (
+            dict(remapped["input_tokens_details"]) if isinstance(remapped.get("input_tokens_details"), Mapping) else {}
         )
-        if total_in is not None:
-            subset = (cached or 0) + (cache_write or 0)
-            if subset > total_in:
-                c.anomalies.append(f"cache reads + cache writes ({subset}) exceed total input tokens ({total_in})")
-        uncached: int | None = None
-        if total_in is not None and cached is not None and cache_write is not None and not c.anomalies:
-            uncached = total_in - cached - cache_write
-        if (
-            provider_total is not None
-            and total_in is not None
-            and output is not None
-            and provider_total != total_in + output
-        ):
-            c.notes.append(f"total_tokens ({provider_total}) differs from input + output ({total_in + output})")
-        _check_reasoning(c, reasoning, output)
-        return UsageFacts(
-            api_style=self.api_style,
-            input_total=total_in,
-            input_uncached=uncached,
-            input_uncached_derived=uncached is not None,
-            cache_read=cached,
-            cache_write=cache_write,
-            output_total=output,
-            reasoning=reasoning,
-            provider_total=provider_total,
-            service_tier=service_tier,
-            anomalies=c.anomalies,
-            notes=c.notes,
-            unrecognized_nonzero=c.unrecognized,
-            unsupported_modalities=c.modalities,
-            informational=c.informational,
+        if "cached_input_tokens" in remapped:
+            in_details.setdefault("cached_tokens", remapped.pop("cached_input_tokens"))
+        if "cache_write_input_tokens" in remapped:
+            in_details.setdefault("cache_write_tokens", remapped.pop("cache_write_input_tokens"))
+        if in_details:
+            remapped["input_tokens_details"] = in_details
+        out_details = (
+            dict(remapped["output_tokens_details"])
+            if isinstance(remapped.get("output_tokens_details"), Mapping)
+            else {}
+        )
+        if "reasoning_output_tokens" in remapped:
+            out_details.setdefault("reasoning_tokens", remapped.pop("reasoning_output_tokens"))
+        if out_details:
+            remapped["output_tokens_details"] = out_details
+        return _openai_facts(
+            self.api_style,
+            remapped,
+            service_tier,
+            input_key="input_tokens",
+            output_key="output_tokens",
+            input_details="input_tokens_details",
+            output_details="output_tokens_details",
         )
 
 

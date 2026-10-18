@@ -331,6 +331,17 @@ def test_claude_cli_accepts_consistent_iterations_without_unrecognized_flag():
     assert facts.output_total == 80
     assert facts.reasoning == 32
 
+    no_iter = normalize_usage(
+        ApiStyle.CLAUDE_CLI,
+        {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 5,
+        },
+    )
+    assert no_iter is not None and no_iter.input_total == 10
+
 
 def test_claude_cli_flags_divergent_iterations_and_secondary_model_usage():
     facts = normalize_usage(
@@ -340,20 +351,23 @@ def test_claude_cli_flags_divergent_iterations_and_secondary_model_usage():
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
             "output_tokens": 80,
-            "iterations": [{"input_tokens": 999, "output_tokens": 80}],
+            "iterations": [{"input_tokens": 999, "output_tokens": 777}],
             "_requested_model": "sonnet",
             "_model_usage": {
                 "claude-sonnet-4-6": {"inputTokens": 15, "outputTokens": 80},
                 "claude-haiku-4-5-20251001": {"inputTokens": 300, "outputTokens": 50},
+                "claude-zero-model": {"inputTokens": 0, "outputTokens": 0},
             },
         },
     )
     assert facts is not None
     assert any("iterations input_tokens sum" in a for a in facts.anomalies)
+    assert any("iterations output_tokens sum" in a for a in facts.anomalies)
     assert facts.unrecognized_nonzero == {"modelUsage.claude-haiku-4-5-20251001.tokens": 350}
 
 
-def test_codex_cli_normalizes_flat_token_fields():
+def test_codex_cli_normalizes_flat_and_nested_token_fields():
+    assert normalize_usage(ApiStyle.CODEX_CLI, None) is None
     facts = normalize_usage(
         ApiStyle.CODEX_CLI,
         {
@@ -377,3 +391,7 @@ def test_codex_cli_normalizes_flat_token_fields():
     assert facts.reasoning == 128
     assert facts.provider_total == 37349
 
+    minimal = normalize_usage(ApiStyle.CODEX_CLI, {"input_tokens": 10, "output_tokens": 5})
+    assert minimal is not None
+    assert minimal.input_total == 10
+    assert minimal.output_total == 5

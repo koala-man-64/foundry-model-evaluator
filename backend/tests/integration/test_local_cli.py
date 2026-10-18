@@ -252,4 +252,3 @@ def test_claude_cli_multi_model_and_tool_call_handling(cli_client: TestClient) -
     assert tc["status"] == "failed"
     assert tc["finish_reason"] == "tool_call"
     assert tc["error_type"] == "no_answer"
-

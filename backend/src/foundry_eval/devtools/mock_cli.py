@@ -47,12 +47,15 @@ def _build_judge_payload(schema: dict[str, Any], prompt_text: str) -> dict[str, 
     responses_spec = ((props.get("responses") or {}).get("items") or {}).get("properties") or {}
     labels: list[str] = list((responses_spec.get("label") or {}).get("enum") or ["A", "B"])
     criteria_items = ((responses_spec.get("criteria") or {}).get("items") or {}).get("properties") or {}
-    criteria_keys: list[str] = list((criteria_items.get("key") or {}).get("enum") or [
-        "instruction_following",
-        "correctness",
-        "completeness",
-        "clarity",
-    ])
+    criteria_keys: list[str] = list(
+        (criteria_items.get("key") or {}).get("enum")
+        or [
+            "instruction_following",
+            "correctness",
+            "completeness",
+            "clarity",
+        ]
+    )
     responses_out: list[dict[str, Any]] = []
     for idx, label in enumerate(labels):
         values = [5 - ((idx + offset) % 3) for offset in range(len(criteria_keys))]
@@ -76,7 +79,6 @@ def _build_judge_payload(schema: dict[str, Any], prompt_text: str) -> dict[str, 
         "preferred": "tie" if len(tied) > 1 else best["label"],
         "preference_explanation": f"Mock CLI judge preference ({len(prompt_text)} chars judged).",
     }
-
 
 
 def _run_claude(args: list[str]) -> int:

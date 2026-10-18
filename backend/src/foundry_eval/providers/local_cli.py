@@ -399,9 +399,7 @@ def _extract_claude_cli_usage(parsed: Mapping[str, Any], *, requested_model: str
     model_usage = parsed.get("modelUsage")
     if isinstance(model_usage, Mapping) and len(model_usage) > 1:
         # Preserve multi-model breakdown so ClaudeCliUsageNormalizer can flag secondary model spend.
-        result["_model_usage"] = {
-            str(k): dict(v) for k, v in model_usage.items() if isinstance(v, Mapping)
-        }
+        result["_model_usage"] = {str(k): dict(v) for k, v in model_usage.items() if isinstance(v, Mapping)}
         result["_requested_model"] = requested_model
     return result
 
