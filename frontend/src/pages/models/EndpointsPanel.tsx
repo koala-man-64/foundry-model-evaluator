@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react'
 
 import { del, patch, post, put } from '../../api/client'
 import { keys, useEndpoints } from '../../api/hooks'
-import type { EndpointIn, EndpointOut, VerifyResult } from '../../api/types'
+import type { EndpointIn, EndpointOut, SeedLocalCliOut, VerifyResult } from '../../api/types'
 import { useToast } from '../../components/toast'
 import { Badge, Empty, ErrorMessage, Field, Spinner } from '../../components/ui'
 import { formatDate } from '../../lib/format'
@@ -23,10 +23,22 @@ function EndpointForm({ initial, onDone }: { initial?: EndpointOut; onDone: () =
       onDone()
     },
   })
+  const handleAuthChange = (nextAuth: EndpointIn['auth_style']) => {
+    let nextUrl = form.base_url
+    let nextName = form.name
+    if (nextAuth === 'local_cli' && (form.base_url === 'https://' || !form.base_url.trim())) {
+      nextUrl = 'local://claude'
+      if (!nextName.trim()) nextName = 'Local Claude CLI'
+    } else if (nextAuth !== 'local_cli' && form.base_url.startsWith('local://')) {
+      nextUrl = 'https://'
+    }
+    setForm({ ...form, auth_style: nextAuth, base_url: nextUrl, name: nextName })
+  }
   const submit = (event: FormEvent) => {
     event.preventDefault()
     save.mutate(form)
   }
+  const isLocalCli = form.auth_style === 'local_cli' || form.base_url.startsWith('local://')
   return (
     <form className="card stack" onSubmit={submit} aria-label={initial ? 'Edit endpoint' : 'New endpoint'}>
       <h3>{initial ? `Edit ${initial.name}` : 'New endpoint'}</h3>
@@ -34,7 +46,10 @@ function EndpointForm({ initial, onDone }: { initial?: EndpointOut; onDone: () =
         <Field label="Name">
           <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </Field>
-        <Field label="Resource URL" hint="e.g. https://my-resource.services.ai.azure.com">
+        <Field
+          label="Resource URL"
+          hint={isLocalCli ? 'Use local://claude or local://codex' : 'e.g. https://my-resource.services.ai.azure.com'}
+        >
           <input required value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} />
         </Field>
         <Field label="Azure region" hint="Used to look up prices, e.g. eastus2">
@@ -43,13 +58,33 @@ function EndpointForm({ initial, onDone }: { initial?: EndpointOut; onDone: () =
         <Field label="Auth header">
           <select
             value={form.auth_style}
-            onChange={(e) => setForm({ ...form, auth_style: e.target.value as EndpointIn['auth_style'] })}
+            onChange={(e) => handleAuthChange(e.target.value as EndpointIn['auth_style'])}
           >
             <option value="api-key">api-key (Azure)</option>
             <option value="bearer">Authorization: Bearer</option>
+            <option value="local_cli">Local CLI session (claude / codex)</option>
           </select>
         </Field>
       </div>
+      {isLocalCli && (
+        <div className="row small">
+          <span className="muted">Quick fill:</span>
+          <button
+            type="button"
+            className="small"
+            onClick={() => setForm({ ...form, name: form.name || 'Local Claude CLI', base_url: 'local://claude', auth_style: 'local_cli' })}
+          >
+            Claude CLI (local://claude)
+          </button>
+          <button
+            type="button"
+            className="small"
+            onClick={() => setForm({ ...form, name: form.name || 'Local Codex CLI', base_url: 'local://codex', auth_style: 'local_cli' })}
+          >
+            Codex CLI (local://codex)
+          </button>
+        </div>
+      )}
       {initial && (
         <p className="small muted">Changing the host deletes the stored key, so a key is never sent to a different host.</p>
       )}
@@ -84,6 +119,20 @@ function KeyControls({ endpoint }: { endpoint: EndpointOut }) {
   })
   const remove = useMutation({ mutationFn: () => del(`/api/endpoints/${endpoint.id}/key`), onSuccess: refresh })
   const check = useMutation({ mutationFn: () => post<VerifyResult>(`/api/endpoints/${endpoint.id}/verify`), onSuccess: setVerify })
+  if (endpoint.auth_style === 'local_cli') {
+    return (
+      <div className="stack-sm">
+        <div className="row">
+          <span className="small muted">Uses local CLI authentication session.</span>
+          <button type="button" onClick={() => check.mutate()} disabled={check.isPending}>
+            Verify CLI (free)
+          </button>
+        </div>
+        {verify && <div className={`callout small ${verify.ok ? 'ok' : 'warn'}`}>{verify.message}</div>}
+        <ErrorMessage error={check.error} />
+      </div>
+    )
+  }
   return (
     <div className="stack-sm">
       <form
@@ -128,24 +177,41 @@ function KeyControls({ endpoint }: { endpoint: EndpointOut }) {
 export function EndpointsPanel() {
   const endpoints = useEndpoints()
   const queryClient = useQueryClient()
+  const { notify } = useToast()
   const [editing, setEditing] = useState<EndpointOut | 'new' | null>(null)
   const remove = useMutation({
     mutationFn: (id: string) => del(`/api/endpoints/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.endpoints }),
+  })
+  const seedCli = useMutation({
+    mutationFn: () => post<SeedLocalCliOut>('/api/endpoints/seed-local-cli'),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: keys.endpoints })
+      queryClient.invalidateQueries({ queryKey: ['profiles'] })
+      notify(
+        `Seeded ${res.endpoints_created} local CLI endpoint(s) and ${res.profiles_created} starter profile(s).`,
+        'ok',
+      )
+    },
   })
   if (endpoints.isLoading) return <Spinner />
   return (
     <div className="stack">
       <div className="row-between">
         <p className="muted">
-          An endpoint is a Foundry resource. Keys are stored in Windows Credential Manager and are never shown again.
+          An endpoint is a Foundry resource or a local CLI (`claude` / `codex`). API keys are stored in Windows Credential Manager.
         </p>
-        <button type="button" className="primary" onClick={() => setEditing('new')}>
-          Add endpoint
-        </button>
+        <div className="row">
+          <button type="button" onClick={() => seedCli.mutate()} disabled={seedCli.isPending}>
+            Seed Local CLIs (Claude &amp; Codex)
+          </button>
+          <button type="button" className="primary" onClick={() => setEditing('new')}>
+            Add endpoint
+          </button>
+        </div>
       </div>
       {editing && <EndpointForm initial={editing === 'new' ? undefined : editing} onDone={() => setEditing(null)} />}
-      <ErrorMessage error={endpoints.error ?? remove.error} />
+      <ErrorMessage error={endpoints.error ?? remove.error ?? seedCli.error} />
       {endpoints.data?.length === 0 && !editing && <Empty>No endpoints yet.</Empty>}
       {endpoints.data?.map((endpoint) => (
         <div key={endpoint.id} className="card stack-sm" data-testid="endpoint">
@@ -154,11 +220,13 @@ export function EndpointsPanel() {
               <div className="card-title">{endpoint.name}</div>
               <div className="small muted mono">{endpoint.base_url}</div>
               <div className="small muted">
-                Region {endpoint.region || '—'} · {endpoint.auth_style} header
+                Region {endpoint.region || '—'} · {endpoint.auth_style === 'local_cli' ? 'local CLI auth' : `${endpoint.auth_style} header`}
               </div>
             </div>
             <div className="row">
-              {endpoint.key_configured ? (
+              {endpoint.auth_style === 'local_cli' ? (
+                <Badge tone="ok">local CLI</Badge>
+              ) : endpoint.key_configured ? (
                 <Badge tone="ok" title={endpoint.key_set_at ? `Saved ${formatDate(endpoint.key_set_at)}` : undefined}>
                   key stored
                 </Badge>

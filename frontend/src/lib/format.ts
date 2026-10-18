@@ -27,6 +27,8 @@ export const API_STYLE_LABELS: Record<string, string> = {
   openai_responses: 'OpenAI Responses',
   openai_chat: 'Chat Completions',
   anthropic_messages: 'Claude Messages',
+  claude_cli: 'Claude CLI (local)',
+  codex_cli: 'Codex CLI (local)',
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

@@ -13,8 +13,11 @@ from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...credentials.redaction import sanitize_error_text
-from ...domain.profiles import AuthStyle, Endpoint
+from ...domain.presets import preset_capabilities
+from ...domain.profiles import AuthStyle, Endpoint, ProfileFields
 from ...providers.http import make_async_client, make_timeout, redirect_message
+from ...providers.local_cli import verify_local_cli
+from ...types import ApiStyle
 from ..deps import ServicesDep
 
 router = APIRouter(prefix="/api/endpoints", tags=["endpoints"])
@@ -57,6 +60,12 @@ class VerifyResult(BaseModel):
     message: str
 
 
+class SeedLocalCliOut(BaseModel):
+    endpoints_created: int
+    profiles_created: int
+    endpoints: list[EndpointOut]
+
+
 def _out(services: ServicesDep, endpoint: Endpoint) -> EndpointOut:
     return EndpointOut(
         id=endpoint.id,
@@ -64,7 +73,7 @@ def _out(services: ServicesDep, endpoint: Endpoint) -> EndpointOut:
         base_url=endpoint.base_url,
         region=endpoint.region,
         auth_style=endpoint.auth_style,
-        key_configured=services.credentials.has(endpoint.credential_ref),
+        key_configured=endpoint.auth_style == "local_cli" or services.credentials.has(endpoint.credential_ref),
         key_set_at=endpoint.key_set_at,
         created_at=endpoint.created_at,
         updated_at=endpoint.updated_at,
@@ -80,6 +89,110 @@ def list_endpoints(services: ServicesDep) -> list[EndpointOut]:
 def create_endpoint(payload: EndpointIn, services: ServicesDep) -> EndpointOut:
     endpoint = services.endpoints.create(**payload.model_dump())
     return _out(services, endpoint)
+
+
+@router.post("/seed-local-cli", response_model=SeedLocalCliOut)
+def seed_local_cli_endpoints(services: ServicesDep) -> SeedLocalCliOut:
+    """Idempotently seed Local Claude CLI and Local Codex CLI endpoints and starter model profiles."""
+    existing_endpoints = {e.base_url.lower(): e for e in services.endpoints.list()}
+    endpoints_created = 0
+    profiles_created = 0
+
+    cli_specs: list[tuple[str, str, list[tuple[str, ApiStyle, str, str, str, str, int, int]]]] = [
+        (
+            "Local Claude CLI",
+            "local://claude",
+            [
+                (
+                    "Claude Sonnet (CLI)",
+                    ApiStyle.CLAUDE_CLI,
+                    "claude-cli",
+                    "sonnet",
+                    "Anthropic",
+                    "Claude Sonnet",
+                    200000,
+                    16384,
+                ),
+                (
+                    "Claude Opus (CLI)",
+                    ApiStyle.CLAUDE_CLI,
+                    "claude-cli",
+                    "opus",
+                    "Anthropic",
+                    "Claude Opus",
+                    200000,
+                    16384,
+                ),
+                (
+                    "Claude Haiku (CLI)",
+                    ApiStyle.CLAUDE_CLI,
+                    "claude-cli",
+                    "haiku",
+                    "Anthropic",
+                    "Claude Haiku",
+                    200000,
+                    8192,
+                ),
+            ],
+        ),
+        (
+            "Local Codex CLI",
+            "local://codex",
+            [
+                ("Codex GPT-5.4 (CLI)", ApiStyle.CODEX_CLI, "codex-cli", "gpt-5.4", "OpenAI", "GPT-5.4", 272000, 16384),
+                (
+                    "Codex GPT-5.4 Mini (CLI)",
+                    ApiStyle.CODEX_CLI,
+                    "codex-cli",
+                    "gpt-5.4-mini",
+                    "OpenAI",
+                    "GPT-5.4 Mini",
+                    272000,
+                    16384,
+                ),
+                ("Codex o3 (CLI)", ApiStyle.CODEX_CLI, "codex-cli", "o3", "OpenAI", "o3", 200000, 16384),
+            ],
+        ),
+    ]
+
+    existing_profiles = services.profiles.list(include_archived=True)
+    for ep_name, base_url, profile_defs in cli_specs:
+        ep = existing_endpoints.get(base_url)
+        if ep is None:
+            ep = services.endpoints.create(name=ep_name, base_url=base_url, region="", auth_style="local_cli")
+            existing_endpoints[base_url] = ep
+            endpoints_created += 1
+
+        ep_deployments = {p.deployment.lower() for p in existing_profiles if p.endpoint_id == ep.id}
+        for prof_name, style, preset_id, deployment, publisher, model_name, ctx_win, max_out in profile_defs:
+            if deployment.lower() in ep_deployments:
+                continue
+            caps = preset_capabilities(preset_id, style, max_out)
+            created = services.profiles.create(
+                ProfileFields(
+                    endpoint_id=ep.id,
+                    name=prof_name,
+                    api_style=style,
+                    route="cli",
+                    deployment=deployment,
+                    publisher=publisher,
+                    model_name=model_name,
+                    context_window=ctx_win,
+                    max_output_tokens=max_out,
+                    preset=preset_id,
+                    capabilities=caps,
+                    streaming=style is ApiStyle.CODEX_CLI,
+                )
+            )
+            services.pricing.match_and_apply(created.id)
+            ep_deployments.add(deployment.lower())
+            profiles_created += 1
+
+    return SeedLocalCliOut(
+        endpoints_created=endpoints_created,
+        profiles_created=profiles_created,
+        endpoints=[_out(services, e) for e in services.endpoints.list()],
+    )
 
 
 @router.get("/{endpoint_id}", response_model=EndpointOut)
@@ -117,13 +230,16 @@ def delete_key(endpoint_id: str, services: ServicesDep) -> KeyStatus:
     endpoint = services.endpoints.get(endpoint_id)
     services.credentials.delete(endpoint.credential_ref)
     services.endpoints.mark_key_set(endpoint_id, False)
-    return KeyStatus(key_configured=False)
+    return KeyStatus(key_configured=endpoint.auth_style == "local_cli")
 
 
 @router.post("/{endpoint_id}/verify", response_model=VerifyResult)
 async def verify_key(endpoint_id: str, services: ServicesDep) -> VerifyResult:
-    """Free metadata call (list models on the OpenAI v1 route); never a paid inference call."""
+    """Free metadata call (list models on OpenAI v1 or check local CLI binary); never a paid inference call."""
     endpoint = services.endpoints.get(endpoint_id)
+    if endpoint.auth_style == "local_cli" or endpoint.base_url.startswith("local://"):
+        ok, status_code, msg = await verify_local_cli(endpoint.base_url)
+        return VerifyResult(ok=ok, status=status_code, message=msg)
     key = services.credentials.get(endpoint.credential_ref)
     if not key:
         return VerifyResult(ok=False, status=None, message="No API key is stored for this endpoint.")

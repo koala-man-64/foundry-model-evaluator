@@ -5,7 +5,9 @@
         "enum": [
           "openai_responses",
           "openai_chat",
-          "anthropic_messages"
+          "anthropic_messages",
+          "claude_cli",
+          "codex_cli"
         ],
         "title": "ApiStyle",
         "type": "string"
@@ -2125,7 +2127,8 @@
             "default": "api-key",
             "enum": [
               "api-key",
-              "bearer"
+              "bearer",
+              "local_cli"
             ],
             "title": "Auth Style",
             "type": "string"
@@ -2161,7 +2164,8 @@
           "auth_style": {
             "enum": [
               "api-key",
-              "bearer"
+              "bearer",
+              "local_cli"
             ],
             "title": "Auth Style",
             "type": "string"
@@ -3773,7 +3777,8 @@
               "openai_v1",
               "foundry_models",
               "anthropic",
-              "custom"
+              "custom",
+              "cli"
             ],
             "title": "Route",
             "type": "string"
@@ -4344,7 +4349,8 @@
               "openai_v1",
               "foundry_models",
               "anthropic",
-              "custom"
+              "custom",
+              "cli"
             ],
             "title": "Route",
             "type": "string"
@@ -6063,6 +6069,32 @@
         "title": "RunSummary",
         "type": "object"
       },
+      "SeedLocalCliOut": {
+        "properties": {
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/EndpointOut"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "endpoints_created": {
+            "title": "Endpoints Created",
+            "type": "integer"
+          },
+          "profiles_created": {
+            "title": "Profiles Created",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "endpoints_created",
+          "profiles_created",
+          "endpoints"
+        ],
+        "title": "SeedLocalCliOut",
+        "type": "object"
+      },
       "SettingIssue": {
         "properties": {
           "message": {
@@ -7590,6 +7622,28 @@
         ]
       }
     },
+    "/api/endpoints/seed-local-cli": {
+      "post": {
+        "description": "Idempotently seed Local Claude CLI and Local Codex CLI endpoints and starter model profiles.",
+        "operationId": "seed_local_cli_endpoints_api_endpoints_seed_local_cli_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeedLocalCliOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Seed Local Cli Endpoints",
+        "tags": [
+          "endpoints"
+        ]
+      }
+    },
     "/api/endpoints/{endpoint_id}": {
       "delete": {
         "operationId": "delete_endpoint_api_endpoints__endpoint_id__delete",
@@ -7809,7 +7863,7 @@
     },
     "/api/endpoints/{endpoint_id}/verify": {
       "post": {
-        "description": "Free metadata call (list models on the OpenAI v1 route); never a paid inference call.",
+        "description": "Free metadata call (list models on OpenAI v1 or check local CLI binary); never a paid inference call.",
         "operationId": "verify_key_api_endpoints__endpoint_id__verify_post",
         "parameters": [
           {

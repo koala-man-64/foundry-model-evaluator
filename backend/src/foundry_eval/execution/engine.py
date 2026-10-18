@@ -277,9 +277,13 @@ class Engine:
                         AttemptStatus.FAILED,
                         "The endpoint URL changed after this work was created; start it again.",
                     )
-                key = self.credentials.get(endpoint.credential_ref)
-                if not key:
-                    return NotSent(AttemptStatus.FAILED, f"No API key is stored for endpoint '{endpoint.name}'.")
+                if endpoint.auth_style == "local_cli":
+                    key = ""
+                else:
+                    stored_key = self.credentials.get(endpoint.credential_ref)
+                    if not stored_key:
+                        return NotSent(AttemptStatus.FAILED, f"No API key is stored for endpoint '{endpoint.name}'.")
+                    key = stored_key
                 call_endpoint = Endpoint(**{**endpoint.model_dump(), "base_url": endpoint_info["base_url"]})
                 url, query = endpoint_url(call_endpoint, profile)
                 call = ProviderCall(
@@ -387,7 +391,7 @@ class Engine:
             card=card,
             # The stored body is exactly what is sent (prompt, settings, any schema), so it bounds the input.
             input_upper=body_input_upper_bound(attempt.request_body),
-            max_output_tokens=candidate.settings.max_output_tokens,
+            max_output_tokens=candidate.settings.max_output_tokens or profile.max_output_tokens,
             mark_sent=functools.partial(self.runs.mark_sent, attempt_id),
             semaphore=semaphore,
         )

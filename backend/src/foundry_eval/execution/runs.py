@@ -198,7 +198,7 @@ class RunService:
             except SettingsValidationError as exc:
                 issues = exc.issues
                 errors.extend(f"{labels[index]}: {issue.message}" for issue in issues)
-            key_configured = self.credentials.has(endpoint.credential_ref)
+            key_configured = endpoint.auth_style == "local_cli" or self.credentials.has(endpoint.credential_ref)
             if not key_configured:
                 errors.append(f"{labels[index]}: no API key is stored for endpoint '{endpoint.name}'.")
             card = self.pricing.resolve(profile, endpoint)
@@ -216,7 +216,8 @@ class RunService:
                 warnings.append(
                     f"{labels[index]}: rates unknown for {', '.join(unknown)}; affected estimates will be incomplete."
                 )
-            worst, reason = worst_case_cost(card, input_upper, spec.settings.max_output_tokens)
+            max_out_bound = spec.settings.max_output_tokens or profile.max_output_tokens
+            worst, reason = worst_case_cost(card, input_upper, max_out_bound)
             if worst is None or worst_total is None:
                 worst_total = None
             else:

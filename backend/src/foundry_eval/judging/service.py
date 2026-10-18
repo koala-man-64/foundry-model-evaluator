@@ -397,7 +397,7 @@ class JudgeService:
                 worst_case_total=None,
                 unknown_rates=[],
             )
-        key_configured = self.credentials.has(setup.endpoint.credential_ref)
+        key_configured = setup.endpoint.auth_style == "local_cli" or self.credentials.has(setup.endpoint.credential_ref)
         if not key_configured:
             errors.append(f"No API key is stored for the judge's endpoint '{setup.endpoint.name}'.")
         reasons = participant_reasons(setup.profile, setup.endpoint, self.runs.candidates(run_id))
@@ -420,6 +420,7 @@ class JudgeService:
         worst_total: Decimal | None = Decimal(0)
         calls = 0
         dense = 0
+        max_out_bound = request.settings.max_output_tokens or setup.profile.max_output_tokens
         for group in groups:
             entries, prompt, _nonce = self._judge_prompt(group, setup, shuffle=False)
             try:
@@ -456,7 +457,7 @@ class JudgeService:
             )
             if upper > setup.input_limit:
                 dense += 1
-            worst, _reason = worst_case_cost(setup.card, upper, request.settings.max_output_tokens)
+            worst, _reason = worst_case_cost(setup.card, upper, max_out_bound)
             worst_total = None if worst is None or worst_total is None else add(worst_total, worst)
         oversized_count = sum(1 for g in previews if g.oversized)
         if oversized_count:
@@ -809,7 +810,7 @@ class JudgeService:
             body=body,
             card=card,
             input_upper=body_input_upper_bound(body),
-            max_output_tokens=evaluation.judge_settings.max_output_tokens,
+            max_output_tokens=evaluation.judge_settings.max_output_tokens or profile.max_output_tokens,
             mark_sent=functools.partial(self.evaluations.mark_sent, evaluation_id),
         )
         if isinstance(outcome, NotSent):
@@ -880,7 +881,7 @@ class JudgeService:
             return [f"Automatic judging: {exc}"]
         setup = self._resolve(request, errors)
         if setup is not None:
-            if not self.credentials.has(setup.endpoint.credential_ref):
+            if setup.endpoint.auth_style != "local_cli" and not self.credentials.has(setup.endpoint.credential_ref):
                 errors.append(f"No API key is stored for the judge's endpoint '{setup.endpoint.name}'.")
             labels = labels_for(2)
             try:

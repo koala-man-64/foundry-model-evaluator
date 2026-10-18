@@ -25,6 +25,8 @@ class SettingsValidationError(ValueError):
 def endpoint_url(endpoint: Endpoint, profile: ModelProfile) -> tuple[str, dict[str, str]]:
     base = endpoint.base_url.rstrip("/")
     query: dict[str, str] = {}
+    if profile.route == "cli":
+        return base, query
     if profile.route == "custom":
         path = profile.custom_path or ""
         if profile.api_version:
@@ -156,6 +158,81 @@ def build_body(
         if profile.streaming and profile.include_usage:
             body["stream"] = True
             body["stream_options"] = {"include_usage": True}
+        return body
+
+    if style is ApiStyle.CLAUDE_CLI:
+        _unsupported(
+            style,
+            [
+                k
+                for k in values
+                if k
+                in (
+                    "max_output_tokens",
+                    "temperature",
+                    "top_p",
+                    "top_k",
+                    "stop",
+                    "seed",
+                    "thinking_mode",
+                    "thinking_budget_tokens",
+                    "thinking_display",
+                    "reasoning_summary",
+                    "verbosity",
+                    "prompt_cache_ttl",
+                )
+            ],
+        )
+        body = {
+            "cli": "claude",
+            "model": profile.deployment,
+            "prompt": prompt.user,
+            "stream": False,
+        }
+        if prompt.system:
+            body["system_prompt"] = prompt.system
+        if "effort" in values:
+            body["effort"] = values["effort"]
+        if json_schema is not None:
+            body["json_schema"] = json_schema
+        return body
+
+    if style is ApiStyle.CODEX_CLI:
+        _unsupported(
+            style,
+            [
+                k
+                for k in values
+                if k
+                in (
+                    "max_output_tokens",
+                    "temperature",
+                    "top_p",
+                    "top_k",
+                    "stop",
+                    "seed",
+                    "thinking_mode",
+                    "thinking_budget_tokens",
+                    "thinking_display",
+                    "verbosity",
+                    "prompt_cache_ttl",
+                )
+            ],
+        )
+        body = {
+            "cli": "codex",
+            "model": profile.deployment,
+            "prompt": prompt.user,
+            "stream": True,
+        }
+        if prompt.system:
+            body["developer_instructions"] = prompt.system
+        if "effort" in values:
+            body["model_reasoning_effort"] = values["effort"]
+        if "reasoning_summary" in values:
+            body["model_reasoning_summary"] = values["reasoning_summary"]
+        if json_schema is not None:
+            body["output_schema"] = json_schema
         return body
 
     # Claude Messages API

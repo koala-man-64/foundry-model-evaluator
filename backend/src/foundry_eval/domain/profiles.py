@@ -12,20 +12,29 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ..types import ApiStyle
 from .capabilities import Capabilities
 
-AuthStyle = Literal["api-key", "bearer"]
-Route = Literal["openai_v1", "foundry_models", "anthropic", "custom"]
+AuthStyle = Literal["api-key", "bearer", "local_cli"]
+Route = Literal["openai_v1", "foundry_models", "anthropic", "custom", "cli"]
 DeploymentType = Literal["global", "data_zone", "regional"]
 ProcessingTier = Literal["standard", "priority"]
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+LOCAL_CLI_HOSTS = {"claude", "codex"}
 DEFAULT_FOUNDRY_MODELS_API_VERSION = "2024-05-01-preview"
 
 
 def validate_base_url(value: str) -> str:
     url = value.strip().rstrip("/")
     parts = urlsplit(url)
+    if parts.scheme == "local":
+        if not parts.hostname or parts.hostname.lower() not in LOCAL_CLI_HOSTS:
+            raise ValueError("Local CLI URL must be local://claude or local://codex.")
+        if parts.username or parts.password:
+            raise ValueError("Endpoint URL must not contain credentials.")
+        if parts.query or parts.fragment:
+            raise ValueError("Endpoint URL must not contain a query string or fragment.")
+        return f"local://{parts.hostname.lower()}{parts.path}"
     if parts.scheme not in ("https", "http") or not parts.hostname:
-        raise ValueError("Endpoint URL must be an absolute https:// URL.")
+        raise ValueError("Endpoint URL must be an absolute https:// URL (or local://claude, local://codex).")
     if parts.scheme == "http" and parts.hostname not in LOOPBACK_HOSTS:
         raise ValueError("Plain http:// is allowed only for loopback addresses; use https://.")
     if parts.username or parts.password:

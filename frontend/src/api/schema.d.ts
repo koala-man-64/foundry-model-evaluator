@@ -128,6 +128,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/endpoints/seed-local-cli": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Seed Local Cli Endpoints
+         * @description Idempotently seed Local Claude CLI and Local Codex CLI endpoints and starter model profiles.
+         */
+        post: operations["seed_local_cli_endpoints_api_endpoints_seed_local_cli_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/endpoints/{endpoint_id}": {
         parameters: {
             query?: never;
@@ -176,7 +196,7 @@ export interface paths {
         put?: never;
         /**
          * Verify Key
-         * @description Free metadata call (list models on the OpenAI v1 route); never a paid inference call.
+         * @description Free metadata call (list models on OpenAI v1 or check local CLI binary); never a paid inference call.
          */
         post: operations["verify_key_api_endpoints__endpoint_id__verify_post"];
         delete?: never;
@@ -829,7 +849,7 @@ export interface components {
          * ApiStyle
          * @enum {string}
          */
-        ApiStyle: "openai_responses" | "openai_chat" | "anthropic_messages";
+        ApiStyle: "openai_responses" | "openai_chat" | "anthropic_messages" | "claude_cli" | "codex_cli";
         /** AppSettings */
         AppSettings: {
             /**
@@ -1494,7 +1514,7 @@ export interface components {
              * @default api-key
              * @enum {string}
              */
-            auth_style: "api-key" | "bearer";
+            auth_style: "api-key" | "bearer" | "local_cli";
             /** Base Url */
             base_url: string;
             /** Name */
@@ -1511,7 +1531,7 @@ export interface components {
              * Auth Style
              * @enum {string}
              */
-            auth_style: "api-key" | "bearer";
+            auth_style: "api-key" | "bearer" | "local_cli";
             /** Base Url */
             base_url: string;
             /** Created At */
@@ -2034,7 +2054,7 @@ export interface components {
              * Route
              * @enum {string}
              */
-            route: "openai_v1" | "foundry_models" | "anthropic" | "custom";
+            route: "openai_v1" | "foundry_models" | "anthropic" | "custom" | "cli";
             /**
              * Streaming
              * @default true
@@ -2281,7 +2301,7 @@ export interface components {
              * Route
              * @enum {string}
              */
-            route: "openai_v1" | "foundry_models" | "anthropic" | "custom";
+            route: "openai_v1" | "foundry_models" | "anthropic" | "custom" | "cli";
             /**
              * Streaming
              * @default true
@@ -2844,6 +2864,15 @@ export interface components {
             generation_cost: components["schemas"]["CostTotal"];
             judging_cost: components["schemas"]["CostTotal"];
             run: components["schemas"]["Run"];
+        };
+        /** SeedLocalCliOut */
+        SeedLocalCliOut: {
+            /** Endpoints */
+            endpoints: components["schemas"]["EndpointOut"][];
+            /** Endpoints Created */
+            endpoints_created: number;
+            /** Profiles Created */
+            profiles_created: number;
         };
         /** SettingIssue */
         SettingIssue: {
@@ -3486,6 +3515,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    seed_local_cli_endpoints_api_endpoints_seed_local_cli_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeedLocalCliOut"];
                 };
             };
         };

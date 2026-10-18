@@ -103,6 +103,31 @@ PRESETS: dict[str, Preset] = {
                 Category.OUTPUT: "azure_auto",
             },
         ),
+        Preset(
+            id="claude-cli",
+            label="Claude Code CLI (local claude -p)",
+            description="Local Claude CLI with model and reasoning effort flags (--model, --effort).",
+            api_styles=(ApiStyle.CLAUDE_CLI,),
+            rate_defaults={
+                Category.INPUT_UNCACHED: "manual",
+                Category.CACHE_READ: "manual",
+                Category.CACHE_WRITE_5M: "manual",
+                Category.CACHE_WRITE_1H: "manual",
+                Category.OUTPUT: "manual",
+            },
+        ),
+        Preset(
+            id="codex-cli",
+            label="Codex CLI (local codex exec)",
+            description="Local Codex CLI with model, reasoning effort, and summary config (-m, -c).",
+            api_styles=(ApiStyle.CODEX_CLI,),
+            rate_defaults={
+                Category.INPUT_UNCACHED: "azure_auto",
+                Category.CACHE_READ: "azure_auto",
+                Category.CACHE_WRITE: "not_applicable",
+                Category.OUTPUT: "azure_auto",
+            },
+        ),
     )
 }
 
@@ -191,6 +216,43 @@ def preset_capabilities(preset_id: str, api_style: ApiStyle, max_output: int | N
             "prompt_cache_ttl": SettingSpec(supported=True, allowed=["5m", "1h"]),
         }
         return Capabilities(settings=s, max_output_param="max_tokens", structured_output=False)
+    if preset_id == "claude-cli":
+        cli_note = "Not exposed as a CLI flag by claude -p; set Max output tokens on the profile for budget caps."
+        s = {
+            "max_output_tokens": SettingSpec(supported=False, note=cli_note),
+            "effort": SettingSpec(
+                supported=True,
+                allowed=["low", "medium", "high", "xhigh", "max"],
+                provider_default="medium",
+                note="Passed via --effort <level>.",
+            ),
+            "temperature": SettingSpec(supported=False, note="Not exposed as a CLI flag by claude -p."),
+            "top_p": SettingSpec(supported=False, note="Not exposed as a CLI flag by claude -p."),
+            "top_k": SettingSpec(supported=False, note="Not exposed as a CLI flag by claude -p."),
+        }
+        return Capabilities(settings=s, max_output_param="max_tokens", structured_output=True)
+    if preset_id == "codex-cli":
+        cli_note = "Not exposed as a CLI flag by codex exec; set Max output tokens on the profile for budget caps."
+        s = {
+            "max_output_tokens": SettingSpec(supported=False, note=cli_note),
+            "effort": SettingSpec(
+                supported=True,
+                allowed=["minimal", "low", "medium", "high", "xhigh", "max"],
+                provider_default="medium",
+                note="Passed via -c model_reasoning_effort=<level>.",
+            ),
+            "reasoning_summary": SettingSpec(
+                supported=True,
+                allowed=["auto", "concise", "detailed", "none"],
+                provider_default="auto",
+                note="Passed via -c model_reasoning_summary=<summary>.",
+            ),
+            "temperature": SettingSpec(supported=False, note="Not exposed as a CLI flag by codex exec."),
+            "top_p": SettingSpec(supported=False, note="Not exposed as a CLI flag by codex exec."),
+        }
+        return Capabilities(
+            settings=s, max_output_param="max_output_tokens", system_role="developer", structured_output=True
+        )
     # generic-chat
     s = {
         "max_output_tokens": output,
