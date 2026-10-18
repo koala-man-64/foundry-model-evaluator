@@ -23,6 +23,8 @@ const ROUTES: Record<ApiStyle, { value: ProfileFields['route']; label: string }[
     { value: 'anthropic', label: 'Claude (/anthropic/v1/messages)' },
     { value: 'custom', label: 'Custom path' },
   ],
+  claude_cli: [{ value: 'cli', label: 'Local CLI subprocess (claude -p)' }],
+  codex_cli: [{ value: 'cli', label: 'Local CLI subprocess (codex exec)' }],
 }
 
 function presetsFor(presets: PresetOut[], style: ApiStyle) {
@@ -158,10 +160,14 @@ function CapabilityEditor({ value, onChange }: { value: Capabilities; onChange: 
   )
 }
 
-function blankFields(endpointId: string, preset: PresetOut | undefined): ProfileFields {
-  const style = (preset?.api_styles[0] ?? 'openai_responses') as ApiStyle
+function blankFields(endpoint: EndpointOut | undefined, allPresets: PresetOut[]): ProfileFields {
+  let defaultStyle: ApiStyle = 'openai_responses'
+  if (endpoint?.base_url === 'local://claude') defaultStyle = 'claude_cli'
+  else if (endpoint?.base_url === 'local://codex') defaultStyle = 'codex_cli'
+  const preset = presetsFor(allPresets, defaultStyle)[0] ?? allPresets[0]
+  const style = (preset?.api_styles.includes(defaultStyle) ? defaultStyle : (preset?.api_styles[0] ?? 'openai_responses')) as ApiStyle
   return {
-    endpoint_id: endpointId,
+    endpoint_id: endpoint?.id ?? '',
     name: '',
     api_style: style,
     route: ROUTES[style][0].value,
@@ -180,7 +186,7 @@ function blankFields(endpointId: string, preset: PresetOut | undefined): Profile
     pricing_region: null,
     meter_terms: '',
     long_context_threshold: null,
-    streaming: true,
+    streaming: style !== 'claude_cli',
     include_usage: true,
     timeout_connect_s: 15,
     timeout_read_s: 600,
@@ -225,7 +231,7 @@ function ProfileFormBody({
 }) {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<ProfileFields>(() =>
-    initial ? toFields(initial) : blankFields(endpoints[0]?.id ?? '', allPresets[0]),
+    initial ? toFields(initial) : blankFields(endpoints[0], allPresets),
   )
   const save = useMutation({
     mutationFn: (body: ProfileFields) =>
@@ -246,12 +252,26 @@ function ProfileFormBody({
     setForm((f) => ({ ...f, api_style: style, route: ROUTES[style][0].value }))
     if (preset) applyPreset(preset.id, style)
   }
+  const handleEndpointChange = (endpointId: string) => {
+    const ep = endpoints.find((e) => e.id === endpointId)
+    setForm((f) => ({ ...f, endpoint_id: endpointId }))
+    if (!initial && ep) {
+      if (ep.base_url === 'local://claude' && form.api_style !== 'claude_cli') setStyle('claude_cli')
+      else if (ep.base_url === 'local://codex' && form.api_style !== 'codex_cli') setStyle('codex_cli')
+    }
+  }
   const submit = (event: FormEvent) => {
     event.preventDefault()
     save.mutate(form)
   }
   const presetChoices = presetsFor(allPresets, form.api_style)
   const preset = allPresets.find((p) => p.id === form.preset)
+  const deploymentHint =
+    form.api_style === 'claude_cli'
+      ? 'Passed as --model (e.g. sonnet, opus, haiku, claude-sonnet-4-6)'
+      : form.api_style === 'codex_cli'
+        ? 'Passed as -m (e.g. gpt-5.4, gpt-5.4-mini, o3)'
+        : 'Sent as the model field'
   return (
     <form className="card stack" onSubmit={submit} aria-label={initial ? 'Edit model profile' : 'New model profile'}>
       <h3>{initial ? `Edit ${initial.name}` : 'New model profile'}</h3>
@@ -260,7 +280,7 @@ function ProfileFormBody({
           <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </Field>
         <Field label="Endpoint">
-          <select value={form.endpoint_id} onChange={(e) => setForm({ ...form, endpoint_id: e.target.value })}>
+          <select value={form.endpoint_id} onChange={(e) => handleEndpointChange(e.target.value)}>
             {endpoints.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
@@ -270,11 +290,20 @@ function ProfileFormBody({
         </Field>
         <Field label="API">
           <select value={form.api_style} onChange={(e) => setStyle(e.target.value as ApiStyle)}>
-            {(['openai_responses', 'openai_chat', 'anthropic_messages'] as ApiStyle[]).map((style) => (
-              <option key={style} value={style}>
-                {API_STYLE_LABELS[style]}
-              </option>
-            ))}
+            <optgroup label="Microsoft Foundry / HTTP">
+              {(['openai_responses', 'openai_chat', 'anthropic_messages'] as ApiStyle[]).map((style) => (
+                <option key={style} value={style}>
+                  {API_STYLE_LABELS[style]}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Local CLI">
+              {(['claude_cli', 'codex_cli'] as ApiStyle[]).map((style) => (
+                <option key={style} value={style}>
+                  {API_STYLE_LABELS[style]}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </Field>
         <Field label="Route">
@@ -296,7 +325,7 @@ function ProfileFormBody({
             <input value={form.api_version ?? ''} onChange={(e) => setForm({ ...form, api_version: e.target.value || null })} />
           </Field>
         )}
-        <Field label="Deployment name" hint="Sent as the model field">
+        <Field label="Deployment name" hint={deploymentHint}>
           <input required value={form.deployment} onChange={(e) => setForm({ ...form, deployment: e.target.value })} />
         </Field>
       </div>

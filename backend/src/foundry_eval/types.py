@@ -9,10 +9,16 @@ class ApiStyle(StrEnum):
     OPENAI_RESPONSES = "openai_responses"
     OPENAI_CHAT = "openai_chat"
     ANTHROPIC_MESSAGES = "anthropic_messages"
+    CLAUDE_CLI = "claude_cli"
+    CODEX_CLI = "codex_cli"
 
     @property
     def is_openai(self) -> bool:
-        return self in (ApiStyle.OPENAI_RESPONSES, ApiStyle.OPENAI_CHAT)
+        return self in (ApiStyle.OPENAI_RESPONSES, ApiStyle.OPENAI_CHAT, ApiStyle.CODEX_CLI)
+
+    @property
+    def is_cli(self) -> bool:
+        return self in (ApiStyle.CLAUDE_CLI, ApiStyle.CODEX_CLI)
 
 
 class FinishReason(StrEnum):

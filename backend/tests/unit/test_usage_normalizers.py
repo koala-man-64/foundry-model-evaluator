@@ -290,7 +290,7 @@ def test_string_token_values_and_huge_floats_are_anomalies():
     assert any("mystery_tokens" in a for a in facts.anomalies)
 
 
-@pytest.mark.parametrize("style", [R, C, A])
+@pytest.mark.parametrize("style", [R, C, A, ApiStyle.CLAUDE_CLI, ApiStyle.CODEX_CLI])
 def test_non_mapping_usage_is_an_anomaly(style):
     facts = normalize_usage(style, ["not", "a", "dict"])  # type: ignore[arg-type]
     assert facts is not None and facts.anomalies == ["usage is not an object"]
@@ -299,3 +299,99 @@ def test_non_mapping_usage_is_an_anomaly(style):
 def test_lists_of_scalars_are_ignored():
     facts = normalize_usage(C, {"prompt_tokens": 1, "completion_tokens": 1, "tags": [1, 2, 3]})
     assert facts is not None and facts.unrecognized_nonzero == {}
+
+
+def test_claude_cli_accepts_consistent_iterations_without_unrecognized_flag():
+    facts = normalize_usage(
+        ApiStyle.CLAUDE_CLI,
+        {
+            "input_tokens": 15,
+            "cache_read_input_tokens": 120,
+            "cache_creation_input_tokens": 40,
+            "cache_creation": {"ephemeral_5m_input_tokens": 40, "ephemeral_1h_input_tokens": 0},
+            "output_tokens": 80,
+            "output_tokens_details": {"thinking_tokens": 32},
+            "iterations": [
+                {
+                    "input_tokens": 15,
+                    "output_tokens": 80,
+                    "cache_read_input_tokens": 120,
+                    "cache_creation_input_tokens": 40,
+                }
+            ],
+        },
+    )
+    assert facts is not None
+    assert facts.anomalies == []
+    assert facts.unrecognized_nonzero == {}
+    assert facts.input_total == 175
+    assert facts.input_uncached == 15
+    assert facts.cache_read == 120
+    assert facts.cache_write == 40
+    assert facts.output_total == 80
+    assert facts.reasoning == 32
+
+    no_iter = normalize_usage(
+        ApiStyle.CLAUDE_CLI,
+        {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 5,
+        },
+    )
+    assert no_iter is not None and no_iter.input_total == 10
+
+
+def test_claude_cli_flags_divergent_iterations_and_secondary_model_usage():
+    facts = normalize_usage(
+        ApiStyle.CLAUDE_CLI,
+        {
+            "input_tokens": 15,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 80,
+            "iterations": [{"input_tokens": 999, "output_tokens": 777}],
+            "_requested_model": "sonnet",
+            "_model_usage": {
+                "claude-sonnet-4-6": {"inputTokens": 15, "outputTokens": 80},
+                "claude-haiku-4-5-20251001": {"inputTokens": 300, "outputTokens": 50},
+                "claude-zero-model": {"inputTokens": 0, "outputTokens": 0},
+            },
+        },
+    )
+    assert facts is not None
+    assert any("iterations input_tokens sum" in a for a in facts.anomalies)
+    assert any("iterations output_tokens sum" in a for a in facts.anomalies)
+    assert facts.unrecognized_nonzero == {"modelUsage.claude-haiku-4-5-20251001.tokens": 350}
+
+
+def test_codex_cli_normalizes_flat_and_nested_token_fields():
+    assert normalize_usage(ApiStyle.CODEX_CLI, None) is None
+    facts = normalize_usage(
+        ApiStyle.CODEX_CLI,
+        {
+            "input_tokens": 37131,
+            "cached_input_tokens": 23168,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 218,
+            "reasoning_output_tokens": 128,
+            "total_tokens": 37349,
+        },
+    )
+    assert facts is not None
+    assert facts.anomalies == []
+    assert facts.unrecognized_nonzero == {}
+    assert facts.input_total == 37131
+    assert facts.cache_read == 23168
+    assert facts.cache_write == 0
+    assert facts.input_uncached == 37131 - 23168
+    assert facts.input_uncached_derived is True
+    assert facts.output_total == 218
+    assert facts.reasoning == 128
+    assert facts.provider_total == 37349
+
+    minimal = normalize_usage(ApiStyle.CODEX_CLI, {"input_tokens": 10, "output_tokens": 5})
+    assert minimal is not None
+    assert minimal.input_total == 10
+    assert minimal.output_total == 5

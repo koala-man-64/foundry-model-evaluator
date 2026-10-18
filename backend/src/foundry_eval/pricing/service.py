@@ -44,7 +44,7 @@ class PricingService:
         for profile in self.profiles.list():
             endpoint = self.endpoints.get(profile.endpoint_id)
             region = pricing_context(profile, endpoint, self._currency()).region
-            if region:
+            if region and region.lower() != "local":
                 regions.add(region)
         return regions
 

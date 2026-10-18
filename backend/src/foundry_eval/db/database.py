@@ -56,7 +56,14 @@ class Database:
             for version, sql in migrations:
                 if version <= current:
                     continue
-                conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+                conn.execute("PRAGMA foreign_keys = OFF")
+                try:
+                    conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+                    fk_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+                    if fk_errors:
+                        raise RuntimeError(f"Foreign key check failed after migration {version}: {fk_errors}")
+                finally:
+                    conn.execute("PRAGMA foreign_keys = ON")
                 current = version
             return current
 

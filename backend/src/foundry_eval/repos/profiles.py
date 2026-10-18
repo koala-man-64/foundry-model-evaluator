@@ -112,6 +112,10 @@ def validate_profile_fields(fields: ProfileFields) -> None:
         raise ValueError(f"Unknown preset {fields.preset!r}.")
     if fields.api_style not in preset.api_styles:
         raise ValueError(f"Preset {preset.label!r} does not support the {fields.api_style.value} API.")
+    if fields.api_style.is_cli and fields.route != "cli":
+        raise ValueError("Local CLI profiles must use the 'cli' route.")
+    if not fields.api_style.is_cli and fields.route == "cli":
+        raise ValueError("HTTP API profiles cannot use the 'cli' route.")
     if fields.api_style.value == "anthropic_messages" and fields.route not in ("anthropic", "custom"):
         raise ValueError("Claude profiles use the 'anthropic' route (or a custom path).")
     if fields.api_style.is_openai and fields.route == "anthropic":

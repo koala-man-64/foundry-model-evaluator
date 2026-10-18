@@ -218,72 +218,163 @@ class ClaudeUsageNormalizer:
     api_style = ApiStyle.ANTHROPIC_MESSAGES
 
     def normalize(self, usage: Any, *, service_tier: str | None = None) -> UsageFacts | None:
+        return _claude_facts(self.api_style, usage, service_tier=service_tier, allow_cli_fields=False)
+
+
+class ClaudeCliUsageNormalizer:
+    api_style = ApiStyle.CLAUDE_CLI
+
+    def normalize(self, usage: Any, *, service_tier: str | None = None) -> UsageFacts | None:
+        return _claude_facts(self.api_style, usage, service_tier=service_tier, allow_cli_fields=True)
+
+
+def _claude_facts(
+    api_style: ApiStyle,
+    usage: Any,
+    *,
+    service_tier: str | None = None,
+    allow_cli_fields: bool = False,
+) -> UsageFacts | None:
+    if not usage:
+        return None
+    if not isinstance(usage, Mapping):
+        return UsageFacts(api_style=api_style, anomalies=["usage is not an object"])
+    c = _Collector(usage)
+    uncached = c.take("input_tokens")
+    cache_read = c.take("cache_read_input_tokens")
+    cache_write = c.take("cache_creation_input_tokens")
+    write_5m = c.take("cache_creation.ephemeral_5m_input_tokens")
+    write_1h = c.take("cache_creation.ephemeral_1h_input_tokens")
+    output = c.take("output_tokens")
+    thinking = c.take("output_tokens_details.thinking_tokens")
+    tier = usage.get("service_tier") if isinstance(usage.get("service_tier"), str) else None
+    known: dict[str, Any] = {
+        "input_tokens": True,
+        "cache_read_input_tokens": True,
+        "cache_creation_input_tokens": True,
+        "cache_creation": {"ephemeral_5m_input_tokens": True, "ephemeral_1h_input_tokens": True},
+        "output_tokens": True,
+        "output_tokens_details": {"thinking_tokens": True},
+        "service_tier": True,
+        "inference_geo": True,
+        "speed": True,
+    }
+    if allow_cli_fields:
+        known["iterations"] = True
+        known["_model_usage"] = True
+        known["_requested_model"] = True
+        _check_claude_cli_fields(c, usage, uncached=uncached, output=output)
+
+    c.scan_unknown(known)
+    # Non-zero ``server_tool_use`` request counts (web search/fetch) are flagged as unrecognized
+    # by scan_unknown: tool charges are not modelled in v1.
+    partial_split = (write_5m is None) != (write_1h is None)
+    if partial_split:
+        # A partial breakdown cannot be trusted; treat the split as not reported (and do not
+        # infer it from the request either).
+        c.notes.append("cache_creation TTL breakdown is incomplete; ignoring it")
+        write_5m = write_1h = None
+    speed = usage.get("speed")
+    if isinstance(speed, str) and speed.strip().lower() not in ("", "standard"):
+        c.unrecognized[f"speed={speed}"] = 1
+    if write_5m is not None and write_1h is not None:
+        if cache_write is None:
+            cache_write = write_5m + write_1h
+        elif write_5m + write_1h != cache_write:
+            c.anomalies.append(
+                f"cache_creation breakdown ({write_5m} + {write_1h}) does not match "
+                f"cache_creation_input_tokens ({cache_write})"
+            )
+    total_in: int | None = None
+    if uncached is not None and cache_read is not None and cache_write is not None:
+        total_in = uncached + cache_read + cache_write
+    _check_reasoning(c, thinking, output)
+    return UsageFacts(
+        api_style=api_style,
+        input_total=total_in,
+        input_uncached=uncached,
+        cache_read=cache_read,
+        cache_write=cache_write,
+        cache_write_5m=write_5m,
+        cache_write_1h=write_1h,
+        cache_write_split_partial=partial_split,
+        output_total=output,
+        reasoning=thinking,
+        service_tier=tier or service_tier,
+        anomalies=c.anomalies,
+        notes=c.notes,
+        unrecognized_nonzero=c.unrecognized,
+        unsupported_modalities=c.modalities,
+        informational=c.informational,
+    )
+
+
+def _check_claude_cli_fields(
+    c: _Collector,
+    usage: Mapping[str, Any],
+    *,
+    uncached: int | None,
+    output: int | None,
+) -> None:
+    iterations = usage.get("iterations")
+    if isinstance(iterations, list) and iterations:
+        iter_in = sum(_int(i.get("input_tokens")) or 0 for i in iterations if isinstance(i, Mapping))
+        iter_out = sum(_int(i.get("output_tokens")) or 0 for i in iterations if isinstance(i, Mapping))
+        if uncached is not None and iter_in != uncached:
+            c.anomalies.append(f"iterations input_tokens sum ({iter_in}) differs from input_tokens ({uncached})")
+        if output is not None and iter_out != output:
+            c.anomalies.append(f"iterations output_tokens sum ({iter_out}) differs from output_tokens ({output})")
+
+    model_usage = usage.get("_model_usage")
+    requested = str(usage.get("_requested_model") or "").strip().lower()
+    if isinstance(model_usage, Mapping) and len(model_usage) > 1:
+        keys = [str(k) for k in model_usage]
+        primary = next((k for k in keys if requested and requested in k.lower()), keys[0])
+        for k, entry in model_usage.items():
+            if str(k) != primary and isinstance(entry, Mapping):
+                sec_tokens = sum(
+                    _int(entry.get(tk)) or 0
+                    for tk in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")
+                )
+                if sec_tokens > 0:
+                    c.unrecognized[f"modelUsage.{k}.tokens"] = sec_tokens
+
+
+class CodexCliUsageNormalizer:
+    api_style = ApiStyle.CODEX_CLI
+
+    def normalize(self, usage: Any, *, service_tier: str | None = None) -> UsageFacts | None:
         if not usage:
             return None
         if not isinstance(usage, Mapping):
             return UsageFacts(api_style=self.api_style, anomalies=["usage is not an object"])
-        c = _Collector(usage)
-        uncached = c.take("input_tokens")
-        cache_read = c.take("cache_read_input_tokens")
-        cache_write = c.take("cache_creation_input_tokens")
-        write_5m = c.take("cache_creation.ephemeral_5m_input_tokens")
-        write_1h = c.take("cache_creation.ephemeral_1h_input_tokens")
-        output = c.take("output_tokens")
-        thinking = c.take("output_tokens_details.thinking_tokens")
-        tier = usage.get("service_tier") if isinstance(usage.get("service_tier"), str) else None
-        c.scan_unknown(
-            {
-                "input_tokens": True,
-                "cache_read_input_tokens": True,
-                "cache_creation_input_tokens": True,
-                "cache_creation": {"ephemeral_5m_input_tokens": True, "ephemeral_1h_input_tokens": True},
-                "output_tokens": True,
-                "output_tokens_details": {"thinking_tokens": True},
-                "service_tier": True,
-                "inference_geo": True,
-                "speed": True,
-            }
+        remapped = dict(usage)
+        in_details = (
+            dict(remapped["input_tokens_details"]) if isinstance(remapped.get("input_tokens_details"), Mapping) else {}
         )
-        # Non-zero ``server_tool_use`` request counts (web search/fetch) are flagged as unrecognized
-        # by scan_unknown: tool charges are not modelled in v1.
-        partial_split = (write_5m is None) != (write_1h is None)
-        if partial_split:
-            # A partial breakdown cannot be trusted; treat the split as not reported (and do not
-            # infer it from the request either).
-            c.notes.append("cache_creation TTL breakdown is incomplete; ignoring it")
-            write_5m = write_1h = None
-        speed = usage.get("speed")
-        if isinstance(speed, str) and speed.strip().lower() not in ("", "standard"):
-            c.unrecognized[f"speed={speed}"] = 1
-        if write_5m is not None and write_1h is not None:
-            if cache_write is None:
-                cache_write = write_5m + write_1h
-            elif write_5m + write_1h != cache_write:
-                c.anomalies.append(
-                    f"cache_creation breakdown ({write_5m} + {write_1h}) does not match "
-                    f"cache_creation_input_tokens ({cache_write})"
-                )
-        total_in: int | None = None
-        if uncached is not None and cache_read is not None and cache_write is not None:
-            total_in = uncached + cache_read + cache_write
-        _check_reasoning(c, thinking, output)
-        return UsageFacts(
-            api_style=self.api_style,
-            input_total=total_in,
-            input_uncached=uncached,
-            cache_read=cache_read,
-            cache_write=cache_write,
-            cache_write_5m=write_5m,
-            cache_write_1h=write_1h,
-            cache_write_split_partial=partial_split,
-            output_total=output,
-            reasoning=thinking,
-            service_tier=tier or service_tier,
-            anomalies=c.anomalies,
-            notes=c.notes,
-            unrecognized_nonzero=c.unrecognized,
-            unsupported_modalities=c.modalities,
-            informational=c.informational,
+        if "cached_input_tokens" in remapped:
+            in_details.setdefault("cached_tokens", remapped.pop("cached_input_tokens"))
+        if "cache_write_input_tokens" in remapped:
+            in_details.setdefault("cache_write_tokens", remapped.pop("cache_write_input_tokens"))
+        if in_details:
+            remapped["input_tokens_details"] = in_details
+        out_details = (
+            dict(remapped["output_tokens_details"])
+            if isinstance(remapped.get("output_tokens_details"), Mapping)
+            else {}
+        )
+        if "reasoning_output_tokens" in remapped:
+            out_details.setdefault("reasoning_tokens", remapped.pop("reasoning_output_tokens"))
+        if out_details:
+            remapped["output_tokens_details"] = out_details
+        return _openai_facts(
+            self.api_style,
+            remapped,
+            service_tier,
+            input_key="input_tokens",
+            output_key="output_tokens",
+            input_details="input_tokens_details",
+            output_details="output_tokens_details",
         )
 
 
@@ -291,6 +382,8 @@ NORMALIZERS: dict[ApiStyle, UsageNormalizer] = {
     ApiStyle.OPENAI_RESPONSES: ResponsesUsageNormalizer(),
     ApiStyle.OPENAI_CHAT: ChatUsageNormalizer(),
     ApiStyle.ANTHROPIC_MESSAGES: ClaudeUsageNormalizer(),
+    ApiStyle.CLAUDE_CLI: ClaudeCliUsageNormalizer(),
+    ApiStyle.CODEX_CLI: CodexCliUsageNormalizer(),
 }
 
 

@@ -263,7 +263,13 @@ class _CellValues:
     cost_other_currency: int = 0
 
 
-_STYLE_PUBLISHERS = {"anthropic_messages": "Anthropic", "openai_responses": "OpenAI", "openai_chat": "Other"}
+_STYLE_PUBLISHERS = {
+    "anthropic_messages": "Anthropic",
+    "claude_cli": "Anthropic",
+    "openai_responses": "OpenAI",
+    "codex_cli": "OpenAI",
+    "openai_chat": "Other",
+}
 
 
 def _publisher(snapshot: dict[str, Any]) -> str:
