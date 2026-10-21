@@ -132,6 +132,7 @@ jobs:
           foreach ($title in 'A Python virtual environment', 'The web interface, built') {
             if ($output -notmatch "\[needed\]\s+$title") { throw "check.cmd did not report: $title" }
           }
+          exit 0  # the expected exit code 1 above would otherwise become this step's result
       - name: Set up the environment (the scripts install nothing)
         shell: pwsh
         run: |
