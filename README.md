@@ -42,24 +42,62 @@ makes the estimate **incomplete**: it is shown as a lower bound, never as zero.
 
 ## Quick start (Windows)
 
+The scripts install nothing. You set up the Python environment and build the web interface yourself, from your own
+package sources (for example an Artifactory mirror), and `scripts\check.cmd` tells you what is still missing.
+
 You need:
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) to install Python and the backend:
-  `winget install --id=astral-sh.uv -e`
-- [Node.js LTS](https://nodejs.org/) to build the web interface: `winget install --id=OpenJS.NodeJS.LTS -e`
+- **Python 3.12 or newer.** Not the Microsoft Store Python: it redirects the app's writes under `%LOCALAPPDATA%`.
+- **Node.js 20.19 or newer**, only to build the web interface.
 
-In the repository folder, run:
+In the repository folder:
+
+1. Create a virtual environment and install the backend into it in editable mode. Your pip configuration (`pip.ini`
+   or `PIP_INDEX_URL`) decides where packages come from.
+
+   ```bat
+   python -m venv "%LOCALAPPDATA%\FoundryModelEvaluator\runtime\venv"
+   "%LOCALAPPDATA%\FoundryModelEvaluator\runtime\venv\Scripts\python.exe" -m pip install -e backend
+   ```
+
+   To use an environment somewhere else, set `FME_VENV` to its folder.
+2. Build the web interface. npm uses the registry in your `.npmrc`.
+
+   ```bat
+   cd frontend
+   npm ci
+   npm run build
+   cd ..
+   ```
+
+3. Check, then start:
+
+   ```bat
+   scripts\check.cmd
+   scripts\start.cmd
+   ```
+
+`check.cmd` lists what is in place and what is needed, with the commands to fix it, and exits with code 1 when
+something is needed. `start.cmd` and `foundry-eval.cmd` run the same check first and stop if something is needed.
+After pulling new code, run `check.cmd`: it reports when the backend's dependencies changed or the web interface is
+older than its sources.
+
+`start.cmd` opens <http://127.0.0.1:8765> in your browser. Press Ctrl+C in the window to stop the app. The `.cmd`
+files run the PowerShell scripts without changing your execution policy, and `start.cmd -Port 8766 -NoBrowser` changes
+the port and skips opening the browser.
+
+**The exact versions CI tested.** `pip install -e backend` picks versions within the ranges in
+`backend/pyproject.toml`. To install the versions pinned in `backend/uv.lock` instead, export them with
+[uv](https://docs.astral.sh/uv/), which only reads the lockfile here, then install the export and the backend:
 
 ```bat
-scripts\setup.cmd
-scripts\start.cmd
+uv export --frozen --no-dev --no-emit-project --project backend -o "%TEMP%\fme-requirements.txt"
+"%LOCALAPPDATA%\FoundryModelEvaluator\runtime\venv\Scripts\python.exe" -m pip install -r "%TEMP%\fme-requirements.txt"
+"%LOCALAPPDATA%\FoundryModelEvaluator\runtime\venv\Scripts\python.exe" -m pip install --no-deps -e backend
 ```
 
-`start.cmd` opens <http://127.0.0.1:8765> in your browser. Press Ctrl+C in the window to stop the app. After pulling
-new code, run `scripts\setup.cmd` again.
-
-The `.cmd` files run the PowerShell scripts without changing your execution policy. `setup.cmd -Dev` also installs the
-test tools, and `start.cmd -Port 8766 -NoBrowser` changes the port and skips opening the browser.
+`uv sync --locked` does not work through a mirror: the lockfile records `pypi.org` as the index, so with another index
+uv resolves again and refuses.
 
 ### First steps
 
@@ -80,12 +118,15 @@ test tools, and `start.cmd -Port 8766 -NoBrowser` changes the port and skips ope
 |---|---|
 | API keys | Windows Credential Manager (service `FoundryModelEvaluator`). Never in files, the database, logs or the browser. |
 | Data: database, logs, instance lock | `%LOCALAPPDATA%\FoundryModelEvaluator` |
-| Python, virtual environment, built UI | `%LOCALAPPDATA%\FoundryModelEvaluator\runtime` (safe to delete; `setup.cmd` recreates it) |
+| Python environment | `%LOCALAPPDATA%\FoundryModelEvaluator\runtime\venv`, or the folder in `FME_VENV`. You create it. |
+| Built web interface | `frontend\dist`, else `%LOCALAPPDATA%\FoundryModelEvaluator\runtime\ui`, or the folder in `FME_STATIC_DIR` |
 
 **OneDrive.** The repository may live in a OneDrive-synced folder, but the app's data must not. The app refuses to
-start if the data folder is inside the repository or under OneDrive. To keep `node_modules` and the virtual
-environment out of OneDrive, `setup.cmd` builds the web interface from a copy under `runtime`. To use another data
-folder, set `FME_DATA_DIR` to a local path outside OneDrive.
+start if the data folder is inside the repository or under OneDrive. To use another data folder, set `FME_DATA_DIR` to
+a local path outside OneDrive. Keep the virtual environment out of OneDrive too. To keep `node_modules` out of it,
+build the web interface from a copy of `frontend` elsewhere and copy its `dist` to `runtime\ui`, or set
+`FME_STATIC_DIR` to it. Earlier versions of the scripts also created `runtime\python`, the Python that an environment
+they made runs on (keep it while you use that environment), and `runtime\build`, which nothing uses now.
 
 ## Command line
 

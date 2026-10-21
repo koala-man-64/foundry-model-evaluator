@@ -12,10 +12,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $paths = Initialize-AppEnvironment
+Assert-AppEnvironment $paths -SkipWebInterface
 $exe = Get-VenvTool $paths 'foundry-eval.exe'
-if (-not (Test-Path $exe)) {
-    Write-Host 'Foundry Model Evaluator is not installed yet. Run scripts\setup.cmd first.' -ForegroundColor Red
-    exit 1
-}
 & $exe @args
 exit $LASTEXITCODE

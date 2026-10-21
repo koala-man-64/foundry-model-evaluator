@@ -1,5 +1,5 @@
 @{
-    # The scripts are interactive installers, so writing to the console is intended.
+    # The scripts report their findings on the console, so writing to it is intended.
     ExcludeRules = @('PSAvoidUsingWriteHost')
     Rules        = @{
         PSUseCompatibleSyntax = @{

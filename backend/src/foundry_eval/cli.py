@@ -53,7 +53,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"Port {config.port} is already in use. Is the app already running? Try {config.origin}", file=sys.stderr)
         return 2
     if config.static_dir is None or not (config.static_dir / "index.html").is_file():
-        print("Note: the web interface is not built yet (run scripts\\setup.ps1 or npm run build in frontend).")
+        print("Note: the web interface is not built yet (run npm ci and npm run build in frontend).")
     print(f"Foundry Model Evaluator {__version__} — data in {config.data_dir}")
     print(f"Open {config.origin} (Ctrl+C to stop)")
     if not args.no_browser:

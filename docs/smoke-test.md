@@ -5,7 +5,8 @@ Steps 1–3 are free. Step 4 makes a few tiny paid calls within a budget you cho
 
 ## 1. Set up
 
-Run `scripts\setup.cmd`, then `scripts\start.cmd`. In the app, add your endpoint, its key and your model profiles, as
+Set up the environment as the [README](../README.md#quick-start-windows) describes, check it with `scripts\check.cmd`,
+then run `scripts\start.cmd`. In the app, add your endpoint, its key and your model profiles, as
 described in the [README](../README.md#first-steps). Then:
 
 - **Verify the key.** Choose **Verify (free)** on the endpoint. It lists models on the OpenAI v1 route and never makes
