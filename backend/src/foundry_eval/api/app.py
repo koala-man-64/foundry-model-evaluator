@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 
 _NOT_BUILT = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Foundry Model Evaluator</title></head>
 <body><h1>Foundry Model Evaluator</h1><p>The web interface has not been built yet.</p>
-<p>Run <code>npm ci</code> and <code>npm run build</code> in the <code>frontend</code> folder,
-or use <code>scripts\\setup.ps1</code>, then restart the app.</p></body></html>"""
+<p>Run <code>npm ci</code> and <code>npm run build</code> in the <code>frontend</code> folder, then restart the
+app. <code>scripts\\check.cmd</code> lists anything else that is missing.</p></body></html>"""
 
 
 def create_app(

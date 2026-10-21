@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Serves the web interface and the local API on http://127.0.0.1:<port> (loopback only).
-    Press Ctrl+C to stop. Run scripts\setup.cmd first.
+    Press Ctrl+C to stop. It first checks what it needs, like scripts\check.cmd, and does not start when
+    something is needed.
 
 .PARAMETER Port
     Local port (default 8765).
@@ -25,14 +26,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $paths = Initialize-AppEnvironment
+Assert-AppEnvironment $paths
+$env:FME_STATIC_DIR = Get-WebInterfaceDir $paths
 $exe = Get-VenvTool $paths 'foundry-eval.exe'
-if (-not (Test-Path $exe)) {
-    Write-Host 'Foundry Model Evaluator is not installed yet. Run scripts\setup.cmd first.' -ForegroundColor Red
-    exit 1
-}
-if (-not (Get-EnvValue 'FME_STATIC_DIR') -and (Test-Path (Join-Path $paths.Ui 'index.html'))) {
-    $env:FME_STATIC_DIR = $paths.Ui
-}
 $arguments = @('serve', '--port', "$Port")
 if ($NoBrowser) { $arguments += '--no-browser' }
 & $exe @arguments

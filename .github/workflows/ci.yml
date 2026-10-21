@@ -122,9 +122,30 @@ jobs:
           Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
           $results = Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings scripts/PSScriptAnalyzerSettings.psd1
           if ($results) { $results | Format-Table -AutoSize | Out-String -Width 200; exit 1 }
-      - name: Run scripts\setup.cmd (Windows PowerShell 5.1)
+      - name: scripts\check.cmd reports what is missing (Windows PowerShell 5.1)
+        shell: pwsh
+        run: |
+          $output = cmd.exe /c 'scripts\check.cmd' | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $output
+          if ($code -ne 1) { throw "check.cmd exited with $code instead of 1." }
+          foreach ($title in 'A Python virtual environment', 'The web interface, built') {
+            if ($output -notmatch "\[needed\]\s+$title") { throw "check.cmd did not report: $title" }
+          }
+      - name: Set up the environment (the scripts install nothing)
+        shell: pwsh
+        run: |
+          $env:UV_PROJECT_ENVIRONMENT = Join-Path $env:LOCALAPPDATA 'FoundryModelEvaluator\runtime\venv'
+          uv sync --locked --project backend
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Location frontend
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run scripts\check.cmd (Windows PowerShell 5.1)
         shell: cmd
-        run: scripts\setup.cmd -Dev
+        run: scripts\check.cmd
       - name: Backend tests
         working-directory: backend
         shell: pwsh

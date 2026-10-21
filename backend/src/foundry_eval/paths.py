@@ -38,12 +38,12 @@ def default_data_dir(env: Mapping[str, str] | None = None, platform: str = sys.p
 
 
 def runtime_dir(data_dir: Path) -> Path:
-    """Where ``scripts\\setup.ps1`` installs Python, the virtual environment and the built web UI."""
+    """The scripts' default place for the Python environment (``FME_VENV`` overrides it) and a copy of the web UI."""
     return data_dir / "runtime"
 
 
 def default_static_dir(data_dir: Path, repo_root: Path | None) -> Path | None:
-    """The built web interface: a local ``frontend/dist`` build wins, else the one setup.ps1 installed."""
+    """The built web interface: a local ``frontend/dist`` build wins, else a copy in ``runtime/ui``."""
     candidates = [repo_root / "frontend" / "dist"] if repo_root else []
     candidates.append(runtime_dir(data_dir) / "ui")
     for candidate in candidates:
