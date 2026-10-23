@@ -1251,6 +1251,7 @@ export interface components {
             cost_interval?: components["schemas"]["MoneyInterval"] | null;
             /** Cost Other Currency */
             cost_other_currency: number;
+            cost_quality?: components["schemas"]["CostQuality"];
             /** Covered Cells */
             covered_cells: number;
             /** Custom Rates */
@@ -1398,6 +1399,26 @@ export interface components {
             status: components["schemas"]["LineStatus"];
             /** Tokens */
             tokens: number | null;
+        };
+        /** CostQuality */
+        CostQuality: {
+            checks?: components["schemas"]["CostQualityPoint"] | null;
+            judge?: components["schemas"]["CostQualityPoint"] | null;
+            manual?: components["schemas"]["CostQualityPoint"] | null;
+        };
+        /**
+         * CostQualityPoint
+         * @description Both coordinates over the same cells shared by every candidate with cost and this score.
+         */
+        CostQualityPoint: {
+            /** Avg Cost */
+            avg_cost: string;
+            /** Avg Score */
+            avg_score: number;
+            /** Cells */
+            cells: number;
+            /** Custom Rates */
+            custom_rates: boolean;
         };
         /**
          * CostSpread

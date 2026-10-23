@@ -65,30 +65,34 @@ def _row_to_item(row: sqlite3.Row) -> CatalogItem:
     )
 
 
-def _not_in_future(effective_start: str, now: datetime) -> bool:
-    if not effective_start:
-        return True
+def _parse_effective_start(effective_start: str | None) -> datetime | None:
+    """Parse an effective date as an instant; return None for missing or malformed dates."""
+    if not isinstance(effective_start, str) or not effective_start.strip():
+        return None
     try:
         parsed = datetime.fromisoformat(effective_start.replace("Z", "+00:00"))
-    except ValueError:
-        return True
+    except (TypeError, ValueError):
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed <= now
+    return parsed
 
 
 def current_items(items: list[CatalogItem], now: datetime | None = None) -> list[CatalogItem]:
-    """Latest effective price per (meter, sku, volume tier) that is not in the future."""
+    """Latest effective price per (meter, sku, volume tier) with a valid, non-future date."""
     now = now or datetime.now(UTC)
-    chosen: dict[tuple[str, str, Decimal], CatalogItem] = {}
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=UTC)
+    chosen: dict[tuple[str, str, Decimal], tuple[datetime, CatalogItem]] = {}
     for item in items:
-        if not _not_in_future(item.effective_start, now):
+        effective_at = _parse_effective_start(item.effective_start)
+        if effective_at is None or effective_at > now:
             continue
         key = (item.meter_id, item.sku_id, item.tier_min_units)
         existing = chosen.get(key)
-        if existing is None or item.effective_start > existing.effective_start:
-            chosen[key] = item
-    return list(chosen.values())
+        if existing is None or effective_at > existing[0]:
+            chosen[key] = (effective_at, item)
+    return [item for _, item in chosen.values()]
 
 
 class PriceCatalog:

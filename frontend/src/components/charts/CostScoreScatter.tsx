@@ -29,6 +29,8 @@ interface Datum {
   x: number
   y: number
   candidate: ComparisonCandidate
+  cost: string
+  cells: number
 }
 
 export function publisherColor(publisher: string): string {
@@ -45,14 +47,9 @@ function score(candidate: ComparisonCandidate, kind: ScoreKind): number | null {
   return value === null || value === undefined ? null : value
 }
 
-function scoreCells(candidate: ComparisonCandidate, kind: ScoreKind): number {
-  if (kind === 'checks') return candidate.checks_cells
-  return kind === 'judge' ? candidate.judge_scored : candidate.manual_scored
-}
-
 /** Quality against estimated token cost per task, with the Pareto frontier and the most attractive quadrant. */
 export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
-  const hasJudge = comparison.candidates.some((c) => c.avg_judge_score !== null && c.avg_judge_score !== undefined)
+  const hasJudge = comparison.candidates.some((c) => c.cost_quality?.judge || (c.avg_judge_score !== null && c.avg_judge_score !== undefined))
   const [chosen, setKind] = useState<ScoreKind>(hasJudge ? 'judge' : 'manual')
   // A "checks" choice from an earlier comparison does not apply when these runs have no checks.
   const kind: ScoreKind = chosen === 'checks' && !comparison.has_checks ? (hasJudge ? 'judge' : 'manual') : chosen
@@ -64,19 +61,27 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
     const plotted: Datum[] = []
     const missing: { label: string; reason: string }[] = []
     for (const candidate of comparison.candidates) {
-      const cost = candidate.avg_cost ? Number(candidate.avg_cost) : null
-      const y = score(candidate, kind)
-      if (cost === null) missing.push({ label: candidate.label, reason: 'no complete cost estimate' })
-      else if (cost <= 0) missing.push({ label: candidate.label, reason: 'cost $0' })
-      else if (y === null)
+      const point = candidate.cost_quality?.[kind]
+      if (point) {
+        if (Number(point.avg_cost) <= 0) missing.push({ label: candidate.label, reason: `cost ${formatMoney('0', currency)}` })
+        else plotted.push({
+          key: candidate.candidate_key,
+          x: Number(point.avg_cost),
+          y: kind === 'checks' ? point.avg_score * 100 : point.avg_score,
+          cost: point.avg_cost,
+          cells: point.cells,
+          candidate,
+        })
+      } else if (candidate.avg_cost === null) missing.push({ label: candidate.label, reason: 'no complete cost estimate' })
+      else if (score(candidate, kind) === null)
         missing.push({
           label: candidate.label,
           reason: kind === 'judge' ? judgeGap : kind === 'checks' ? 'no checked answers' : 'not scored by hand',
         })
-      else plotted.push({ key: candidate.candidate_key, x: cost, y, candidate })
+      else missing.push({ label: candidate.label, reason: 'no comparable shared cells with both cost and quality' })
     }
     return { data: plotted, unplotted: missing }
-  }, [comparison.candidates, kind, judgeGap])
+  }, [comparison.candidates, kind, judgeGap, currency])
 
   const frontier = useMemo(() => paretoFrontier(data), [data])
   const frontierKeys = new Set(frontier.map((d) => d.key))
@@ -111,7 +116,7 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
   return (
     <ChartFrame
       title="Quality vs. estimated token cost per task"
-      subtitle={`${kindLabel} · average estimated token cost (${currency}) per prompt and trial, over the cells every candidate shares`}
+      subtitle={`${kindLabel} · both axes use the same prompt/trial cells shared by candidates with cost and this score`}
       summary={summary}
       controls={
         <label className="row small">
@@ -157,8 +162,9 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
       columns={[
         { header: 'Candidate', value: (d) => d.candidate.label },
         { header: 'Publisher', value: (d) => d.candidate.publisher },
-        { header: `Avg cost (${currency})`, value: (d) => formatMoney(d.candidate.avg_cost, currency), numeric: true },
+        { header: `Avg cost (${currency})`, value: (d) => formatMoney(d.cost, currency), numeric: true },
         { header: kindLabel, value: (d) => d.y.toFixed(2), numeric: true },
+        { header: 'Shared cells', value: (d) => String(d.cells), numeric: true },
         { header: 'Pareto', value: (d) => (frontierKeys.has(d.key) ? 'yes' : '') },
       ]}
     >
@@ -221,14 +227,13 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
                 stroke="var(--surface)"
                 strokeWidth={2}
                 {...markProps(
-                  `${d.candidate.label}: ${formatMoney(d.candidate.avg_cost, currency)}, score ${d.y.toFixed(2)}`,
+                  `${d.candidate.label}: ${formatMoney(d.cost, currency)}, score ${d.y.toFixed(2)}`,
                   <>
                     <strong>{d.candidate.label}</strong>
                     <div>{d.candidate.publisher}</div>
-                    <div>Avg estimated token cost: {formatMoney(d.candidate.avg_cost, currency)} ({d.candidate.cost_cells} cells)</div>
-                    <div>
-                      {kindLabel}: {d.y.toFixed(2)} ({scoreCells(d.candidate, kind)} cells)
-                    </div>
+                    <div>Avg estimated token cost: {formatMoney(d.cost, currency)}</div>
+                    <div>{kindLabel}: {d.y.toFixed(2)}</div>
+                    <div>{d.cells} shared prompt/trial cell{d.cells === 1 ? '' : 's'} with both cost and quality</div>
                     {frontierKeys.has(d.key) && <div>On the Pareto frontier</div>}
                   </>,
                 )}

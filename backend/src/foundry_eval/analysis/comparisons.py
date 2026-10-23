@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..db.database import Database
 from ..grading.checks import RegexBudget, checks_json, run_checks
@@ -114,6 +114,21 @@ class BaselineDifferences(BaseModel):
     checks: Difference | None = None
 
 
+class CostQualityPoint(BaseModel):
+    """Both coordinates over the same cells shared by every candidate with cost and this score."""
+
+    avg_cost: Money
+    avg_score: float
+    cells: int
+    custom_rates: bool
+
+
+class CostQuality(BaseModel):
+    manual: CostQualityPoint | None = None
+    judge: CostQualityPoint | None = None
+    checks: CostQualityPoint | None = None
+
+
 class ComparisonCandidate(BaseModel):
     candidate_key: str
     label: str
@@ -150,6 +165,8 @@ class ComparisonCandidate(BaseModel):
     win_cells: int
     win_rate: float | None
     custom_rates: bool
+    # Paired chart coordinates per score source; the table's metric means stay independent.
+    cost_quality: CostQuality = Field(default_factory=CostQuality)
     # Judge evaluations behind avg_judge_score: each answer's score is averaged over these first.
     judge_evaluations: int = 0
     # How far one answer's judge score moved between evaluations of it: the mean, over the averaged
@@ -283,6 +300,52 @@ def _mean(values: list[float]) -> float | None:
 
 def _decimal_mean(values: list[Decimal]) -> Decimal | None:
     return div(add(*values), Decimal(len(values))) if values else None
+
+
+def _cost_quality_points(values: dict[str, _CellValues], matched: list[Cell]) -> dict[str, CostQuality]:
+    result = {key: CostQuality() for key in values}
+    for kind in ("manual", "judge", "checks"):
+        scores: dict[str, dict[Cell, float]] = {key: getattr(value, kind) for key, value in values.items()}
+        paired = {
+            key: {
+                cell: (value.cost[cell], scores[key][cell])
+                for cell in matched
+                if cell in value.cost and cell in scores[key]
+            }
+            for key, value in values.items()
+        }
+        common = _common_cells(paired, matched)
+        if not common:
+            continue
+        if kind == "judge":
+            bases = {
+                basis
+                for key, cells in paired.items()
+                if cells
+                for cell in common
+                for basis in values[key].judge_bases.get(cell, set())
+            }
+            if len(bases) > 1:
+                continue
+        for key, cells in paired.items():
+            if not cells:
+                continue
+            costs = [cells[cell][0] for cell in common]
+            mean_cost = _decimal_mean([cost.mean for cost in costs])
+            mean_score = _mean([cells[cell][1] for cell in common])
+            assert mean_cost is not None
+            assert mean_score is not None
+            setattr(
+                result[key],
+                kind,
+                CostQualityPoint(
+                    avg_cost=mean_cost,
+                    avg_score=mean_score,
+                    cells=len(common),
+                    custom_rates=any(cost.custom for cost in costs),
+                ),
+            )
+    return result
 
 
 def _succeeded(observations: list[_Observation]) -> bool:
@@ -709,6 +772,7 @@ class ComparisonService:
         manual_scores = _common_values({k: v.manual for k, v in values.items()}, matched)
         judge_scores_by_key = _common_values({k: v.judge for k, v in values.items()}, matched)
         checks_by_key = _common_values({k: v.checks for k, v in values.items()}, matched)
+        cost_quality = _cost_quality_points(values, matched)
         wins = _common_values({k: v.wins for k, v in values.items()}, matched)
         judge_common = _common_cells({k: v.judge for k, v in values.items()}, matched)
         win_common = _common_cells({k: v.wins for k, v in values.items()}, matched)
@@ -767,6 +831,7 @@ class ComparisonService:
                     win_cells=len(win_means),
                     win_rate=judge_wins / len(win_means) if win_means else None,
                     custom_rates=any(c.custom for c in costs[key]),
+                    cost_quality=cost_quality[key],
                     judge_evaluations=sum(value.judge_evaluations.get(cell, 0) for cell in judged_cells),
                     judge_spread=_mean(spreads),
                     judge_spread_cells=len(spreads),

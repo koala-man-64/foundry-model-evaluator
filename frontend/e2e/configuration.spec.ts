@@ -190,4 +190,79 @@ test.describe('Models and pricing', () => {
     await expect(rateRow(page, 'output')).toContainText('$25.0000')
     await expect(rateRow(page, 'output')).not.toContainText('Custom rate')
   })
+
+  test('manual and override prices use the configured currency in later estimates', async ({ page, request }) => {
+    const api = new AppApi(request)
+    const settings = await api.call<{ settings: Record<string, unknown> }>('GET', '/api/settings')
+    try {
+      await api.call('PUT', '/api/settings', { ...settings.settings, currency: 'EUR' })
+      const endpointId = await api.endpoint(unique('Currency endpoint'))
+      const profileId = await api.profile({
+        endpointId,
+        name: unique('Currency profile'),
+        apiStyle: 'openai_chat',
+        preset: 'generic-chat',
+        deployment: 'currency-chat',
+      })
+
+      await page.goto(`/models/pricing/${profileId}`)
+      const inputRow = rateRow(page, 'input_uncached')
+      const outputRow = rateRow(page, 'output')
+      await inputRow.getByRole('button', { name: 'Manual' }).click()
+      let dialog = page.getByRole('dialog')
+      await expect(dialog.getByLabel('Price (EUR)')).toBeVisible()
+      await dialog.getByLabel('Price (EUR)').fill('2')
+      await dialog.getByLabel('Source URL (required)').fill('https://example.test/pricing')
+      await dialog.getByRole('button', { name: 'Save' }).click()
+      await expect(dialog).toBeHidden()
+      await expect(inputRow).toContainText('EUR 2.0000')
+
+      await outputRow.getByRole('button', { name: 'Manual' }).click()
+      dialog = page.getByRole('dialog')
+      await dialog.getByLabel('Price (EUR)').fill('25')
+      await dialog.getByLabel('Source URL (required)').fill('https://example.test/pricing')
+      await dialog.getByRole('button', { name: 'Save' }).click()
+      await expect(dialog).toBeHidden()
+      await expect(outputRow).toContainText('EUR 25.0000')
+
+      await outputRow.getByRole('button', { name: 'Override' }).click()
+      dialog = page.getByRole('dialog')
+      await expect(dialog.getByLabel('Price (EUR)')).toBeVisible()
+      await dialog.getByLabel('Price (EUR)').fill('20')
+      await dialog.getByLabel('Label / reason (required)').fill('Negotiated rate')
+      await dialog.getByRole('button', { name: 'Save' }).click()
+      await expect(dialog).toBeHidden()
+      await expect(outputRow).toContainText('EUR 20.0000')
+
+      type StoredRates = {
+        currency: string
+        card: {
+          tiers: Array<{
+            above_input_tokens: number
+            categories: Record<string, { rate?: { price: string; currency: string; source: string } }>
+          }>
+        }
+      }
+      const stored = await api.call<StoredRates>('GET', `/api/profiles/${profileId}/rates`)
+      const base = stored.card.tiers.find((tier) => tier.above_input_tokens === 0)
+      expect(stored.currency).toBe('EUR')
+      expect(base?.categories.input_uncached.rate).toMatchObject({ price: '2', currency: 'EUR', source: 'manual' })
+      expect(base?.categories.output.rate).toMatchObject({ price: '20', currency: 'EUR', source: 'custom_override' })
+
+      const runId = await api.run({
+        title: unique('Currency estimate'),
+        prompts: [{ user: 'Say hello.' }],
+        candidates: [{ profile_id: profileId }],
+      })
+      const run = await api.call<{ generation_cost: { status: string; currency: string; total: string | null } }>(
+        'GET',
+        `/api/runs/${runId}`,
+      )
+      expect(run.generation_cost.status).toBe('complete')
+      expect(run.generation_cost.currency).toBe('EUR')
+      expect(Number(run.generation_cost.total)).toBeGreaterThan(0)
+    } finally {
+      await api.call('PUT', '/api/settings', settings.settings)
+    }
+  })
 })

@@ -32,13 +32,17 @@ Refresh or run `pricing-check`. A refresh replaces a region's cached prices only
 downloaded completely. If any filter fails, or a region that had prices comes back empty, the refresh is reported
 as failed and the cached prices, and the rates matched to them, stay as they were. The rates view shows when the
 prices in use were downloaded and, separately, a later refresh that failed. For each meter, the latest price whose effective date has already passed is used, so a
-price change scheduled for the future does not apply yet.
+price change scheduled for the future does not apply yet. Missing or malformed effective dates are excluded;
+valid dates are compared as instants, including their time zones.
 
 ### Units
 
 The `unitOfMeasure` field decides the unit; `1K`, `1M`, `1K Tokens` and `1M Tokens` are accepted. Hourly and other
 units are rejected. If the meter name mentions a different unit than `unitOfMeasure`, the meter is not matched
 automatically. Prices are shown per 1M tokens, together with the price as quoted.
+
+Volume-tiered prices are unsupported. A meter with a nonzero minimum volume, or several volume tiers, stays
+unknown even if pinned; enter a verified manual rate instead.
 
 ### How matching works
 
