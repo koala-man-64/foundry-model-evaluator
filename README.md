@@ -16,7 +16,8 @@ quality, token usage, latency and **estimated token cost**.
   chart, separate from manual and judge scores.
 - **Charts.** Runs and suite comparisons are charted: quality against estimated cost per task (log scale, with the
   Pareto frontier and the most attractive quadrant), output tokens split into answer and reasoning, and latency. Every
-  chart has a table view.
+  chart has a table view. The quality-versus-cost chart uses the same shared prompt/trial cells for both axes
+  and its Pareto frontier, with separate paired samples for manual scores, judge scores and checks.
 - **Scoring.** Rate answers yourself on a 1–5 scale with notes, or have a Foundry model judge them anonymously against
   a versioned rubric. Manual and judge scores are kept separate. Blind review hides the model names, keys 1–5 score
   the selected answer and N jumps to the next unscored one. **Judge vs. your scores** shows how closely the judge

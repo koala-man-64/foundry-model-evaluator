@@ -1390,6 +1390,9 @@
             "title": "Cost Other Currency",
             "type": "integer"
           },
+          "cost_quality": {
+            "$ref": "#/components/schemas/CostQuality"
+          },
           "covered_cells": {
             "title": "Covered Cells",
             "type": "integer"
@@ -1841,6 +1844,71 @@
           "status"
         ],
         "title": "CostLine",
+        "type": "object"
+      },
+      "CostQuality": {
+        "properties": {
+          "checks": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostQualityPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "judge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostQualityPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CostQualityPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "CostQuality",
+        "type": "object"
+      },
+      "CostQualityPoint": {
+        "description": "Both coordinates over the same cells shared by every candidate with cost and this score.",
+        "properties": {
+          "avg_cost": {
+            "title": "Avg Cost",
+            "type": "string"
+          },
+          "avg_score": {
+            "title": "Avg Score",
+            "type": "number"
+          },
+          "cells": {
+            "title": "Cells",
+            "type": "integer"
+          },
+          "custom_rates": {
+            "title": "Custom Rates",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "avg_cost",
+          "avg_score",
+          "cells",
+          "custom_rates"
+        ],
+        "title": "CostQualityPoint",
         "type": "object"
       },
       "CostSpread": {

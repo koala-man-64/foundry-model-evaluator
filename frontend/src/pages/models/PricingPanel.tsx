@@ -221,7 +221,7 @@ function RateDialog({
       )}
       {(editing.mode === 'manual' || editing.mode === 'override') && (
         <div className="grid-form">
-          <Field label="Price (USD)" error={price && !priceValid ? 'Enter a decimal number' : null}>
+          <Field label={`Price (${rates.currency})`} error={price && !priceValid ? 'Enter a decimal number' : null}>
             <input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="e.g. 2.50" />
           </Field>
           <Field label="Per">

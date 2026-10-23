@@ -279,6 +279,8 @@ def match_meters(
 
     def evaluate(info: MeterInfo) -> Candidate:
         reasons = list(info.problems)
+        if info.item.tier_min_units != 0:
+            reasons.append("meter has a nonzero minimum volume tier (tierMinimumUnits)")
         if info.deployment_type is not None and info.deployment_type != deployment_type:
             reasons.append(f"deployment type is {info.deployment_type}, profile uses {deployment_type}")
         if info.processing_tier != processing_tier:

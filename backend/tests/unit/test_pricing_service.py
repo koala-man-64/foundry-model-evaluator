@@ -11,7 +11,7 @@ from foundry_eval.db.database import Database
 from foundry_eval.domain.presets import preset_capabilities
 from foundry_eval.domain.profiles import ProfileFields
 from foundry_eval.pricing.ratecard import Category, RateSource, RateStatus
-from foundry_eval.pricing.retail import RetailPricesClient
+from foundry_eval.pricing.retail import RetailPricesClient, parse_item
 from foundry_eval.pricing.service import PricingService
 from foundry_eval.pricing.snapshots import create_snapshot, load_snapshot
 from foundry_eval.repos.endpoints import ConflictError, EndpointRepository
@@ -146,6 +146,27 @@ async def test_pinning_and_overrides(db):
     service.match_and_apply(profile.id)
     service.rates.clear(profile.id, Category.INPUT_UNCACHED, 0, "override")
     assert service.resolve(profile).tiers[0].get(Category.INPUT_UNCACHED).rate.source is RateSource.AZURE_PINNED
+
+
+async def test_pinned_single_nonzero_volume_tier_resolves_unknown(db):
+    profile, _ = make_profile(db, preset="openai-reasoning", api_style=ApiStyle.OPENAI_RESPONSES, terms="tiered-model")
+    service = PricingService(db, RetailPricesClient(transport=retail_transport()))
+    await service.refresh()
+
+    payload = json.loads(FIXTURE.read_text(), parse_float=Decimal)
+    raw = next(
+        item
+        for item in payload["Items"]
+        if item["meterName"] == "tiered-model Inp glbl" and item["tierMinimumUnits"] == 1_000_000
+    )
+    item = parse_item(raw)
+    fetch_id = service.catalog.start_fetch("eastus2", "USD", [])
+    service.catalog.replace_region(fetch_id, "eastus2", "USD", [item])
+    service.pin(profile.id, Category.INPUT_UNCACHED, 0, item.meter_id, item.sku_id)
+
+    entry = service.resolve(profile).tiers[0].get(Category.INPUT_UNCACHED)
+    assert entry.status is RateStatus.UNKNOWN
+    assert "volume tier" in (entry.reason or "")
 
 
 def test_manual_rates_for_claude(db):

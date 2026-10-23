@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -8,7 +10,7 @@ import httpx2
 import pytest
 
 from foundry_eval.db.database import Database
-from foundry_eval.pricing.catalog import PriceCatalog
+from foundry_eval.pricing.catalog import PriceCatalog, current_items
 from foundry_eval.pricing.matcher import classify, match_meters, search_catalog
 from foundry_eval.pricing.ratecard import Category
 from foundry_eval.pricing.retail import (
@@ -246,6 +248,22 @@ def test_volume_tiers_and_duplicates_are_ambiguous(catalog):
     assert dup.get(Category.INPUT_UNCACHED).status == "ambiguous"
 
 
+def test_single_nonzero_volume_tier_is_not_auto_matched():
+    item = replace(_item("tiered-model Inp glbl"), tier_min_units=Decimal("1000000"))
+
+    result = match_meters(
+        [item],
+        api_style=R,
+        meter_terms="tiered-model",
+        deployment_type="global",
+        processing_tier="standard",
+    )
+
+    matched = result.get(Category.INPUT_UNCACHED)
+    assert matched.status == "not_found"
+    assert "volume tier" in " ".join(matched.candidates[0].reasons)
+
+
 def test_partner_models(catalog):
     fw = match(catalog, "FW DeepSeek V4.1 Flash", deployment="data_zone")
     assert fw.get(Category.CACHE_READ).chosen.info.item.retail_price == Decimal("0.008")
@@ -289,6 +307,28 @@ def _item(meter_name: str, unit: str = "1M"):
         retail_price=Decimal("1"),
         retrieved_at="t",
     )
+
+
+def test_current_items_quarantines_malformed_effective_date():
+    valid = replace(_item("model-x Inp glbl"), effective_start="2026-09-01T00:00:00Z")
+    malformed = replace(valid, effective_start="not-a-date", retail_price=Decimal("99"))
+
+    assert current_items([valid, malformed], now=datetime(2026, 10, 23, tzinfo=UTC)) == [valid]
+
+
+def test_current_items_orders_effective_dates_by_instant_across_offsets():
+    older = replace(
+        _item("model-x Inp glbl"),
+        effective_start="2026-10-23T00:15:00+02:00",
+        retail_price=Decimal("1"),
+    )
+    newer = replace(
+        older,
+        effective_start="2026-10-22T23:30:00Z",
+        retail_price=Decimal("2"),
+    )
+
+    assert current_items([older, newer], now=datetime(2026, 10, 24, tzinfo=UTC)) == [newer]
 
 
 def test_context_length_variants_are_identity_not_units():

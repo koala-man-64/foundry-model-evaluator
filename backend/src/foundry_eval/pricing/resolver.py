@@ -51,6 +51,10 @@ def _azure_rate(row: RateRow, items: list[CatalogItem], context: PricingContext,
     if len(matches) > 1:
         return CategoryRate.unknown("The selected meter has several volume tiers; enter a manual rate instead.")
     item = matches[0]
+    if item.tier_min_units != 0:
+        return CategoryRate.unknown(
+            "The selected meter has a nonzero minimum volume tier; enter a manual rate instead."
+        )
     if not pinned:
         problem = _auto_meter_problem(item, row, profile, long_tier=row.tier_above_input > 0)
         if problem:

@@ -179,6 +179,15 @@ def test_averages_use_common_cells_and_count_each_cell_once(client):
     assert by["flaky"]["avg_judge_score"] == pytest.approx((4.0 + 4.25) / 2)
     assert by["good"]["judge_scored"] == by["flaky"]["judge_scored"] == 2
 
+    # Chart axes must use the same cells: beta's judge score cannot be paired with alpha's cost.
+    good_point = by["good"]["cost_quality"]["judge"]
+    flaky_point = by["flaky"]["cost_quality"]["judge"]
+    assert good_point["cells"] == flaky_point["cells"] == 1
+    assert Decimal(good_point["avg_cost"]) == pytest.approx(good_alpha, abs=Decimal("1e-30"))
+    assert Decimal(flaky_point["avg_cost"]) == flaky_alpha
+    assert good_point["avg_score"] == pytest.approx(4.25)
+    assert flaky_point["avg_score"] == pytest.approx(4.0)
+
     # Win rate per cell: good wins alpha twice (one cell), flaky wins beta once.
     for label in ("good", "flaky"):
         assert by[label]["win_rate"] == pytest.approx(0.5)
