@@ -245,9 +245,13 @@ def test_fences_are_stripped_in_linear_time():
 
 def test_unreadable_json_is_reported_not_raised():
     huge_number = '{"responses": [], "preferred": ' + "9" * 5000 + "}"
+    result = parse_judge_output(huge_number, ["A", "B"], DEFAULT_RUBRIC)
+    assert not result.ok and "not a readable JSON object" in result.errors[0]
+    # How deep the decoder can nest depends on the C stack: Python 3.14 on Linux reads this list,
+    # other platforms refuse it. Either way it is reported, never raised.
     deep = "[" * 100_000 + "]" * 100_000
-    for text in (huge_number, deep):
-        result = parse_judge_output(text, ["A", "B"], DEFAULT_RUBRIC)
-        assert not result.ok and "not a readable JSON object" in result.errors[0]
+    result = parse_judge_output(deep, ["A", "B"], DEFAULT_RUBRIC)
+    assert not result.ok
+    assert "not a readable JSON object" in result.errors[0] or "must be a JSON object" in result.errors[0]
     too_long = parse_judge_output(" " * 1_000_001, ["A", "B"], DEFAULT_RUBRIC)
     assert "too long" in too_long.errors[0]
