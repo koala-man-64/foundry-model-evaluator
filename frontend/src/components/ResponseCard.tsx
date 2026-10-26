@@ -5,6 +5,7 @@ import { del, get, newIdempotencyKey, post, put } from '../api/client'
 import { keys } from '../api/hooks'
 import type { Attempt, CandidateOut, CheckOutcome, JudgeAggregate, JudgeScore, ManualScore, RawOut } from '../api/types'
 import { FINISH_LABELS } from '../lib/format'
+import { reportedModel } from '../lib/profiles'
 import { CostDetails, CostValue } from './cost'
 import { MarkdownView } from './MarkdownView'
 import { Badge, Dialog, ErrorMessage, JsonView, StatusBadge } from './ui'
@@ -178,6 +179,7 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScor
     onSuccess: setRaw,
   })
   const done = !['queued', 'running'].includes(attempt.status)
+  const answeredBy = candidate ? reportedModel(candidate, attempt.response_model) : null
   return (
     <article className="card stack-sm" aria-label={`Response from ${candidate?.label ?? 'candidate'}`}>
       <div className="card-header">
@@ -185,6 +187,8 @@ export function ResponseCard({ runId, attempt, candidate, manualScore, judgeScor
           <div className="card-title">{candidate?.label ?? 'Candidate'}</div>
           <div className="row small muted">
             <span>{candidate?.deployment}</span>
+            {candidate?.model_version && <span>version {candidate.model_version}</span>}
+            {answeredBy && <span>answered by {answeredBy}</span>}
             {attempt.trial_index > 1 && <span>trial {attempt.trial_index}</span>}
             {attempt.retry_of && <Badge tone="info">retry</Badge>}
           </div>

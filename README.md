@@ -113,6 +113,14 @@ uv resolves again and refuses.
 4. On **Compare**, write a prompt, add candidates, then choose **Run comparison**. A paid call is made only when you
    choose Run, and nothing is retried automatically.
 
+**Another model or version.** On **Compare** or in a suite, **New variant…** on a candidate saves a copy of its profile
+with another model and version, and the candidate switches to it. A variant is a profile of its own: comparisons keep
+it apart, and its rates are not copied, so set them or give it the meter terms of its Azure prices. For a local CLI the
+version pins a snapshot: model `claude-opus-4-1` with version `20250805` sends `--model claude-opus-4-1-20250805`, and
+without a version the model is sent as entered. A Foundry deployment fixes its own version, so there the version is
+recorded, not sent. An answer shows the model the provider reported when it says more than what was sent, for example
+what an alias such as `opus` resolved to.
+
 ## Where things are stored
 
 | What | Where |

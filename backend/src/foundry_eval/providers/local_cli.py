@@ -384,9 +384,14 @@ def _parse_claude_json(stdout_text: str) -> dict[str, Any] | None:
 def _extract_claude_model(parsed: Mapping[str, Any]) -> str | None:
     model_usage = parsed.get("modelUsage")
     if isinstance(model_usage, Mapping) and model_usage:
-        first_key = next(iter(model_usage.keys()))
-        if isinstance(first_key, str):
-            return first_key
+        # Background usage (a Haiku call, say) can be listed too: the model that answered wrote the most output.
+        def output_tokens(item: tuple[Any, Any]) -> int:
+            tokens = item[1].get("outputTokens") if isinstance(item[1], Mapping) else None
+            return tokens if isinstance(tokens, int) else 0
+
+        key = max(model_usage.items(), key=output_tokens)[0]
+        if isinstance(key, str):
+            return key
     model = parsed.get("model")
     return model if isinstance(model, str) else None
 

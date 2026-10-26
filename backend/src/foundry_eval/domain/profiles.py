@@ -103,6 +103,22 @@ class ProfileFields(BaseModel):
             raise ValueError("Custom path must start with '/' and stay on the endpoint host.")
         return value
 
+    @field_validator("model_version")
+    @classmethod
+    def _model_version(cls, value: str) -> str:
+        return value.strip()
+
+    @property
+    def request_model(self) -> str:
+        """The model sent to the provider.
+
+        A local CLI takes any model id, so its version pins a snapshot (claude-opus-4-1 + 20250805 sends
+        claude-opus-4-1-20250805). A Foundry deployment fixes its own version, which is only recorded.
+        """
+        if self.api_style.is_cli and self.model_version:
+            return f"{self.deployment.strip()}-{self.model_version}"
+        return self.deployment
+
 
 class ModelProfile(ProfileFields):
     model_config = ConfigDict(extra="forbid", frozen=True)

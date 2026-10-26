@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 
 from foundry_eval.domain.generation import GenerationSettings
 from foundry_eval.domain.presets import preset_capabilities
-from foundry_eval.domain.profiles import ModelProfile, ProfileFields, validate_base_url
+from foundry_eval.domain.profiles import Endpoint, ModelProfile, ProfileFields, validate_base_url
 from foundry_eval.providers.base import Prompt
+from foundry_eval.providers.local_cli import _extract_claude_model
 from foundry_eval.providers.request_builder import SettingsValidationError, build_body
 from foundry_eval.types import ApiStyle
 from tests.api_support import make_client, set_manual, start_run, wait_for_run
@@ -107,6 +108,99 @@ def test_build_body_for_claude_and_codex_cli() -> None:
         "model_reasoning_summary": "detailed",
         "stream": True,
     }
+
+
+def _profile(api_style: ApiStyle, preset: str, deployment: str, model_version: str = "") -> ModelProfile:
+    return ModelProfile(
+        id=f"p-{deployment}-{model_version}",
+        endpoint_id="ep-1",
+        name=deployment,
+        api_style=api_style,
+        route="cli" if api_style.is_cli else "openai_v1",
+        deployment=deployment,
+        model_version=model_version,
+        preset=preset,
+        capabilities=preset_capabilities(preset, api_style),
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
+    )
+
+
+def test_cli_version_pins_a_model_snapshot() -> None:
+    prompt = Prompt(user="hi")
+    claude = _profile(ApiStyle.CLAUDE_CLI, "claude-cli", "claude-opus-4-1", " 20250805 ")
+    codex = _profile(ApiStyle.CODEX_CLI, "codex-cli", "gpt-4.1", "2025-04-14")
+    assert build_body(claude, GenerationSettings(), prompt)["model"] == "claude-opus-4-1-20250805"
+    assert build_body(codex, GenerationSettings(), prompt)["model"] == "gpt-4.1-2025-04-14"
+    # Without a version the model goes as entered, so an alias such as opus still resolves in the CLI.
+    assert build_body(_profile(ApiStyle.CLAUDE_CLI, "claude-cli", "opus"), GenerationSettings(), prompt)["model"] == (
+        "opus"
+    )
+
+
+def test_foundry_version_is_recorded_not_sent() -> None:
+    endpoint = Endpoint(
+        id="ep-1",
+        name="Foundry",
+        base_url="https://mock.services.ai.azure.com",
+        region="eastus2",
+        auth_style="api-key",
+        credential_ref="ref-1",
+        key_set_at=None,
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
+    )
+    old = _profile(ApiStyle.OPENAI_CHAT, "generic-chat", "my-gpt41", "2025-04-14")
+    new = _profile(ApiStyle.OPENAI_CHAT, "generic-chat", "my-gpt41", "2025-09-30")
+    # The deployment fixes the version, so the request names the deployment only.
+    assert build_body(old, GenerationSettings(), Prompt(user="hi"))["model"] == "my-gpt41"
+    # The recorded version still keeps the two apart in comparisons.
+    assert old.pricing_identity(endpoint, "USD") != new.pricing_identity(endpoint, "USD")
+
+
+def test_claude_cli_reports_the_model_that_answered_not_background_usage() -> None:
+    usage = {
+        "claude-haiku-4-5-20251001": {"inputTokens": 350, "outputTokens": 45},
+        "claude-opus-4-5-20251101": {"inputTokens": 50, "outputTokens": 300},
+    }
+    assert _extract_claude_model({"modelUsage": usage}) == "claude-opus-4-5-20251101"
+    assert _extract_claude_model({"modelUsage": {"opus": {}}}) == "opus"
+    assert _extract_claude_model({"model": "sonnet"}) == "sonnet"
+
+
+def test_a_cli_variant_runs_its_pinned_snapshot_as_its_own_candidate(cli_client: TestClient) -> None:
+    cli_client.post("/api/endpoints/seed-local-cli")
+    profiles = {p["name"]: p for p in cli_client.get("/api/profiles").json()}
+    source = profiles["Claude Opus (CLI)"]
+    fields = {k: v for k, v in source.items() if k not in ("id", "archived", "created_at", "updated_at")}
+    created = cli_client.post(
+        "/api/profiles",
+        json={**fields, "name": "Opus 4.1 snapshot", "deployment": "claude-opus-4-1", "model_version": "20250805"},
+    )
+    assert created.status_code == 201, created.text
+    variant = created.json()
+    for profile in (source, variant):
+        _set_manual_rates(cli_client, profile["id"], "claude_cli")
+
+    run_payload = {
+        "kind": "compare",
+        "prompts": [{"user": "What is 6 * 7?"}],
+        "candidates": [{"profile_id": source["id"]}, {"profile_id": variant["id"]}],
+    }
+    detail = wait_for_run(cli_client, start_run(cli_client, run_payload, key="cli-variant-1"))
+    assert detail["run"]["status"] == "completed"
+    candidates = {c["profile_id"]: c for c in detail["candidates"]}
+    assert candidates[variant["id"]]["model_version"] == "20250805"
+    assert candidates[source["id"]]["candidate_key"] != candidates[variant["id"]]["candidate_key"]
+
+    attempts = {a["candidate_id"]: a for a in detail["attempts"]}
+    pinned = attempts[candidates[variant["id"]]["id"]]
+    assert "[claude-cli model=claude-opus-4-1-20250805 " in pinned["output_text"]
+    assert pinned["response_model"] == "claude-opus-4-1-20250805"
+    assert pinned["cost"]["status"] == "complete"
+    raw = cli_client.get(f"/api/attempts/{pinned['id']}/raw").json()
+    assert raw["request_body"]["model"] == "claude-opus-4-1-20250805"
+    assert "[claude-cli model=opus " in attempts[candidates[source["id"]]["id"]]["output_text"]
 
 
 def _set_manual_rates(client: TestClient, profile_id: str, api_style: str) -> None:

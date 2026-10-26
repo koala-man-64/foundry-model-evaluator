@@ -5696,6 +5696,11 @@
             "title": "Model Name",
             "type": "string"
           },
+          "model_version": {
+            "default": "",
+            "title": "Model Version",
+            "type": "string"
+          },
           "position": {
             "title": "Position",
             "type": "integer"

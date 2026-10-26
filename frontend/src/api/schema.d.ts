@@ -2748,6 +2748,11 @@ export interface components {
             label: string;
             /** Model Name */
             model_name: string;
+            /**
+             * Model Version
+             * @default
+             */
+            model_version: string;
             /** Position */
             position: number;
             /** Price Snapshot Id */
