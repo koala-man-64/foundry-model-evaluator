@@ -212,7 +212,7 @@ export function ComparePage() {
           return (
             <div key={candidate.key} className="card stack" data-testid="candidate">
               <div className="row-between">
-                <div className="row grow">
+                <div className="row grow candidate-head">
                   <Field label={`Candidate ${index + 1}`}>
                     <select
                       aria-label={`Model profile for candidate ${index + 1}`}

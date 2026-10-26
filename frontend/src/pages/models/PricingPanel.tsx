@@ -42,7 +42,10 @@ function RateCell({ entry, currency }: { entry: CategoryRate; currency: string }
       <div className="row">
         <strong>{formatMoney(perMillion(rate.price, rate.unit_tokens), currency, 4)}</strong>
         <span className="small muted">per 1M tokens</span>
-        <Badge tone={custom ? 'custom' : 'info'}>{SOURCE_LABELS[rate.source] ?? rate.source}</Badge>
+        {/* The default source stays quiet; pinned, manual and custom rates stand out. */}
+        <Badge tone={custom ? 'custom' : rate.source === 'azure_auto' ? 'neutral' : 'info'}>
+          {SOURCE_LABELS[rate.source] ?? rate.source}
+        </Badge>
       </div>
       <div className="small muted">
         Quoted as {formatMoney(rate.price, currency, 6)} per {rate.unit_label}
@@ -409,12 +412,12 @@ export function PricingPanel() {
                     const t = tier.above_input_tokens ?? 0
                     return (
                       <tr key={category} data-testid={`rate-${category}-${t}`}>
-                        <td>{CATEGORY_LABELS[category] ?? category}</td>
+                        <td className="nowrap">{CATEGORY_LABELS[category] ?? category}</td>
                         <td>
                           <RateCell entry={entry as CategoryRate} currency={data.currency} />
                         </td>
                         <td>
-                          <div className="row">
+                          <div className="row row-actions">
                             <button type="button" className="small" onClick={() => setAuto.mutate({ category, tier: t })}>
                               Azure auto
                             </button>

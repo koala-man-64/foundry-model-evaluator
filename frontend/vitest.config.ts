@@ -9,7 +9,8 @@ export default mergeConfig(
       globals: true,
       setupFiles: ['./src/test/setup.ts'],
       include: ['src/**/*.test.{ts,tsx}'],
-      css: false,
+      // Only the stylesheet's source is needed (styles.contrast.test.ts reads it with ?raw); nothing is styled in jsdom.
+      css: { include: [/src[\\/]styles\.css/] },
     },
   }),
 )
