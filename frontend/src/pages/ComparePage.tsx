@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router'
 import { ApiError, get, newIdempotencyKey, post } from '../api/client'
 import { useProfiles } from '../api/hooks'
 import type { GenerationSettings, ModelProfile, RunPreview, RunRequest } from '../api/types'
+import { CandidateModel } from '../components/ModelVariant'
 import { cleanSettings, SettingsEditor, unsupportedSettings } from '../components/SettingsEditor'
 import { Badge, Empty, ErrorMessage, Field, Spinner } from '../components/ui'
 import { API_STYLE_LABELS } from '../lib/format'
@@ -266,15 +267,28 @@ export function ComparePage() {
                   )}
                 </div>
               </div>
+              <CandidateModel
+                profile={profile}
+                candidateLabel={`candidate ${index + 1}`}
+                onVariant={(variant) =>
+                  updateCandidate(candidate.key, {
+                    profileId: variant.id,
+                    settings: { ...defaultSettings(variant), ...candidate.settings },
+                  })
+                }
+              />
               {info && (
                 <div className="row small">
                   {!info.key_configured && <Badge tone="error">no API key</Badge>}
                   {info.pricing_complete ? (
                     <Badge tone="ok">rates complete</Badge>
                   ) : (
-                    <Badge tone="warn" title={info.unknown_rates.join(', ')}>
-                      rates unknown: {info.unknown_rates.length}
-                    </Badge>
+                    <>
+                      <Badge tone="warn" title={info.unknown_rates.join(', ')}>
+                        rates unknown: {info.unknown_rates.length}
+                      </Badge>
+                      <Link to={`/models/pricing/${candidate.profileId}`}>Set rates</Link>
+                    </>
                   )}
                   {info.custom_rates.length > 0 && <Badge tone="custom">custom rates</Badge>}
                   {info.worst_case_per_call && (

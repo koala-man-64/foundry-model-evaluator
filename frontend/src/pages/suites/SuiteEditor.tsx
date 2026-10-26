@@ -5,6 +5,7 @@ import { post, put } from '../../api/client'
 import { useProfiles, useRubrics } from '../../api/hooks'
 import type { GenerationSettings, ModelProfile, Suite, SuiteIn } from '../../api/types'
 import { type CheckDraft, ChecksEditor, checkToDraft, draftToCheck } from '../../components/ChecksEditor'
+import { CandidateModel } from '../../components/ModelVariant'
 import { cleanSettings, SettingsEditor, unsupportedSettings } from '../../components/SettingsEditor'
 import { ErrorMessage, Field, Spinner } from '../../components/ui'
 import { API_STYLE_LABELS } from '../../lib/format'
@@ -376,6 +377,16 @@ export function SuiteEditor({ suite, onSaved, onCancel }: { suite?: Suite; onSav
                   )}
                 </div>
               </div>
+              <CandidateModel
+                profile={profile}
+                candidateLabel={`suite candidate ${index + 1}`}
+                onVariant={(variant) =>
+                  updateCandidate(candidate.key, {
+                    profileId: variant.id,
+                    settings: { ...requiredDefaults(variant), ...candidate.settings },
+                  })
+                }
+              />
               {profile && (
                 <details open>
                   <summary>Generation settings</summary>

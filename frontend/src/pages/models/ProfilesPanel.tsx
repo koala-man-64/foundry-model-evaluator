@@ -8,6 +8,7 @@ import type { ApiStyle, Capabilities, EndpointOut, ModelProfile, PresetOut, Prof
 import { EMPTY_SPEC, SETTING_ORDER } from '../../components/SettingsEditor'
 import { Badge, Empty, ErrorMessage, Field, Spinner } from '../../components/ui'
 import { API_STYLE_LABELS } from '../../lib/format'
+import { isCli, modelArgument } from '../../lib/profiles'
 
 const ROUTES: Record<ApiStyle, { value: ProfileFields['route']; label: string }[]> = {
   openai_responses: [
@@ -266,12 +267,14 @@ function ProfileFormBody({
   }
   const presetChoices = presetsFor(allPresets, form.api_style)
   const preset = allPresets.find((p) => p.id === form.preset)
+  const cli = isCli(form.api_style)
   const deploymentHint =
     form.api_style === 'claude_cli'
       ? 'Passed as --model (e.g. sonnet, opus, haiku, claude-sonnet-4-6)'
       : form.api_style === 'codex_cli'
         ? 'Passed as -m (e.g. gpt-5.4, gpt-5.4-mini, o3)'
         : 'Sent as the model field'
+  const sends = cli && form.deployment.trim() && form.model_version.trim() ? `. Sends ${modelArgument(form)}` : ''
   return (
     <form className="card stack" onSubmit={submit} aria-label={initial ? 'Edit model profile' : 'New model profile'}>
       <h3>{initial ? `Edit ${initial.name}` : 'New model profile'}</h3>
@@ -325,7 +328,7 @@ function ProfileFormBody({
             <input value={form.api_version ?? ''} onChange={(e) => setForm({ ...form, api_version: e.target.value || null })} />
           </Field>
         )}
-        <Field label="Deployment name" hint={deploymentHint}>
+        <Field label={cli ? 'Model' : 'Deployment name'} hint={deploymentHint + sends}>
           <input required value={form.deployment} onChange={(e) => setForm({ ...form, deployment: e.target.value })} />
         </Field>
       </div>
@@ -338,7 +341,10 @@ function ProfileFormBody({
         <Field label="Model name">
           <input value={form.model_name} onChange={(e) => setForm({ ...form, model_name: e.target.value })} />
         </Field>
-        <Field label="Model version">
+        <Field
+          label="Model version"
+          hint={cli ? 'Pins a snapshot: appended to the model, e.g. 20250805' : 'Recorded; the deployment fixes the version'}
+        >
           <input value={form.model_version} onChange={(e) => setForm({ ...form, model_version: e.target.value })} />
         </Field>
         <Field label="Context window (tokens)" hint="Needed to use this profile as a judge">

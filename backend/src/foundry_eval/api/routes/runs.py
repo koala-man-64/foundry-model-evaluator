@@ -33,6 +33,7 @@ class RunCandidateOut(BaseModel):
     api_style: str
     deployment: str
     model_name: str
+    model_version: str = ""
     settings: GenerationSettings
     candidate_key: str
     price_snapshot_id: str
@@ -119,6 +120,7 @@ def _candidate_out(c: Any) -> RunCandidateOut:
         api_style=snap.get("api_style", ""),
         deployment=snap.get("deployment", ""),
         model_name=snap.get("model_name", ""),
+        model_version=snap.get("model_version", ""),
         settings=c.settings,
         candidate_key=c.candidate_key,
         price_snapshot_id=c.price_snapshot_id,

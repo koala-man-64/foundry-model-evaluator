@@ -87,7 +87,7 @@ def build_body(
             ],
         )
         body: dict[str, Any] = {
-            "model": profile.deployment,
+            "model": profile.request_model,
             "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt.user}]}],
             "store": False,
             "truncation": "disabled",
@@ -138,7 +138,7 @@ def build_body(
         if prompt.system:
             messages.append({"role": caps.system_role, "content": prompt.system})
         messages.append({"role": "user", "content": prompt.user})
-        body = {"model": profile.deployment, "messages": messages}
+        body = {"model": profile.request_model, "messages": messages}
         if "max_output_tokens" in values:
             param = caps.max_output_param if caps.max_output_param != "max_output_tokens" else "max_tokens"
             body[param] = values["max_output_tokens"]
@@ -185,7 +185,7 @@ def build_body(
         )
         body = {
             "cli": "claude",
-            "model": profile.deployment,
+            "model": profile.request_model,
             "prompt": prompt.user,
             "stream": False,
         }
@@ -221,7 +221,7 @@ def build_body(
         )
         body = {
             "cli": "codex",
-            "model": profile.deployment,
+            "model": profile.request_model,
             "prompt": prompt.user,
             "stream": True,
         }
@@ -242,7 +242,7 @@ def build_body(
     if ttl:
         block["cache_control"] = dict(_ANTHROPIC_TTL[ttl])
     body = {
-        "model": profile.deployment,
+        "model": profile.request_model,
         "max_tokens": values["max_output_tokens"],
         "messages": [{"role": "user", "content": [block]}],
     }

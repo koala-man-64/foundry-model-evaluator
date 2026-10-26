@@ -208,6 +208,62 @@ test.describe('Compare', () => {
     }
   })
 
+  test('a variant runs another deployment and version as its own candidate, with its own rates', async ({ page, request }) => {
+    const problems = watchConsole(page)
+    const api = new AppApi(request)
+    const endpointId = await api.endpoint(unique('Variant endpoint'))
+    const terra = unique('Terra')
+    const next = unique('Terra next')
+    await api.profile({
+      endpointId,
+      name: terra,
+      apiStyle: 'openai_responses',
+      preset: 'openai-reasoning-cache-write',
+      deployment: 'gpt-5.6-terra',
+      meterTerms: '5.6 terra',
+      longContextThreshold: 272000,
+    })
+    await api.refreshPrices()
+    await page.goto('/compare')
+    await page.getByLabel('User prompt').fill('Name one prime number.')
+    await chooseProfile(page, 0, terra)
+    const first = candidateCard(page, 0)
+    await expect(first.getByText('model gpt-5.6-terra', { exact: true })).toBeVisible()
+    await first.getByRole('button', { name: 'Duplicate' }).click()
+
+    const second = candidateCard(page, 1)
+    await second.getByRole('button', { name: 'New variant…' }).click()
+    const form = second.getByRole('group', { name: 'New variant for candidate 2' })
+    await form.getByLabel('Deployment name').fill('gpt-5.6-terra-next')
+    await form.getByLabel('Model version').fill('2026-09-01')
+    await form.getByLabel('Meter terms').fill('5.6 terra')
+    await form.getByLabel('Display name').fill(next)
+    await form.getByRole('button', { name: 'Save variant' }).click()
+    await expect(form).toBeHidden()
+
+    // The candidate now uses the variant, whose meter terms matched its own rates.
+    await expect(page.getByLabel('Model profile for candidate 2').locator('option:checked')).toHaveText(new RegExp(`^${next} — `))
+    await expect(second.getByText('model gpt-5.6-terra-next', { exact: true })).toBeVisible()
+    await expect(second.getByText(/version 2026-09-01/)).toBeVisible()
+    await expect(second.getByText('rates complete')).toBeVisible()
+    await expect(first.getByText('model gpt-5.6-terra', { exact: true })).toBeVisible()
+    await expect(page.getByText('2 calls')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Run comparison' }).click()
+    await expect(page).toHaveURL(/\/runs\//)
+    const card = page.getByRole('article', { name: `Response from ${next}`, exact: true })
+    await expect(card.getByText('Succeeded', { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(card.getByText('version 2026-09-01', { exact: true })).toBeVisible()
+    await expect(card.locator('.cost')).not.toContainText('incomplete')
+    // The Foundry deployment fixes the version, so the request names the deployment only.
+    await card.getByRole('button', { name: 'Request' }).click()
+    const requestDialog = page.getByRole('dialog', { name: 'Exact request and effective settings' })
+    await expect(requestDialog).toContainText('"model": "gpt-5.6-terra-next"')
+    await requestDialog.getByRole('button', { name: 'Close' }).click()
+    await expect(page.getByRole('article', { name: `Response from ${terra}`, exact: true }).getByText('Succeeded', { exact: true })).toBeVisible()
+    expect(problems).toEqual([])
+  })
+
   test('a budget skips calls whose worst case could exceed it', async ({ page, request }) => {
     const api = new AppApi(request)
     const endpointId = await api.endpoint(unique('Budget endpoint'))
