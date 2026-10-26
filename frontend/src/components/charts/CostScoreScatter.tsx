@@ -132,7 +132,7 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
         <div className="chart-legend" data-testid="scatter-legend">
           {medX !== null && (
             <span>
-              <span className="swatch" style={{ background: 'var(--chart-quadrant)', border: '1px solid var(--ok)' }} />
+              <span className="swatch quadrant" />
               Most attractive quadrant
             </span>
           )}
@@ -172,86 +172,88 @@ export function CostScoreScatter({ comparison }: { comparison: Comparison }) {
         {data.length === 0 ? (
           <p className="muted small">Nothing to plot yet: candidates need a complete cost estimate and a {kind} score.</p>
         ) : (
-          <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} aria-hidden={false}>
-            {medX !== null && medY !== null && (
-              <rect
-                x={PLOT.x}
-                y={PLOT.y}
-                width={x(medX) - PLOT.x}
-                height={y(medY) - PLOT.y}
-                fill="var(--chart-quadrant)"
-                data-testid="attractive-quadrant"
-              />
-            )}
-            {yTicks.map((t) => (
-              <g key={`y${t}`}>
-                <line className="grid" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(t)} y2={y(t)} />
-                <text x={PLOT.x - 8} y={y(t) + 4} textAnchor="end">
-                  {t}
-                </text>
-              </g>
-            ))}
-            {xTicks.map((t) => (
-              <g key={`x${t}`}>
-                <line className="grid" x1={x(t)} x2={x(t)} y1={PLOT.y} y2={PLOT.y + PLOT.height} />
-                <text x={x(t)} y={PLOT.y + PLOT.height + 16} textAnchor="middle">
-                  {moneyTick(t, currency)}
-                </text>
-              </g>
-            ))}
-            <line className="axis" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={PLOT.y + PLOT.height} y2={PLOT.y + PLOT.height} />
-            <text x={PLOT.x + PLOT.width / 2} y={HEIGHT - 6} textAnchor="middle">
-              Average estimated token cost per task (log scale)
-            </text>
-            <text transform={`translate(14 ${PLOT.y + PLOT.height / 2}) rotate(-90)`} textAnchor="middle">
-              {kindLabel}
-            </text>
-            {frontier.length > 1 && (
-              <polyline
-                points={frontier.map((d) => `${x(d.x)},${y(d.y)}`).join(' ')}
-                fill="none"
-                stroke="var(--text-muted)"
-                strokeWidth={2}
-                strokeDasharray="2 4"
-                strokeLinecap="round"
-                data-testid="pareto-line"
-              />
-            )}
-            {data.map((d) => (
-              <circle
-                key={d.key}
-                cx={x(d.x)}
-                cy={y(d.y)}
-                r={6}
-                fill={publisherColor(d.candidate.publisher)}
-                stroke="var(--surface)"
-                strokeWidth={2}
-                {...markProps(
-                  `${d.candidate.label}: ${formatMoney(d.cost, currency)}, score ${d.y.toFixed(2)}`,
-                  <>
-                    <strong>{d.candidate.label}</strong>
-                    <div>{d.candidate.publisher}</div>
-                    <div>Avg estimated token cost: {formatMoney(d.cost, currency)}</div>
-                    <div>{kindLabel}: {d.y.toFixed(2)}</div>
-                    <div>{d.cells} shared prompt/trial cell{d.cells === 1 ? '' : 's'} with both cost and quality</div>
-                    {frontierKeys.has(d.key) && <div>On the Pareto frontier</div>}
-                  </>,
-                )}
-              />
-            ))}
-            {labels.map((l) => (
-              <text
-                key={l.key}
-                x={l.lx}
-                y={l.ly}
-                textAnchor={l.anchor}
-                className={frontierKeys.has(l.key) ? 'label-strong halo' : 'halo'}
-                pointerEvents="none"
-              >
-                {l.text}
+          <div className="chart-scroll">
+            <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} aria-hidden={false}>
+              {medX !== null && medY !== null && (
+                <rect
+                  x={PLOT.x}
+                  y={PLOT.y}
+                  width={x(medX) - PLOT.x}
+                  height={y(medY) - PLOT.y}
+                  fill="var(--chart-quadrant)"
+                  data-testid="attractive-quadrant"
+                />
+              )}
+              {yTicks.map((t) => (
+                <g key={`y${t}`}>
+                  <line className="grid" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(t)} y2={y(t)} />
+                  <text x={PLOT.x - 8} y={y(t) + 4} textAnchor="end">
+                    {t}
+                  </text>
+                </g>
+              ))}
+              {xTicks.map((t) => (
+                <g key={`x${t}`}>
+                  <line className="grid" x1={x(t)} x2={x(t)} y1={PLOT.y} y2={PLOT.y + PLOT.height} />
+                  <text x={x(t)} y={PLOT.y + PLOT.height + 16} textAnchor="middle">
+                    {moneyTick(t, currency)}
+                  </text>
+                </g>
+              ))}
+              <line className="axis" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={PLOT.y + PLOT.height} y2={PLOT.y + PLOT.height} />
+              <text x={PLOT.x + PLOT.width / 2} y={HEIGHT - 6} textAnchor="middle">
+                Average estimated token cost per task (log scale)
               </text>
-            ))}
-          </svg>
+              <text transform={`translate(14 ${PLOT.y + PLOT.height / 2}) rotate(-90)`} textAnchor="middle">
+                {kindLabel}
+              </text>
+              {frontier.length > 1 && (
+                <polyline
+                  points={frontier.map((d) => `${x(d.x)},${y(d.y)}`).join(' ')}
+                  fill="none"
+                  stroke="var(--text-muted)"
+                  strokeWidth={2}
+                  strokeDasharray="2 4"
+                  strokeLinecap="round"
+                  data-testid="pareto-line"
+                />
+              )}
+              {data.map((d) => (
+                <circle
+                  key={d.key}
+                  cx={x(d.x)}
+                  cy={y(d.y)}
+                  r={6}
+                  fill={publisherColor(d.candidate.publisher)}
+                  stroke="var(--surface)"
+                  strokeWidth={2}
+                  {...markProps(
+                    `${d.candidate.label}: ${formatMoney(d.cost, currency)}, score ${d.y.toFixed(2)}`,
+                    <>
+                      <strong>{d.candidate.label}</strong>
+                      <div>{d.candidate.publisher}</div>
+                      <div>Avg estimated token cost: {formatMoney(d.cost, currency)}</div>
+                      <div>{kindLabel}: {d.y.toFixed(2)}</div>
+                      <div>{d.cells} shared prompt/trial cell{d.cells === 1 ? '' : 's'} with both cost and quality</div>
+                      {frontierKeys.has(d.key) && <div>On the Pareto frontier</div>}
+                    </>,
+                  )}
+                />
+              ))}
+              {labels.map((l) => (
+                <text
+                  key={l.key}
+                  x={l.lx}
+                  y={l.ly}
+                  textAnchor={l.anchor}
+                  className={frontierKeys.has(l.key) ? 'label-strong halo' : 'halo'}
+                  pointerEvents="none"
+                >
+                  {l.text}
+                </text>
+              ))}
+            </svg>
+          </div>
         )}
         <Tooltip state={tooltip} />
       </div>

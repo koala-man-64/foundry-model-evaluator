@@ -54,7 +54,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned: Playwright 1.56 cannot install Chromium on ubuntu-latest (Ubuntu 26.04).
+          - os: ubuntu-24.04
             platform: Linux
           - os: windows-latest
             platform: Windows

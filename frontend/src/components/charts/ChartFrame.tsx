@@ -63,15 +63,11 @@ export function ChartFrame<T>({
   const [table, setTable] = useState(false)
   const id = useId()
   return (
-    <figure className="card stack-sm" aria-labelledby={`${id}-title`} style={{ margin: 0 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <figure className="card stack-sm chart-frame" aria-labelledby={`${id}-title`}>
+      <div className="row chart-frame-head">
         <div>
-          <h3 id={`${id}-title`} style={{ margin: 0 }}>
-            {title}
-          </h3>
-          <p className="small muted" style={{ margin: '0.15rem 0 0' }}>
-            {subtitle}
-          </p>
+          <h3 id={`${id}-title`}>{title}</h3>
+          <p className="small muted">{subtitle}</p>
         </div>
         <div className="row">
           {controls}

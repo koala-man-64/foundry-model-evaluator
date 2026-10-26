@@ -58,7 +58,7 @@ export function SettingsEditor({ capabilities, value, onChange, issues = [], idP
     onChange(updated as GenerationSettings)
   }
   return (
-    <div className="grid-form">
+    <div className="grid-form settings-grid">
       {SETTING_ORDER.map(({ key, label, kind }) => {
         const spec = specFor(capabilities, key)
         const current = value[key]

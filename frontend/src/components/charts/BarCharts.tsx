@@ -34,56 +34,66 @@ function BarPlot({ bars, format, axisLabel }: { bars: Bar[]; format: (v: number)
   const ticks = linearTicks(0, domain[1])
   const slot = PLOT.width / Math.max(bars.length, 1)
   const barWidth = Math.min(56, slot * 0.66)
-  const labelLength = Math.max(8, Math.floor(slot / 6.2))
+  const labelLength = Math.max(8, Math.floor(slot / 6.8)) // about one character per 6.8 units at 12px
   return (
     <div className="chart" ref={container}>
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`}>
-        {ticks.map((t) => (
-          <g key={t}>
-            <line className="grid" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(t)} y2={y(t)} />
-            <text x={PLOT.x - 8} y={y(t) + 4} textAnchor="end">
-              {format(t)}
-            </text>
-          </g>
-        ))}
-        <line className="axis" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(0)} y2={y(0)} />
-        <text transform={`translate(14 ${PLOT.y + PLOT.height / 2}) rotate(-90)`} textAnchor="middle">
-          {axisLabel}
-        </text>
-        {bars.map((bar, index) => {
-          const cx = PLOT.x + slot * index + slot / 2
-          let base = y(0)
-          return (
-            <g key={bar.key} {...markProps(`${bar.label}: ${bar.totalText}`, bar.tooltip)} data-testid="chart-bar">
-              <rect x={cx - slot / 2} y={PLOT.y} width={slot} height={PLOT.height} fill="transparent" />
-              {bar.segments.map((segment, s) => {
-                const height = Math.max(y(0) - y(segment.value) - (s > 0 ? GAP : 0), 0)
-                const top = base - height - (s > 0 ? GAP : 0)
-                const last = s === bar.segments.length - 1
-                base = top
-                return (
-                  <g key={segment.name}>
-                    <rect x={cx - barWidth / 2} y={top} width={barWidth} height={height} fill={segment.color} rx={last ? 4 : 0} />
-                    {last && height > 4 && <rect x={cx - barWidth / 2} y={top + height - 4} width={barWidth} height={4} fill={segment.color} />}
-                    {height >= 18 && bar.segments.length > 1 && (
-                      <text x={cx} y={top + height / 2 + 4} textAnchor="middle" className={s === 0 ? 'on-answer' : 'label-strong'}>
-                        {format(segment.value)}
-                      </text>
-                    )}
-                  </g>
-                )
-              })}
-              <text x={cx} y={y(bar.total) - 6} textAnchor="middle" className="label-strong">
-                {bar.totalText}
-              </text>
-              <text x={cx} y={PLOT.y + PLOT.height + 16} textAnchor="middle">
-                <title>{bar.label}</title>
-                {truncate(bar.label, labelLength)}
+      <div className="chart-scroll">
+        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`}>
+          {ticks.map((t) => (
+            <g key={t}>
+              <line className="grid" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(t)} y2={y(t)} />
+              <text x={PLOT.x - 8} y={y(t) + 4} textAnchor="end">
+                {format(t)}
               </text>
             </g>
-          )
-        })}
-      </svg>
+          ))}
+          <line className="axis" x1={PLOT.x} x2={PLOT.x + PLOT.width} y1={y(0)} y2={y(0)} />
+          <text transform={`translate(14 ${PLOT.y + PLOT.height / 2}) rotate(-90)`} textAnchor="middle">
+            {axisLabel}
+          </text>
+          {bars.map((bar, index) => {
+            const cx = PLOT.x + slot * index + slot / 2
+            let base = y(0)
+            return (
+              <g key={bar.key} {...markProps(`${bar.label}: ${bar.totalText}`, bar.tooltip)} data-testid="chart-bar">
+                <rect x={cx - slot / 2} y={PLOT.y} width={slot} height={PLOT.height} fill="transparent" />
+                {bar.segments.map((segment, s) => {
+                  const height = Math.max(y(0) - y(segment.value) - (s > 0 ? GAP : 0), 0)
+                  const top = base - height - (s > 0 ? GAP : 0)
+                  const last = s === bar.segments.length - 1
+                  base = top
+                  return (
+                    <g key={segment.name}>
+                      <rect
+                        x={cx - barWidth / 2}
+                        y={top}
+                        width={barWidth}
+                        height={height}
+                        fill={segment.color}
+                        rx={last ? 4 : 0}
+                        className={`segment-${segment.name}`}
+                      />
+                      {last && height > 4 && <rect x={cx - barWidth / 2} y={top + height - 4} width={barWidth} height={4} fill={segment.color} />}
+                      {height >= 18 && bar.segments.length > 1 && (
+                        <text x={cx} y={top + height / 2 + 4} textAnchor="middle" className={s === 0 ? 'on-answer' : 'label-strong'}>
+                          {format(segment.value)}
+                        </text>
+                      )}
+                    </g>
+                  )
+                })}
+                <text x={cx} y={y(bar.total) - 6} textAnchor="middle" className="label-strong">
+                  {bar.totalText}
+                </text>
+                <text x={cx} y={PLOT.y + PLOT.height + 16} textAnchor="middle">
+                  <title>{bar.label}</title>
+                  {truncate(bar.label, labelLength)}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
       <Tooltip state={tooltip} />
     </div>
   )
@@ -130,11 +140,11 @@ export function TokenBars({ comparison }: { comparison: Comparison }) {
       legend={
         <div className="chart-legend">
           <span>
-            <span className="swatch" style={{ background: 'var(--chart-answer)' }} />
+            <span className="swatch answer" />
             Answer
           </span>
           <span>
-            <span className="swatch" style={{ background: 'var(--chart-reasoning)' }} />
+            <span className="swatch reasoning" />
             Reasoning
           </span>
         </div>
