@@ -9,12 +9,13 @@ import { SettingsPanel } from './SettingsPanel'
 export function ModelsPage() {
   return (
     <div>
+      {/* Absolute paths: inside the /models/* splat route a relative link resolves against the current URL. */}
       <nav className="subnav" aria-label="Models and pricing sections">
-        <NavLink to="endpoints">Endpoints &amp; keys</NavLink>
-        <NavLink to="profiles">Model profiles</NavLink>
-        <NavLink to="pricing">Rates</NavLink>
-        <NavLink to="projections">Projections</NavLink>
-        <NavLink to="settings">Settings</NavLink>
+        <NavLink to="/models/endpoints">Endpoints &amp; keys</NavLink>
+        <NavLink to="/models/profiles">Model profiles</NavLink>
+        <NavLink to="/models/pricing">Rates</NavLink>
+        <NavLink to="/models/projections">Projections</NavLink>
+        <NavLink to="/models/settings">Settings</NavLink>
       </nav>
       <Routes>
         <Route index element={<Navigate to="endpoints" replace />} />
