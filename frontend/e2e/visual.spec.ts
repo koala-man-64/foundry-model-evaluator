@@ -100,7 +100,9 @@ async function capture(page: Page, name: string, { signals = [], variants = ['li
     for (const text of await smallText(page)) problems.push(`${key}: text below 12px: ${text}`)
     if (variant === 'narrow') for (const table of await clippedTables(page)) problems.push(`${key}: table clipped at 390px: ${table}`)
     for (const signal of signals) {
-      if (!(await page.getByText(signal, { exact: false }).first().isVisible())) problems.push(`${key}: "${signal}" is not visible`)
+      if ((await page.getByText(signal, { exact: false }).filter({ visible: true }).count()) === 0) {
+        problems.push(`${key}: "${signal}" is not visible`)
+      }
     }
   }
   await setVariant(page, 'light')
@@ -129,11 +131,20 @@ test('visual review set', async ({ page, request }) => {
   await expect(page.getByRole('region', { name: 'Comparison charts' }).getByTestId('cost-score-chart').locator('circle')).toHaveCount(3)
   await page.getByTestId('response-cards').getByRole('article').first().locator('summary', { hasText: 'Cost breakdown' }).click()
   await capture(page, 'run', { signals: ['Estimated token cost', 'not reported'], variants: ['light', 'dark', 'narrow', 'forced'] })
+  const charts = page.getByRole('region', { name: 'Comparison charts' })
+  await charts.getByRole('tab', { name: 'Token use' }).click()
+  await expect(charts.getByTestId('chart-bar')).toHaveCount(3)
+  await capture(page, 'run-tokens', { variants: ['light', 'dark', 'forced'] })
 
   await page.goto(`/scoring/${runId}`)
   await expect(page.getByTestId('evaluation').first()).toContainText('Succeeded')
   await page.getByRole('article', { name: /Score GPT-5.6 terra \(effort=high\)/ }).getByRole('button', { name: 'Score 4' }).click()
-  await capture(page, 'scoring', { signals: ['A paid call.', 'Estimated token cost (judging)'] })
+  await capture(page, 'scoring', { signals: ['A paid call.', 'Estimated token cost (judging)'], variants: ['light', 'dark', 'narrow', 'forced'] })
+  await page.getByTestId('evaluation').first().getByRole('button', { name: 'Judge request' }).click()
+  await capture(page, 'judge-request-dialog', { variants: ['light', 'dark'] })
+  await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click()
+  await page.goto('/rubrics')
+  await capture(page, 'rubrics', { variants: ['light', 'dark'] })
 
   const suiteId = await seedDemoSuite(api, profiles)
   await page.goto(`/suites/${suiteId}`)
@@ -142,16 +153,24 @@ test('visual review set', async ({ page, request }) => {
   await expect(page.getByRole('region', { name: 'Comparison of selected runs' })).toContainText('2 runs')
   await capture(page, 'suite', { signals: ['of 6 cells'], ownTab: false })
 
+  await page.goto('/suites')
+  await page.getByRole('button', { name: 'New suite' }).click()
+  await capture(page, 'suite-editor', { variants: ['light', 'narrow'] })
   await page.goto('/history')
   await capture(page, 'history')
   await page.goto('/models/endpoints')
   await capture(page, 'endpoints')
   await page.goto('/models/profiles')
   await capture(page, 'profiles')
+  await page.getByRole('button', { name: 'Add model profile' }).click()
+  await capture(page, 'profile-form', { variants: ['light', 'dark'] })
   await page.goto(`/models/pricing/${profiles.terraId}`)
   await page.getByRole('button', { name: 'Match Azure prices' }).click()
   await expect(page.getByText('Match results')).toBeVisible()
   await capture(page, 'rates', { signals: ['Match results'], variants: ['light', 'dark', 'narrow', 'forced'] })
+  await page.getByTestId('rate-output-0').getByRole('button', { name: 'Manual' }).click()
+  await capture(page, 'rate-dialog', { variants: ['light', 'dark'] })
+  await page.keyboard.press('Escape')
   await page.goto('/models/projections')
   await page.getByLabel('Requests per month').fill('250000')
   await page.getByLabel('Output length multiplier').fill('1.5')

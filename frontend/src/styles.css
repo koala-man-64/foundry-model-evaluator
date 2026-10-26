@@ -31,6 +31,7 @@
   --radius-sm: 6px;
   --shadow-float: 0 8px 24px rgba(16, 24, 40, 0.12), 0 1px 3px rgba(16, 24, 40, 0.08);
   --backdrop: rgba(10, 12, 16, 0.45);
+  --scroll-shade: rgba(16, 24, 40, 0.18);
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --mono: "Cascadia Code", "Consolas", ui-monospace, "SFMono-Regular", monospace;
@@ -92,6 +93,7 @@
     --focus: #5b9bff;
     --shadow-float: 0 8px 24px rgba(0, 0, 0, 0.5);
     --backdrop: rgba(0, 0, 0, 0.6);
+    --scroll-shade: rgba(0, 0, 0, 0.6);
     color-scheme: dark;
   }
 }
@@ -111,9 +113,10 @@ h1, h2, h3, h4 { margin: 0 0 0.5rem; line-height: 1.25; font-weight: 600; }
 h1 { font-family: var(--font-display); font-size: var(--fs-2xl); }
 h2 { font-family: var(--font-display); font-size: var(--fs-xl); }
 h3 { font-size: var(--fs-lg); }
-h4 { font-size: var(--fs-sm); }
+h4 { font-size: var(--fs-md); }
+strong, b { font-weight: 600; }
 p { margin: 0 0 0.6rem; }
-code, pre, .mono { font-family: var(--mono); font-size: 0.85em; }
+code, pre, .mono { font-family: var(--mono); font-size: max(var(--fs-xs), 0.85em); }
 pre {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -144,7 +147,7 @@ pre {
 .brand:hover { text-decoration: none; }
 .brand img { width: 22px; height: 22px; }
 .nav { display: flex; gap: 0.25rem; overflow-x: auto; }
-/* Navigation and tabs: one underline grammar, drawn as a border so it survives forced colors. */
+/* Navigation and tabs: one underline grammar. The current tab keeps its weight so its neighbours do not shift. */
 .nav a, .subnav a {
   display: flex;
   align-items: center;
@@ -155,7 +158,7 @@ pre {
   outline-offset: -4px;
 }
 .nav a:hover, .subnav a:hover { color: var(--text); text-decoration: none; }
-.nav a.active, .subnav a.active { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.nav a.active, .subnav a.active { color: var(--text); border-bottom-color: var(--accent); }
 .main { padding: 1.25rem; max-width: 1600px; margin: 0 auto; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
 .page-header p { color: var(--text-muted); margin: 0.2rem 0 0; max-width: 90ch; }
@@ -221,21 +224,26 @@ button.ghost { border-color: transparent; background: transparent; }
 button.small {
   min-height: var(--control-h-sm);
   padding: 0 0.5rem;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-sm);
   border-color: transparent;
   background: transparent;
   color: var(--accent);
 }
-button.small:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); }
+button.small:not([aria-pressed="true"]):hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); }
 button.small.danger { color: var(--error); }
 button.small.danger:hover:not(:disabled) { background: var(--error-soft); border-color: var(--error-line); }
 button.small[aria-pressed="true"] { background: var(--surface); border-color: var(--control-border); color: var(--text); }
+/* Quiet actions line up with the content edge; their padding only shows on hover. */
+:is(.row, .row-between):not(.row-actions) > button.small:not([aria-pressed]):first-child { margin-inline-start: -0.5rem; }
+:is(.row, .row-between):not(.row-actions) > button.small:not([aria-pressed]):last-child { margin-inline-end: -0.5rem; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.small:disabled { opacity: 1; color: var(--text-muted); }
 /* A view toggle (Text | Markdown): bordered neutral segments; pressed is raised, edged and semibold. */
 .button-group { display: inline-flex; border-radius: var(--radius-sm); background: var(--surface-2); }
 .button-group button { border-radius: 0; margin-left: -1px; background: var(--surface-2); border-color: var(--border); color: var(--text-muted); font-weight: 400; }
 .button-group button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); margin-left: 0; }
 .button-group button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.button-group button:not([aria-pressed="true"]):hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); color: var(--text); }
 .button-group button[aria-pressed="true"] { position: relative; z-index: 1; background: var(--surface); border-color: var(--control-border); color: var(--text); font-weight: 600; }
 
 label { font-weight: 400; }
@@ -265,11 +273,10 @@ input[type="checkbox"], input[type="radio"] { width: 1rem; height: 1rem; margin:
 /* Compare: the candidate header fields get room for a model name and an auto label. */
 .candidate-head > .field { flex: 0 1 18rem; }
 
-/* Generation settings: thirteen fields on two rows at 1360px. Unsupported ones get compact controls and muted labels;
-   their hints stay visible and their order is unchanged. */
+/* Generation settings: thirteen fields on two rows at 1360px. Unsupported ones get muted labels; their hints stay
+   visible and their order is unchanged. */
 .settings-grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 0.55rem 0.8rem; }
 .settings-grid > .field:has(> :disabled) > .label { color: var(--text-muted); }
-.settings-grid > .field > :is(input, select):disabled { min-height: var(--control-h-sm); padding-block: 0.1rem; }
 
 /* Tables */
 .table-wrap { overflow-x: auto; }
@@ -280,8 +287,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 th.wrap { white-space: normal; min-width: 9rem; }
 tr:hover td { background: var(--surface-2); }
 table.compact th, table.compact td { padding: 0.25rem 0.4rem; }
+table.compact td:first-child { white-space: nowrap; }
 /* Rates: the source actions stay on one line in a column that takes only what it needs. */
 .row-actions { flex-wrap: nowrap; gap: 0; }
+.row-actions > button.small { padding-inline: 0.4rem; }
 td:has(> .row-actions) { width: 1%; white-space: nowrap; }
 
 /* Badges: success is a dot and its word; neutral, info, custom, warn and error stay pills. */
@@ -298,7 +307,7 @@ td:has(> .row-actions) { width: 1%; white-space: nowrap; }
   border: 1px solid var(--border);
   white-space: nowrap;
 }
-.badge.ok { background: none; color: var(--ok); border-color: transparent; padding-inline: 0; }
+.badge.ok { background: none; color: var(--ok); border-width: 0; padding-inline: 0; }
 .badge.ok::before { content: ""; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
 .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .badge.error { background: var(--error-soft); color: var(--error); border-color: transparent; }
@@ -385,7 +394,7 @@ dialog::backdrop { background: var(--backdrop); }
 /* Comparison charts: drawn 960-1100px wide so the 12-unit text renders at 12-13.75px; narrower containers scroll. */
 .chart { position: relative; }
 .chart-scroll { overflow-x: auto; }
-.chart svg { display: block; width: 100%; min-width: 960px; max-width: 1100px; height: auto; margin-inline: auto; overflow: visible; }
+.chart svg { display: block; width: 100%; min-width: 960px; max-width: 1100px; height: auto; overflow: visible; }
 .chart svg text { fill: var(--text-muted); font-size: 12px; font-family: var(--font); }
 .chart svg .label-strong { fill: var(--text); font-weight: 600; }
 .chart svg .halo { paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
@@ -396,6 +405,7 @@ dialog::backdrop { background: var(--backdrop); }
 .chart svg .mark:focus-visible { stroke: var(--text); stroke-width: 2; }
 /* The light reasoning segment gets an answer-coloured edge, so it reads against the surface without relying on fill. */
 .chart svg .segment-reasoning { stroke: var(--chart-answer); stroke-width: 1; }
+.chart svg .mark:focus-visible .segment-reasoning { stroke: var(--text); stroke-width: 2; }
 .chart-frame { margin: 0; }
 .chart-frame-head { justify-content: space-between; align-items: flex-start; }
 .chart-frame-head h3 { margin: 0; }
@@ -428,26 +438,37 @@ dialog::backdrop { background: var(--backdrop); }
   outline-offset: -4px;
 }
 .chart-tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
-.chart-tabs button[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.chart-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 
 @media (max-width: 720px) {
-  .app-header { position: static; flex-wrap: wrap; gap: 0 0.75rem; padding: 0.4rem 0.75rem 0; }
-  .brand { min-height: 2rem; }
+  /* The nav wraps beside the brand tile instead of scrolling items out of sight. */
+  .app-header { position: static; gap: 0 0.5rem; padding: 0 0.75rem; }
+  .brand { align-self: flex-start; min-height: 2.5rem; }
   /* Visually hidden, still the link's accessible name. */
   .brand span { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .nav { flex-basis: 100%; flex-wrap: wrap; overflow-x: visible; }
+  .nav { flex: 1 1 0; flex-wrap: wrap; overflow-x: visible; gap: 0; }
   .nav a { min-height: 2.5rem; padding: 0 0.5rem; }
   .main { padding: 0.75rem; }
   .cards { grid-auto-flow: row; grid-auto-columns: auto; }
   .totals { grid-template-columns: 1fr; padding-block: 0; }
   .total-box { padding: 0.5rem 0; border-left: 0; border-top: 1px solid var(--border); }
   .total-box:first-child { border-top: 0; }
-  /* Tables keep readable columns and scroll inside their container. */
-  .main table { min-width: 34rem; }
-  .main :has(> table) { overflow-x: auto; }
+  /* Wide tables (six or more columns) keep readable columns and scroll inside their container; narrower ones wrap. */
+  .main table:has(th:nth-child(6)) { min-width: 40rem; }
+  .main :has(> table:has(th:nth-child(6))) { overflow-x: auto; }
+  /* Scroll cue: an edge shade where more content is hidden, masked by the surface at each end. */
+  .table-wrap, .chart-scroll, .main :has(> table:has(th:nth-child(6))) {
+    background:
+      linear-gradient(to right, var(--surface) 30%, transparent) left / 2rem 100% no-repeat local,
+      linear-gradient(to left, var(--surface) 30%, transparent) right / 2rem 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, var(--scroll-shade), transparent) left / 0.75rem 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, var(--scroll-shade), transparent) right / 0.75rem 100% no-repeat scroll,
+      var(--surface);
+  }
   /* The rates source actions wrap, so the rate and its provenance keep the width. */
   .row-actions { flex-wrap: wrap; }
   td:has(> .row-actions) { width: auto; white-space: normal; }
+  tr:has(> td > .row-actions) > td:first-child { white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -456,9 +477,16 @@ dialog::backdrop { background: var(--backdrop); }
 }
 
 @media (forced-colors: active) {
+  /* Transparent borders are painted in forced colors: hide the inactive underline, mark the current tab. */
+  .nav a, .subnav a, .chart-tabs button { border-bottom-color: Canvas; }
+  .nav a.active, .subnav a.active, .chart-tabs button[aria-selected="true"] { border-bottom-color: Highlight; }
+  /* Pressed toggles use system highlight colours, so the focus outline stays free to show focus. */
   .button-group button[aria-pressed="true"], .score-buttons button[aria-pressed="true"], button.small[aria-pressed="true"] {
-    outline: 2px solid Highlight;
-    outline-offset: -2px;
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
   }
+  :is(.button-group, .score-buttons) button[aria-pressed="true"]:focus-visible, button.small[aria-pressed="true"]:focus-visible { outline-color: CanvasText; }
   .badge.ok::before { forced-color-adjust: none; background: CanvasText; }
 }
